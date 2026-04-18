@@ -30,6 +30,7 @@ class ToolContext:
         self.layers_dir = layers_dir
         self.run_id = run_id
         self.state: dict[str, Any] = {
+            "artifact_type": "poster",      # set by switch_artifact_type; default=poster
             "design_spec": None,            # populated by propose_design_spec
             "rendered_layers": {},          # layer_id -> {png_path, name, kind, bbox, ...}
             "composition": None,            # CompositionArtifacts after composite

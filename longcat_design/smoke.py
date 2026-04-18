@@ -40,6 +40,7 @@ def check_imports() -> None:
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
         composite, critique_tool, fetch_brand_asset, finalize,
         generate_background, propose_design_spec, render_text_layer,
+        switch_artifact_type,
     )  # noqa
     from .util import ids, io, logging  # noqa
     _ok("all modules import")
@@ -49,7 +50,8 @@ def check_tool_registry() -> None:
     print("[2/6] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
-    expected = {"propose_design_spec", "generate_background", "render_text_layer",
+    expected = {"switch_artifact_type", "propose_design_spec",
+                "generate_background", "render_text_layer",
                 "fetch_brand_asset", "composite", "critique", "finalize"}
     schema_names = {s["name"] for s in TOOL_SCHEMAS}
     handler_names = set(TOOL_HANDLERS.keys())
@@ -65,7 +67,10 @@ def check_tool_registry() -> None:
                 _fail(f"tool '{s.get('name','?')}' missing key '{k}'")
         if s["input_schema"].get("type") != "object":
             _fail(f"tool '{s['name']}' input_schema.type != 'object'")
-    _ok(f"7 tools wired (schemas + handlers): {sorted(schema_names)}")
+    # switch_artifact_type should be first in TOOL_SCHEMAS (pedagogical ordering)
+    if TOOL_SCHEMAS[0]["name"] != "switch_artifact_type":
+        _fail(f"switch_artifact_type should be first in TOOL_SCHEMAS; got {TOOL_SCHEMAS[0]['name']}")
+    _ok(f"{len(expected)} tools wired (schemas + handlers): {sorted(schema_names)}")
 
 
 def check_pydantic_roundtrip() -> None:
@@ -127,13 +132,18 @@ def check_fonts() -> None:
 
 
 def check_composite_no_api() -> None:
-    """Build a fake background + 2 real text layers, run composite end-to-end."""
+    """Build a fake background + 2 real text layers, run composite end-to-end.
+
+    Also exercises switch_artifact_type → propose_design_spec plumbing
+    (artifact_type fallback from ctx.state when spec omits it).
+    """
     print("[5/6] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
     from .tools.propose_design_spec import propose_design_spec
     from .tools.render_text_layer import render_text_layer
+    from .tools.switch_artifact_type import switch_artifact_type
 
     out_dir = REPO_ROOT / "out" / "smoke"
     layers_dir = out_dir / "layers"
@@ -149,6 +159,19 @@ def check_composite_no_api() -> None:
     ctx = ToolContext(settings=settings, run_dir=out_dir,
                       layers_dir=layers_dir, run_id="smoke")
 
+    # First: switch_artifact_type — verifies ctx.state update + valid type
+    obs = switch_artifact_type({"type": "poster"}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"switch_artifact_type: {obs.summary}")
+    if ctx.state.get("artifact_type") != "poster":
+        _fail(f"ctx.state.artifact_type not set; got {ctx.state.get('artifact_type')}")
+
+    # Reject invalid type (paranoia — catches the enum drift)
+    bad = switch_artifact_type({"type": "billboard"}, ctx=ctx)
+    if bad.status != "error":
+        _fail(f"switch_artifact_type should reject 'billboard'; got status={bad.status}")
+
+    # Spec omits artifact_type on purpose — should fall back to ctx.state value
     spec_args = {"design_spec": {
         "brief": "smoke test poster",
         "canvas": {"w_px": 768, "h_px": 1024, "dpi": 150,
@@ -163,6 +186,11 @@ def check_composite_no_api() -> None:
     obs = propose_design_spec(spec_args, ctx=ctx)
     if obs.status != "ok":
         _fail(f"propose_design_spec: {obs.summary}")
+
+    # Fallback check: spec omitted artifact_type → should inherit ctx.state value
+    stored_spec = ctx.state["design_spec"]
+    if stored_spec.artifact_type.value != "poster":
+        _fail(f"artifact_type fallback failed; got {stored_spec.artifact_type.value!r}")
 
     bg_path = layers_dir / "bg_smoke.png"
     Image.new("RGB", (768, 1024), (28, 14, 10)).save(bg_path)

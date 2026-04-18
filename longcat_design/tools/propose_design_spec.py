@@ -19,6 +19,12 @@ def propose_design_spec(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
     raw = args.get("design_spec")
     if raw is None:
         return obs_error("missing 'design_spec' in args")
+
+    # Fall back to ctx.state["artifact_type"] if planner omitted it from the spec.
+    # This makes switch_artifact_type work as a "hint" that auto-fills the default.
+    if isinstance(raw, dict) and "artifact_type" not in raw:
+        raw = {**raw, "artifact_type": ctx.state.get("artifact_type", "poster")}
+
     try:
         spec = DesignSpec.model_validate(raw)
     except ValidationError as e:
@@ -27,9 +33,17 @@ def propose_design_spec(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
             next_actions=["fix the JSON shape and re-call propose_design_spec"],
         )
 
+    # Keep ctx.state in sync with the spec's declared type (spec wins on mismatch).
+    state_type = ctx.state.get("artifact_type", "poster")
+    if spec.artifact_type.value != state_type:
+        log("artifact.spec_override",
+            prior_state=state_type, spec_declared=spec.artifact_type.value)
+        ctx.state["artifact_type"] = spec.artifact_type.value
+
     is_revision = ctx.state.get("design_spec") is not None
     ctx.state["design_spec"] = spec
     log("spec.proposed", revision=is_revision,
+        artifact_type=spec.artifact_type.value,
         canvas=spec.canvas, n_layers=len(spec.layer_graph))
 
     next_actions = (
@@ -39,7 +53,8 @@ def propose_design_spec(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
               "then render_text_layer for each text element"]
     )
     return obs_ok(
-        f"DesignSpec accepted ({spec.canvas['w_px']}×{spec.canvas['h_px']}, "
+        f"DesignSpec accepted ({spec.artifact_type.value}, "
+        f"{spec.canvas['w_px']}×{spec.canvas['h_px']}, "
         f"{len(spec.layer_graph)} planned layers)"
         + (" — REVISION" if is_revision else ""),
         next_actions=next_actions,

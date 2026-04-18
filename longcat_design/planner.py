@@ -106,6 +106,12 @@ class PlannerLoop:
                     tool_use_id=tu.id, tool_name=tu.name, observation=obs,
                 )
 
+                if tu.name == "switch_artifact_type" and obs.status == "ok":
+                    self._append(
+                        actor="planner", type="artifact_switch",
+                        text=f"artifact_type = {ctx.state.get('artifact_type')}",
+                    )
+
                 if tu.name == "propose_design_spec" and obs.status == "ok":
                     spec = ctx.state.get("design_spec")
                     if spec is not None:

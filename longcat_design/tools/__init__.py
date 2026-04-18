@@ -14,15 +14,49 @@ from .finalize import finalize
 from .generate_background import generate_background
 from .propose_design_spec import propose_design_spec
 from .render_text_layer import render_text_layer
+from .switch_artifact_type import switch_artifact_type
 
 
 TOOL_SCHEMAS: list[dict] = [
     {
+        "name": "switch_artifact_type",
+        "description": (
+            "Declare what kind of design artifact this session is producing: "
+            "'poster' (absolutely-positioned layered visual), 'deck' (N-slide "
+            "presentation, PPTX-native), or 'landing' (self-contained HTML "
+            "one-pager with semantic sections). Call this AT THE START of a "
+            "new artifact (first turn, or mid-session when the user asks for a "
+            "different artifact type) BEFORE propose_design_spec. Default is "
+            "'poster' if you skip this; but calling explicitly is recommended "
+            "so the decision lands in the trajectory as its own event. "
+            "Returns ToolObservation{status, summary, next_actions, artifacts}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["poster", "deck", "landing"],
+                    "description": (
+                        "The artifact type. 'poster' = vertical/horizontal "
+                        "absolutely-positioned layered visual. 'deck' = N slides "
+                        "with PPTX-editable text frames. 'landing' = single "
+                        "self-contained HTML page with flow layout."
+                    ),
+                },
+            },
+            "required": ["type"],
+        },
+    },
+    {
         "name": "propose_design_spec",
         "description": (
-            "Submit the initial DesignSpec for this brief. MUST be the first tool "
-            "you call. The runner validates and stores the spec; subsequent tool "
-            "calls operate on this spec. Re-call to revise. "
+            "Submit the initial DesignSpec for this brief. Call this AFTER "
+            "switch_artifact_type (or as the first tool if you're defaulting "
+            "to poster). The runner validates and stores the spec; subsequent "
+            "tool calls operate on this spec. Re-call to revise. "
+            "If `design_spec.artifact_type` is omitted, it falls back to the "
+            "value set by switch_artifact_type (default: 'poster'). "
             "Returns ToolObservation{status, summary, next_actions, artifacts}."
         ),
         "input_schema": {
@@ -227,6 +261,7 @@ TOOL_SCHEMAS: list[dict] = [
 
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
+    "switch_artifact_type": switch_artifact_type,
     "propose_design_spec": propose_design_spec,
     "generate_background": generate_background,
     "render_text_layer": render_text_layer,

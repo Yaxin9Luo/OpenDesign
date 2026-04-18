@@ -11,9 +11,22 @@ Every field is designed to support multi-task SFT extraction:
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class ArtifactType(str, Enum):
+    """What kind of design artifact is being produced in the current session slot.
+
+    Drives renderer selection and prompts the planner with artifact-specific
+    layout guidance. A chat session may contain multiple artifacts (mix of
+    types); the `switch_artifact_type` tool changes this mid-session.
+    """
+    POSTER = "poster"       # vertical / horizontal, absolutely-positioned layers
+    DECK = "deck"           # N slides, PPTX-native editability
+    LANDING = "landing"     # self-contained HTML one-pager with flow layout
 
 
 Status = Literal["ok", "error", "partial", "not_found"]
@@ -21,6 +34,7 @@ Actor = Literal["user", "planner", "tool", "critic", "system"]
 StepType = Literal[
     "input", "thought", "tool_call", "tool_result",
     "design_spec", "critique", "finalize",
+    "artifact_switch",  # new v1.0: emitted when switch_artifact_type is called
 ]
 LayerKind = Literal["background", "text", "brand_asset", "group"]
 Verdict = Literal["pass", "revise", "fail"]
@@ -87,6 +101,7 @@ class LayerNode(BaseModel):
 
 class DesignSpec(BaseModel):
     brief: str
+    artifact_type: ArtifactType = ArtifactType.POSTER
     canvas: dict[str, Any]                   # {w_px, h_px, dpi, aspect_ratio, color_mode:"RGB"}
     palette: list[str] = Field(default_factory=list)
     typography: dict[str, str] = Field(default_factory=dict)
