@@ -34,8 +34,8 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/6] imports")
-    from . import cli, config, critic, planner, runner, schema  # noqa
+    print("[1/7] imports")
+    from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
         composite, critique_tool, fetch_brand_asset, finalize,
@@ -43,11 +43,11 @@ def check_imports() -> None:
         switch_artifact_type,
     )  # noqa
     from .util import ids, io, logging  # noqa
-    _ok("all modules import")
+    _ok("all modules import (incl. chat + session)")
 
 
 def check_tool_registry() -> None:
-    print("[2/6] tool registry")
+    print("[2/7] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -74,7 +74,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/6] pydantic schema round-trip")
+    print("[3/7] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +117,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/6] fonts")
+    print("[4/7] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +137,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/6] composite (no API)")
+    print("[5/7] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -236,7 +236,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/6] SVG vector text")
+    print("[6/7] SVG vector text")
     from .config import REPO_ROOT
     svg_path = REPO_ROOT / "out" / "smoke" / "poster.svg"
     if not svg_path.exists():
@@ -254,6 +254,68 @@ def check_svg_text_is_vector() -> None:
     _ok("SVG contains <text>国宝回家</text> as real vector")
 
 
+def check_chat_session_roundtrip() -> None:
+    """ChatSession pydantic + save/load cycle — no API calls."""
+    print("[7/7] chat session save/load")
+    from .config import REPO_ROOT
+    from .session import (
+        ChatMessage, ChatSession, TrajectoryRef,
+        load_session, new_session_id, save_session, session_path, list_sessions,
+    )
+    from .schema import ArtifactType
+
+    tmp_dir = REPO_ROOT / "out" / "smoke_sessions"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    sid = new_session_id()
+    if not sid.startswith("session_"):
+        _fail(f"new_session_id() should start with 'session_'; got {sid!r}")
+
+    # Build a realistic session with 1 user + 1 assistant msg + 1 trajectory ref
+    session = ChatSession(session_id=sid)
+    session.append_user("design a 3:4 poster for 国宝回家")
+    ref = TrajectoryRef(
+        run_id="20260418-smoke-test",
+        artifact_type=ArtifactType.POSTER,
+        created_at=session.created_at,
+        trajectory_path="/tmp/fake-trajectory.json",
+        preview_path="/tmp/fake-preview.png",
+        psd_path="/tmp/fake.psd",
+        svg_path="/tmp/fake.svg",
+        n_layers=5,
+        verdict="pass",
+        score=0.86,
+        cost_usd=1.41,
+        wall_s=100.0,
+    )
+    session.trajectories.append(ref)
+    session.append_assistant("produced poster · 5 layers · pass(0.86)",
+                              trajectory_id=ref.run_id)
+
+    path = save_session(session, tmp_dir)
+    if not path.exists():
+        _fail(f"save_session did not write: {path}")
+    _ok(f"saved {path.name} ({path.stat().st_size} bytes)")
+
+    loaded = load_session(tmp_dir, sid)
+    if loaded.session_id != sid:
+        _fail(f"round-trip: session_id mismatch; {loaded.session_id} != {sid}")
+    if len(loaded.message_history) != 2:
+        _fail(f"round-trip: message count wrong; {len(loaded.message_history)} != 2")
+    if len(loaded.trajectories) != 1 or loaded.trajectories[0].verdict != "pass":
+        _fail("round-trip: trajectory ref did not survive")
+    _ok(f"round-trip: {len(loaded.message_history)} msgs, "
+        f"{len(loaded.trajectories)} trajectory ref(s), cost ${loaded.total_cost_usd()}")
+
+    listing = list_sessions(tmp_dir)
+    if sid not in [s[0] for s in listing]:
+        _fail("list_sessions did not include the newly-saved session")
+    _ok(f"list_sessions finds {len(listing)} session(s) incl. this one")
+
+    # Clean up smoke session file
+    path.unlink(missing_ok=True)
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -261,6 +323,7 @@ def main() -> int:
     check_fonts()
     check_composite_no_api()
     check_svg_text_is_vector()
+    check_chat_session_roundtrip()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/")
     return 0
