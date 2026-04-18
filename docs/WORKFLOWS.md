@@ -27,52 +27,110 @@ If both LLM keys are set, **OpenRouter wins**. To force stock Anthropic, comment
 Use this whenever you change tools, schema, fonts, or composite logic:
 
 ```bash
-.venv/bin/python -m design_agent.smoke
+.venv/bin/python -m longcat_design.smoke
 ```
 
-Verifies: imports, tool registry shape, `Trajectory` Pydantic round-trip, font loading, real composite call against a stub background, SVG vector text + embedded fonts.
+Verifies 7 steps: imports (incl. chat + session modules), tool registry shape (8 tools + `switch_artifact_type` first), `Trajectory` Pydantic round-trip, font loading, real composite call against a stub background, SVG vector text + embedded fonts, **ChatSession save/load round-trip**.
 
 Outputs go to `out/smoke/`. Inspect `poster.psd` (should have 3 named layers: `background` + group `text` containing `title` + `subtitle`) and `poster.svg` (`<text>国宝回家</text>` should be a real vector element).
 
 ---
 
-## Run a brief end-to-end
+## Two ways to run: chat (default) vs one-shot
+
+### Chat shell (v1.0 default — conversational multi-turn)
 
 ```bash
-.venv/bin/python -m design_agent.cli "<your brief>"
+.venv/bin/python -m longcat_design.cli
+# or equivalently:
+.venv/bin/python -m longcat_design.cli chat
+```
+
+Launches a REPL. Type a brief, agent generates, iterate. Every turn auto-saves to `sessions/<session_id>.json`. See [§slash commands](#slash-commands) below.
+
+Resume a prior session:
+
+```bash
+.venv/bin/python -m longcat_design.cli chat --resume session_20260418-214348_ea6c0de9
+```
+
+### One-shot (legacy, for scripting / CI / single-brief work)
+
+```bash
+.venv/bin/python -m longcat_design.cli run "<your brief>"
 ```
 
 Examples:
 
 ```bash
 # Minimal — replicates the 国宝回家 reference case
-.venv/bin/python -m design_agent.cli "国宝回家 公益项目主视觉海报，竖版 3:4"
+.venv/bin/python -m longcat_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
 
 # Academic poster (text-heavy)
-.venv/bin/python -m design_agent.cli "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
+.venv/bin/python -m longcat_design.cli run "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
 ```
 
-Outputs land in `out/runs/<run_id>/` (PSD/SVG/preview/layers) and `out/trajectories/<run_id>.json`.
+Both modes produce artifacts in `out/runs/<run_id>/` (PSD/SVG/preview/layers) and trajectories in `out/trajectories/<run_id>.json`. Chat mode ADDITIONALLY wraps trajectories under `sessions/<session_id>.json`.
 
-**Cost & time** (rough, see [DATA-CONTRACT.md](DATA-CONTRACT.md) for measured baselines):
+**Cost & time** per artifact (rough, see [DATA-CONTRACT.md](DATA-CONTRACT.md) and [ARCHITECTURE.md](ARCHITECTURE.md#performance-baselines-reference) for measured baselines):
 
-- 5-layer simple poster: ~100 s, ~$1.4
-- 18-layer text-heavy poster: ~200 s, ~$2.5
+- 5-layer simple poster, single-pass critique: ~100 s, ~$1.4
+- 18-layer text-heavy poster, single-pass critique: ~200 s, ~$2.5
+- 5-layer complex brief, 2-iter critique: ~300 s, ~$3.7
 
 ---
 
+## Slash commands
+
+Inside the chat REPL, any line starting with `:` is a slash command; everything else is a brief for the planner.
+
+| Command | Effect |
+|---|---|
+| `:help` · `:h` · `:?` | Show command reference |
+| `:save [id]` | Persist session to `sessions/<id>.json` (default: current session_id; auto-saves happen after every turn) |
+| `:load <id>` | Replace current session with the loaded one (auto-saves current first) |
+| `:new` | Start fresh session (auto-saves current). New session_id generated. |
+| `:list` · `:ls` | List recent sessions (most recent first, current marked with `*`) |
+| `:history` | Show message history with timestamps + trajectory refs |
+| `:tokens` · `:cost` | Cumulative session stats per artifact |
+| `:export [path]` | Copy all artifacts + session.json to `path/` (default: `~/Desktop/<session_id>/`) |
+| `:exit` · `:quit` · `:q` · Ctrl-D | Exit (auto-saves session) |
+
+**Not yet shipped** (blocked on v1.0 #5 `edit_layer` tool):
+
+- `:edit <layer_id> <field>=<value>` — currently, revisions flow through full `propose_design_spec` re-call. Once #5 ships, this slash will invoke `edit_layer` directly for cheaper single-layer tweaks.
+
+## Chat mode — revision vs new-artifact
+
+When a session already has prior artifacts, each new brief is automatically prefixed with a summary of the latest trajectory before going to the planner. The planner then decides:
+
+- **Revision** (keep same artifact, tweak): user says "make the title bigger", "change palette to red", "try a cleaner composition" → planner re-calls `propose_design_spec` with adjustments, re-renders affected text layers, recomposites. Background stays unless explicitly asked.
+- **New artifact** (possibly different type): user says "now a matching landing page", "give me a horizontal version", "a poster for DIFFERENT project X" → planner calls `switch_artifact_type` first, then fresh `propose_design_spec`. Prior artifact preserved in session for reference.
+
+The decision rules live in [`prompts/planner.md`](../prompts/planner.md) "Chat mode: revision vs new-artifact decision" section.
+
 ## Inspect outputs
+
+### Find latest run id (shell helper)
+
+```bash
+# Most recent run
+LATEST_RUN=$(ls -t out/runs/ | head -1)
+
+# Most recent session
+LATEST_SESSION=$(ls -t sessions/ | head -1 | sed 's/\.json$//')
+```
 
 ### View the flat preview
 
 ```bash
-open out/runs/<run_id>/preview.png
+open out/runs/$LATEST_RUN/preview.png
 ```
 
 ### Open SVG in browser (THE BEST way to see the truth)
 
 ```bash
-open out/runs/<run_id>/poster.svg
+open out/runs/$LATEST_RUN/poster.svg
 ```
 
 The browser is the reference renderer for our SVG output. Every `<text>` element renders correctly with the embedded WOFF2 font.

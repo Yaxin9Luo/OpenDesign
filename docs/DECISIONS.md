@@ -6,6 +6,50 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-18 — Chat shell: `ChatSession` is a thin outer wrapper; each turn gets a FRESH `ToolContext`
+
+**Decision**: In chat mode, each user turn that triggers generation creates a brand-new `PipelineRunner` + `ToolContext`. The outer `ChatSession` only stores `TrajectoryRef` entries (paths + summary metadata) and `ChatMessage` history, NOT carrying `ToolContext` state across turns.
+
+**Alternatives**:
+1. One long-lived `ToolContext` per session, tools append to `rendered_layers` across turns — appealing for "edit the previous title" workflows.
+2. Session-level state mirror (copy prior trajectory's state into new ToolContext on each turn) — more complex, still error-prone.
+
+**Rationale**: Per-turn isolation matches the Trajectory-as-unit-of-work principle. Each generation is self-contained: brief → DesignSpec → layers → composition → critique → finalize. If the user wants to revise the prior artifact, the planner re-proposes the spec (possibly reusing layer_ids to overwrite) — this is cheap at the current scale (~$1-4 per turn) and keeps the data model clean for SFT extraction. Inter-turn carryover lives at the CONVERSATION layer (ChatSession.trajectories + prior-trajectory context injection in the user brief), not at the ToolContext layer. `edit_layer` (v1.0 #5) will still respect this: it'll take a layer_id + diff and produce a new trajectory with that single layer replaced, not mutate an old one in-place.
+
+**Revisit when**: we observe users consistently producing "revision chains" (5+ successive edits to same artifact) where the full per-turn regeneration cost dominates — at that point, a selective "patch only these layers" fast-path might pay off.
+
+---
+
+## 2026-04-18 — Chat context injection: summarize ONLY the latest trajectory, not the full history
+
+**Decision**: Each new user brief in a chat session is prefixed with a summary of *only the latest* `TrajectoryRef` (run_id, artifact_type, n_layers, verdict, path). Not the full `ChatSession.trajectories` list. Not the full design_spec. Just a pointer to the most recent and a decision prompt.
+
+**Alternatives**:
+1. Inject full prior-artifact design_spec (palette, mood, composition_notes, full layer_graph) — lets planner reuse those values exactly.
+2. Inject all prior trajectories in the session — lets planner reference artifact #1 when making artifact #5.
+3. Inject nothing — treat every turn as independent, rely on the user's brief to provide full context.
+
+**Rationale**: Option 1 would roughly double each turn's input tokens (spec + layer_graph is ~2K tokens). Option 2 scales linearly with session length — by turn 10, we'd be wasting tokens on stale context. Option 3 makes revisions ("make the title bigger") meaningless because planner has no clue what "the title" refers to. The chosen middle path (latest-only summary) is cheap (~200 tokens), enough to distinguish revision-vs-new-artifact, and matches the natural chat UX where users primarily refer to "the thing I just made." If a user wants to reference an earlier artifact, they can say so explicitly ("like the first poster but with cyan text") and the planner can use `:history` / the session file as needed.
+
+**Revisit when**: users consistently want to cross-reference artifacts earlier than the latest (we'd add an optional `--artifact-context=all` flag), OR when `edit_layer` lands and the planner needs more structured layer metadata in its context (at that point, inject `layer_manifest` alongside the high-level summary).
+
+---
+
+## 2026-04-18 — CLI subcommand split: `chat` (default) + `run` (one-shot), backward-compatible
+
+**Decision**: `longcat-design` with no subcommand launches the chat REPL. The old one-shot behavior (single brief → single trajectory) moves to `longcat-design run "<brief>"`. Both work via the same `cli.py` with argparse subparsers.
+
+**Alternatives**:
+1. Keep one-shot as default, add `longcat-design chat` explicitly — preserves v0 CLI behavior but makes the headline v1.0 feature a secondary option.
+2. Remove one-shot entirely, chat is the only interface — cleaner, but breaks automation/scripting/CI use cases and loses an easy path for batch dataset generation.
+3. Two separate binaries (`longcat-design-chat` + `longcat-design-run`) — extra pyproject scripts, extra PATH clutter, no real benefit.
+
+**Rationale**: Chat is the v1.0 product-UX headline — should be the frictionless default. One-shot is still valuable for (a) dataset generation scripts that call it in a loop, (b) CI smoke tests, (c) users who just want one artifact and are scared of a REPL. Keeping both under argparse subparsers is zero extra infra. There are no external users yet, so "breaking" the no-arg one-shot form costs nothing in adoption — and the explicit `run` subcommand is arguably clearer even in isolation.
+
+**Revisit when**: usage telemetry (if we ever add it) shows `run` used <5% of the time AND no one complains — at that point consider removing `run` for simplicity. OR if the REPL becomes too slow to start (cold start >2s) for scripting use — in which case maybe reverse the default.
+
+---
+
 ## 2026-04-18 — PIVOT: rebrand as LongcatDesign, reposition as open-source Claude Design alternative
 
 **Decision**: Stop framing the project primarily as "Longcat-Next training-data pipeline / research prototype." Rename to **LongcatDesign** and ship as an **open-source product** — a terminal-first conversational design agent that is a true alternative to Claude Design (Anthropic's closed SaaS released 2026-04-18). v1.0 MVP covers three artifact types (poster / slide deck / landing page) with HTML as first-class output.

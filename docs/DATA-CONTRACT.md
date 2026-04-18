@@ -35,13 +35,68 @@ class Trajectory(BaseModel):
 
 A real trajectory.json is ~40-60 KB. Layer image files are referenced by path (not embedded), keeping the JSON itself queryable.
 
+## Chat session outer shape (v1.0 #4)
+
+Each chat REPL session wraps N trajectories under a single `ChatSession`:
+
+```python
+class ChatSession(BaseModel):
+    session_id: str                            # "session_YYYYMMDD-HHMMSS_<shortuuid>"
+    created_at: datetime
+    updated_at: datetime
+    current_artifact_type: ArtifactType        # most recent artifact declared
+    message_history: list[ChatMessage]         # full user↔assistant turn log
+    trajectories: list[TrajectoryRef]          # light refs to Trajectory JSONs on disk
+    metadata: dict
+```
+
+Persists to `sessions/<session_id>.json` (gitignored).
+
+```python
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str                               # user brief, or assistant's 1-line summary
+    timestamp: datetime
+    trajectory_id: str | None                  # on assistant msgs that produced an artifact
+
+class TrajectoryRef(BaseModel):
+    run_id: str                                # matches Trajectory.run_id
+    artifact_type: ArtifactType
+    created_at: datetime
+    trajectory_path: str                       # absolute path to <run_id>.json
+    preview_path: str
+    psd_path: str | None
+    svg_path: str | None
+    html_path: str | None                      # reserved for v1.0 #6
+    pptx_path: str | None                      # reserved for v1.0 #7
+    n_layers: int
+    verdict: Literal["pass","revise","fail"] | None
+    score: float | None
+    cost_usd: float
+    wall_s: float
+```
+
+**Why separate `ChatSession` from `Trajectory`?** Trajectories are the per-artifact unit of work (one brief → one generation → one trajectory JSON). A chat session may produce many artifacts across turns. The session file stores only lightweight refs + conversational metadata (≤10KB typical) and links to full Trajectory JSONs elsewhere. This keeps session JSON cheap to read during `:history`/`:list` operations and avoids re-parsing the entire artifact trace when the user just wants to see "what did I make in this session."
+
 ---
+
+## ArtifactType enum (v1.0 #3)
+
+```python
+class ArtifactType(str, Enum):
+    POSTER = "poster"       # absolutely-positioned layers over text-free background
+    DECK = "deck"           # N slides, PPTX-native editability (renderer pending v1.0 #7)
+    LANDING = "landing"     # self-contained HTML one-pager, flow layout (renderer pending v1.0 #6)
+```
+
+Drives renderer selection in `composite`, fills fallback default when `propose_design_spec` omits `artifact_type`. Set by `switch_artifact_type` tool; read from `ctx.state["artifact_type"]`.
 
 ## DesignSpec — the planner's blueprint
 
 ```python
 class DesignSpec(BaseModel):
     brief: str                                 # echoed from input for searchability
+    artifact_type: ArtifactType = POSTER       # NEW in v1.0 #3; default=POSTER
     canvas: dict                               # {w_px, h_px, dpi, aspect_ratio, color_mode}
     palette: list[str]                         # hex colors, ordered by importance
     typography: dict                           # {title_font, subtitle_font, stamp_font, ...}
@@ -96,7 +151,8 @@ class AgentTraceStep(BaseModel):
     timestamp: datetime
     actor: Literal["user", "planner", "tool", "critic", "system"]
     type: Literal["input", "thought", "tool_call", "tool_result",
-                  "design_spec", "critique", "finalize"]
+                  "design_spec", "critique", "finalize",
+                  "artifact_switch"]            # v1.0 #3: emitted on switch_artifact_type
 
     tool_use_id: str | None                    # pairs tool_call ↔ tool_result (Anthropic format)
     tool_name: str | None
@@ -317,10 +373,18 @@ That's it. No special infra needed — flat JSON files in a directory.
 
 When you change the schema:
 
-1. Edit [`design_agent/schema.py`](../design_agent/schema.py) (the source of truth).
+1. Edit [`longcat_design/schema.py`](../longcat_design/schema.py) (the source of truth).
 2. Update this doc to match.
-3. Bump `metadata.version` in [`runner.py`](../design_agent/runner.py) (e.g. `"v0"` → `"v0.1"`).
+3. Bump `metadata.version` in [`runner.py`](../longcat_design/runner.py) (e.g. `"v0"` → `"v0.1"`) — but only when the change is non-backward-compat. Field additions with defaults don't require a version bump.
 4. Add a migration note in [DECISIONS.md](DECISIONS.md) explaining what changed and why.
 5. Old trajectories remain readable — just branch on `metadata.version` in downstream loaders.
 
 Don't break old trajectories. The dataset is the asset.
+
+## Schema change log
+
+| Date | Change | Compat |
+|---|---|---|
+| 2026-04-17 | Initial trajectory schema (`metadata.version = "v0"`). | — |
+| 2026-04-18 | `DesignSpec.artifact_type: ArtifactType` added (default=POSTER). `AgentTraceStep.type = "artifact_switch"` added to union. | Backward-compat: old trajectories load with artifact_type defaulting to `poster`. Version unchanged (`v0`). |
+| 2026-04-18 | New sidecar schema: `ChatSession` / `ChatMessage` / `TrajectoryRef` (in `session.py`) with `_schema_version = "v1.0-chat"`. Lives at `sessions/<id>.json`. | Independent of Trajectory schema — the pair evolve separately. |

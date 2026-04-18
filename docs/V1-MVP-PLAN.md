@@ -4,6 +4,8 @@ This doc is **the single-page plan for shipping LongcatDesign v1.0**. For vision
 
 **Target**: an installable, runnable, demonstrable open-source package that conversationally produces 3 artifact types (poster / deck / landing page) with HTML as first-class output.
 
+> **Status (2026-04-18): 4 of 11 items shipped.** Rename ✅, #3 switch_artifact_type ✅, #4 CLI chat shell + session persistence ✅. Next deep work: #6 HTML renderer. See status column in §work-breakdown table below.
+
 ---
 
 ## Scope summary
@@ -23,21 +25,21 @@ This doc is **the single-page plan for shipping LongcatDesign v1.0**. For vision
 
 Numbered in recommended execution order. Each item is one focused working session.
 
-| # | Item | Size | Files touched | Notes |
-|---|---|---|---|---|
-| 1 | **KB/docs pivot** (this batch + downgrades) | ✅ done | `docs/VISION.md`, `docs/ROADMAP.md`, this file, `docs/DECISIONS.md`, `docs/DATA-CONTRACT.md`, `docs/COMPETITORS.md`, `README.md` | Before touching code — align the narrative first |
-| 2 | **Package rename** `design_agent` → `longcat_design` | 30 min | All `design_agent/*.py` imports, `pyproject.toml`, `prompts/*.md`, tests, memory | Grep-and-replace; keep all internal logic identical |
-| 3 | **artifact_type tool + router** | 2 h | `tools/switch_artifact_type.py` new · `tools/__init__.py` register · `prompts/planner.md` update · `schema.py` add `ArtifactType` enum + `DesignSpec.artifact_type` field | Default to `poster`; planner must call this on first turn of new sessions |
-| 4 | **CLI chat shell (REPL)** | 4 h | New `longcat_design/chat.py` with message loop, `:save`/`:load`/`:edit`/`:export`/`:new`/`:help`/`:exit` slash commands · `cli.py` grows two subcommands (`run` one-shot, `chat` default) · session persistence to `sessions/<id>.json` | State machine is: `idle → designing → iterating → exporting`. Planner's `Trajectory` becomes `ChatSession` (outer) containing `Trajectory[]` (per artifact iteration). |
-| 5 | **edit_layer tool** | 2 h | `tools/edit_layer.py` new · `tools/__init__.py` · `prompts/planner.md` conversational-edit guidance | Accepts layer_id + diff (text/font/color/bbox/effects); re-renders just that layer; doesn't recompose automatically (planner calls `composite` next) |
-| 6 | **HTML renderer (posters + landing)** | 6 h | New `tools/html_renderer.py` · `composite.py` adds HTML output path · extends `CompositionArtifacts` | Structured `<main>` with absolutely-positioned layers (poster) OR semantic sections (landing). Tailwind via a single `<style>` block with needed classes only. Images inlined as `data:` URIs. Fonts inlined as WOFF2. Self-contained single file. |
-| 7 | **PPTX renderer (decks)** | 4 h | New `tools/pptx_renderer.py` · deck-specific planner prompt section · `schema.py` adds `DeckStructure` | Based on python-pptx (same lib Paper2Any uses — see [COMPETITORS.md](COMPETITORS.md)). One slide per `LayerNode` with `kind: "slide"`. Text in slides uses native `TextFrame` (PowerPoint-editable). |
-| 8 | **Landing-page prompt + schema** | 2 h | `prompts/planner.md` landing-specific guidance · `schema.py` accepts semantic sections (header, hero, features, cta, footer) | Unlike posters (absolute positioning), landing pages use flow layout → schema shifts. `LayerNode.kind` gets `section` as another value. |
-| 9 | **README product page + quickstart** | 2 h | `README.md` rewrite as product landing | Screenshots of all 3 artifact types, quickstart 3-line install, feature matrix vs Claude Design |
-| 10 | **Demo video / screencast** | 2 h | External (asciinema or OBS) | Record 1 session: brief → poster → iterate → switch to deck → iterate → export HTML + PPTX |
-| 11 | **Smoke test extension** | 1 h | `longcat_design/smoke.py` — add HTML + PPTX output verification (no API) | Same pattern as existing smoke; generate fake layers, verify each renderer produces a valid file |
+| # | Item | Size | Status | Files touched | Notes |
+|---|---|---|---|---|---|
+| 1 | **KB/docs pivot** (this batch + downgrades) | ✅ done | 2026-04-18 | `docs/VISION.md`, `docs/ROADMAP.md`, this file, `docs/DECISIONS.md`, `docs/DATA-CONTRACT.md`, `docs/COMPETITORS.md`, `README.md` | Before touching code — align the narrative first |
+| 2 | **Package rename** `design_agent` → `longcat_design` | 30 min | ✅ `ffd4389` | All `longcat_design/*.py` imports, `pyproject.toml`, `prompts/*.md`, smoke, `.claude/settings.local.json` | `git mv` + edit 5 files. Clean `pip install -e .` regenerates the editable link. Uncovered macOS UF_HIDDEN gotcha (see GOTCHAS) |
+| 3 | **artifact_type tool + router** | 2 h | ✅ `21dc44f` | `tools/switch_artifact_type.py` new · `tools/__init__.py` register · `prompts/planner.md` update · `schema.py` add `ArtifactType` enum + `DesignSpec.artifact_type` field + `StepType="artifact_switch"` · `planner.py` trace-step wiring · `propose_design_spec.py` fallback | Default to `poster`; registered FIRST in TOOL_SCHEMAS. 7 → 8 tools. |
+| 4 | **CLI chat shell (REPL)** | 4 h | ✅ `03517ba` | New `longcat_design/chat.py` (REPL + 8 slash commands) · new `longcat_design/session.py` (`ChatSession`/`ChatMessage`/`TrajectoryRef` schema + save/load/list) · `cli.py` subparsers (`chat` default, `run` one-shot) · `prompts/planner.md` revision-vs-new-artifact guidance · `smoke.py` 6/6 → 7/7 with ChatSession round-trip | Session persistence comes "free" with the chat shell — item #7 below is absorbed here. |
+| 5 | **edit_layer tool** | 2 h | pending | `tools/edit_layer.py` new · `tools/__init__.py` · `prompts/planner.md` conversational-edit guidance · `chat.py` `:edit` slash command | Accepts layer_id + diff (text/font/color/bbox/effects); re-renders just that layer; doesn't recompose automatically (planner calls `composite` next). Unlocks `:edit` slash command (currently stubbed) |
+| 6 | **HTML renderer (posters + landing)** | 6 h | pending ← **NEXT DEEP WORK** | New `tools/html_renderer.py` · `composite.py` adds HTML output path · extends `CompositionArtifacts` | Structured `<main>` with absolutely-positioned layers (poster) OR semantic sections (landing). Tailwind via a single `<style>` block with needed classes only. Images inlined as `data:` URIs. Fonts inlined as WOFF2. Self-contained single file. |
+| 7 | **PPTX renderer (decks)** | 4 h | pending | New `tools/pptx_renderer.py` · deck-specific planner prompt section · `schema.py` adds `DeckStructure` | Based on python-pptx (same lib Paper2Any uses — see [COMPETITORS.md](COMPETITORS.md)). One slide per `LayerNode` with `kind: "slide"`. Text in slides uses native `TextFrame` (PowerPoint-editable). |
+| 8 | **Landing-page prompt + schema** | 2 h | pending | `prompts/planner.md` landing-specific guidance · `schema.py` accepts semantic sections (header, hero, features, cta, footer) | Unlike posters (absolute positioning), landing pages use flow layout → schema shifts. `LayerNode.kind` gets `section` as another value. |
+| 9 | **README product page + quickstart** | 2 h | partial | `README.md` rewrite as product landing | Current README already LongcatDesign-branded; needs screenshots of all 3 artifact types (pending #6/#7) + feature matrix polish + quickstart verify. |
+| 10 | **Demo video / screencast** | 2 h | pending | External (asciinema or OBS) | Record 1 session: brief → poster → iterate → switch to deck → iterate → export HTML + PPTX |
+| 11 | **Smoke test extension** | 1 h | pending | `longcat_design/smoke.py` — add HTML + PPTX output verification (no API) | Same pattern as existing smoke; generate fake layers, verify each renderer produces a valid file. Current smoke covers PSD + SVG + session round-trip (7/7). |
 
-**Total estimate**: **~25 hours focused dev time**. Distribute as: 2-3 intensive days OR ~1 week part-time.
+**Effort done**: ~7 h (items 1-4). **Remaining**: ~15 h coding (items 5-8 + 11) + ~4 h docs/video (items 9, 10).
 
 ---
 

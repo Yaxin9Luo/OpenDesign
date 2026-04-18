@@ -18,22 +18,32 @@ Validated with two real runs:
 
 **Positioning at the time**: research prototype for Longcat-Next training-data capture. Pivoted 2026-04-18 to **LongcatDesign** open-source product — trajectory machinery preserved as internal session state; no longer the primary pitch.
 
+### v1.0 in-progress milestones (2026-04-18, ongoing)
+
+**Package rename** (commit `ffd4389`): `design_agent` → `longcat_design`. pyproject `longcat-design` distribution, `longcat-design` CLI, all internal imports and references updated. Clean `pip install -e .` registers the new package; both `python -m longcat_design.cli` and `longcat-design` script entry work (modulo the macOS UF_HIDDEN trap documented in GOTCHAS).
+
+**v1.0 #3 — `switch_artifact_type` tool + ArtifactType enum** (commit `21dc44f`): schema gains `ArtifactType` (poster / deck / landing) + `DesignSpec.artifact_type` field + new `StepType` `"artifact_switch"`. New tool registered FIRST in TOOL_SCHEMAS. Planner prompt updated with artifact-type declaration as step 1 of the workflow contract. propose_design_spec falls back to `ctx.state["artifact_type"]` when spec omits the field. 7 → 8 tools wired.
+
+**v1.0 #4 — CLI conversational chat shell + ChatSession persistence** (commit `03517ba`): new `chat.py` (REPL, 8 slash commands: `:help`/`:save`/`:load`/`:new`/`:list`/`:history`/`:tokens`/`:export`/`:exit`) + new `session.py` (`ChatSession`/`ChatMessage`/`TrajectoryRef` + save/load/list helpers). cli.py restructured with subparsers (`chat` default + `run` one-shot). Context injection: every non-first brief prefixed with a compact summary of the latest trajectory so planner can distinguish revision-vs-new-artifact. Planner prompt grows a dedicated "revision vs new-artifact decision" section. Smoke 6 → 7 steps with ChatSession round-trip coverage.
+
+**Third dogfood run** (2026-04-18): LongcatDesign launch poster in 5 minutes / $3.74 / 5 layers / 2-iter critique (revise 0.78 → pass 0.82). Chinese title 「龙猫设计」, English subtitle, red stamp 「开源」, bottom tagline 「对话 · 解构 · 编辑」 — all independently editable layers. Proves the architecture holds up on harder briefs (agent retried NBP 3× when safety-filter rejected first attempts).
+
 ---
 
-## v1.0 — LongcatDesign public MVP launch (NEXT)
+## v1.0 — LongcatDesign public MVP launch (4 of 11 items done)
 
-Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install longcat-design`-able. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for full implementation breakdown.
+Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install longcat-design`-able. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for full implementation breakdown with status column.
 
 **Must-haves for launch**:
 
-1. **Rename** — `pyproject.toml` project name → `longcat-design`; CLI entry `longcat-design`; Python package → `longcat_design/`; docs/README branding.
-2. **CLI chat shell** — multi-turn conversational REPL replacing one-shot `cli.py`. Slash commands: `:save`, `:load`, `:edit`, `:export`, `:new`, `:help`, `:exit`. Prompt history. Resumable sessions.
-3. **artifact_type tool** — planner-invocable: `switch_artifact_type(poster|deck|landing)`. Triggers routing to the right renderer + prompt context.
-4. **HTML renderer** — structured Tailwind CSS + inline base64 assets, self-contained `.html` file. First-class target for posters AND landing pages. Key technical differentiator vs closed SaaS.
+1. ✅ **Rename** — `pyproject.toml` project name → `longcat-design`; CLI entry `longcat-design`; Python package → `longcat_design/`; docs/README branding. (commit `ffd4389`)
+2. ✅ **CLI chat shell** — multi-turn conversational REPL replacing one-shot `cli.py`. 8 slash commands, readline editing, session persistence to `sessions/<id>.json`, resumable via `--resume`. (commit `03517ba`)
+3. ✅ **artifact_type tool** — `switch_artifact_type(poster|deck|landing)` + `ArtifactType` enum + `DesignSpec.artifact_type` field. Declares what we're making before spec. (commit `21dc44f`)
+4. **HTML renderer** — structured Tailwind CSS + inline base64 assets, self-contained `.html` file. First-class target for posters AND landing pages. Key technical differentiator vs closed SaaS. **← NEXT DEEP WORK**
 5. **PPTX renderer** — `python-pptx` writing native PowerPoint type frames, one slide per deck section. Editable in PowerPoint / Keynote / Slides with no special steps.
-6. **edit_layer tool** — planner-invocable: modify an existing layer's text/font/color/bbox and recompose. Conversational "make the title bigger" flow.
-7. **Conversation persistence** — each chat session saves its full message history + trajectory to `sessions/<id>.json`. Reload with `:load <id>`.
-8. **README + docs** — product-facing README (quickstart, showcase, install, config), KB updates for all new pieces.
+6. **edit_layer tool** — planner-invocable: modify an existing layer's text/font/color/bbox and recompose. Unlocks `:edit` slash command (currently revisions go through full re-spec path).
+7. ✅ **Conversation persistence** — each chat session saves its full message history + trajectory refs to `sessions/<id>.json`. Reload with `:load <id>` or CLI `--resume`. (shipped with #2)
+8. **README + docs** — product-facing README (quickstart, showcase, install, config), KB updates for all new pieces. (partial — docs kept current; final polish pending)
 9. **1 demo video** — screencast of a multi-turn session producing all 3 artifact types.
 
 **Deferred from v1.0 to v1.x** (keeps launch scope tight):
@@ -44,7 +54,7 @@ Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install
 - Skill sedimentation (was v0.5, now **v1.5**)
 - Font generator / custom fonts (was v0.7, still way later)
 
-**Rough effort estimate**: ~20 hours focused dev time. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for the breakdown.
+**Progress** (as of 2026-04-18): **4 of 11 items done** (rename + #3 + #4 + persistence included-with-#4). Remaining core work: HTML renderer (#6, biggest lift), PPTX renderer (#7), edit_layer tool (#5), landing schema (#8), README polish (#9), demo video (#10), smoke HTML/PPTX assertions (#11). Estimate ~15 h coding + 2-4 h docs/video to v1.0 tag.
 
 ---
 
