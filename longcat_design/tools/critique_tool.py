@@ -1,6 +1,6 @@
 """critique — vision call on the latest preview, returns a CritiqueResult.
 
-Wraps `design_agent.critic.Critic` so the planner can invoke critiques inline.
+Wraps `longcat_design.critic.Critic` so the planner can invoke critiques inline.
 The full CritiqueResult is appended to ctx.state['critique_results'] and also
 serialized to disk (artifact path returned for SFT/DPO replay).
 """

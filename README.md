@@ -61,13 +61,13 @@ cp .env.example .env       # fill in GEMINI_API_KEY + (OPENROUTER_API_KEY OR ANT
 ### Smoke test (no API, ~5 sec)
 
 ```bash
-.venv/bin/python -m design_agent.smoke
+.venv/bin/python -m longcat_design.smoke
 ```
 
 ### Run a brief (v0 one-shot, current)
 
 ```bash
-.venv/bin/python -m design_agent.cli "国宝回家 公益项目主视觉海报，竖版 3:4"
+.venv/bin/python -m longcat_design.cli "国宝回家 公益项目主视觉海报，竖版 3:4"
 ```
 
 Outputs land in `out/runs/<run_id>/` (PSD/SVG/preview/layers).

@@ -1,7 +1,7 @@
 """No-API smoke test: imports + schemas + fonts + a real composite call.
 
 Run with:
-    python -m design_agent.smoke
+    python -m longcat_design.smoke
 
 Generates `out/smoke/` containing poster.psd, poster.svg, preview.png produced
 from a fake (solid-color) background + 2 real text layers rendered via Pillow.
@@ -139,7 +139,13 @@ def check_composite_no_api() -> None:
     layers_dir = out_dir / "layers"
     layers_dir.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(anthropic_api_key="sk-stub", gemini_api_key="stub")
+    settings = Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7",
+        critic_model="claude-opus-4-7",
+    )
     ctx = ToolContext(settings=settings, run_dir=out_dir,
                       layers_dir=layers_dir, run_id="smoke")
 

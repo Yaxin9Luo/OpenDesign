@@ -1,4 +1,4 @@
-"""CLI entry: `python -m design_agent.cli "<brief>"` or `design-agent "<brief>"`."""
+"""CLI entry: `python -m longcat_design.cli "<brief>"` or `longcat-design "<brief>"`."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .runner import PipelineRunner
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="design-agent",
+        prog="longcat-design",
         description="Layered poster generation: brief → editable PSD + SVG + trajectory.json",
     )
     parser.add_argument("brief", help="Design brief, e.g. '国宝回家 公益项目主视觉海报，竖版 3:4'")

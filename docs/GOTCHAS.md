@@ -4,6 +4,62 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-18 — macOS marks pip-installed `.pth` files as UF_HIDDEN, Python silently skips them → `ModuleNotFoundError` via script entry
+
+**Symptom**: After `pip install -e .` on macOS (≥14.x / Sequoia-era), the editable install works via `python -m longcat_design.cli ...` BUT fails via the `longcat-design` console script with `ModuleNotFoundError: No module named 'longcat_design'`. Same Python interpreter, different invocation, different result.
+
+**Root cause**: macOS's file provenance system applies the `UF_HIDDEN` chflag (and a `com.apple.provenance` xattr) to files pip unpacks into `site-packages/`, including the `__editable__.<pkg>-<ver>.pth` file. Python's `site.py` on 3.13+ explicitly skips `.pth` files marked hidden — verbose trace shows:
+
+```
+Skipping hidden .pth file: '.venv/lib/python3.14/site-packages/__editable__.longcat_design-0.1.0.pth'
+```
+
+Without the `.pth` processed, `site-packages` has no path entry for the editable package. `python -m` still finds the package via CWD being on `sys.path[0]`, but the console script (whose `sys.path[0]` is `.venv/bin/`) has no way to find the package → `ModuleNotFoundError`.
+
+**Fix (short-term, must be re-run after every install)**:
+
+```bash
+chflags nohidden .venv/lib/python3.14/site-packages/*.pth
+xattr -c .venv/lib/python3.14/site-packages/*.pth   # optional, clears com.apple.provenance
+```
+
+Then verify:
+
+```bash
+.venv/bin/longcat-design --help   # should show usage, not traceback
+```
+
+**Fix (long-term, persistent)**: wrap `pip install` in a shell alias or makefile target that always runs `chflags nohidden` afterward. Example:
+
+```bash
+# in your shell rc
+alias pip-editable='pip install -e . && chflags nohidden .venv/lib/python3.*/site-packages/*.pth 2>/dev/null; true'
+```
+
+Or in a project `Makefile`:
+
+```makefile
+install:
+	.venv/bin/pip install -e .
+	@chflags nohidden .venv/lib/python3.*/site-packages/*.pth 2>/dev/null; true
+	@xattr -c .venv/lib/python3.*/site-packages/*.pth 2>/dev/null; true
+```
+
+**Notes**:
+- Flag comes BACK after Python reads the file — macOS re-applies `UF_HIDDEN` on access in some circumstances. Running chflags immediately before script invocation is the reliable pattern if you hit transient failures.
+- Also seen with `uv` installs (same root cause). Same fix.
+- Linux: not affected (no UF_HIDDEN concept).
+
+**Detection**: The smoking gun is the verbose import trace:
+
+```bash
+.venv/bin/python3.14 -v -c "import longcat_design" 2>&1 | grep -i "skipping hidden"
+```
+
+If you see `Skipping hidden .pth file`, apply the fix.
+
+---
+
 ## 2026-04-18 — Figma SVG import: text breaks, fonts substitute, layout explodes
 
 **Symptom**: Open `poster.svg` in Figma. Text gigantic, characters wrap mid-word ("NATIO / NAL / TREASU / RES"), `归途` stamp floats off canvas, generally looks unrelated to the browser-rendered version.
