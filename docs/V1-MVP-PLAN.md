@@ -1,0 +1,264 @@
+# v1.0 MVP — Implementation Plan
+
+This doc is **the single-page plan for shipping LongcatDesign v1.0**. For vision see [VISION.md](VISION.md); for version ordering see [ROADMAP.md](ROADMAP.md); for current codebase structure see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+**Target**: an installable, runnable, demonstrable open-source package that conversationally produces 3 artifact types (poster / deck / landing page) with HTML as first-class output.
+
+---
+
+## Scope summary
+
+| Dimension | v0 (now) | v1.0 (target) |
+|---|---|---|
+| Artifact types | Poster only | Poster + Slide Deck + Landing Page |
+| UX | One-shot CLI (`cli.py "<brief>"`) | **Conversational CLI chat shell** (multi-turn REPL) |
+| Primary output | PSD + SVG + PNG | **HTML first-class** + PSD + SVG + PPTX + PNG |
+| Package name | `design-agent` / `design_agent` | `longcat-design` / `longcat_design` |
+| Trajectory emission | User-facing product | Internal session state (preserved, not pitched) |
+| KB | Lots of training-data framing | Product framing (open-source Claude Design alt) |
+
+---
+
+## Work breakdown with estimates
+
+Numbered in recommended execution order. Each item is one focused working session.
+
+| # | Item | Size | Files touched | Notes |
+|---|---|---|---|---|
+| 1 | **KB/docs pivot** (this batch + downgrades) | ✅ done | `docs/VISION.md`, `docs/ROADMAP.md`, this file, `docs/DECISIONS.md`, `docs/DATA-CONTRACT.md`, `docs/COMPETITORS.md`, `README.md` | Before touching code — align the narrative first |
+| 2 | **Package rename** `design_agent` → `longcat_design` | 30 min | All `design_agent/*.py` imports, `pyproject.toml`, `prompts/*.md`, tests, memory | Grep-and-replace; keep all internal logic identical |
+| 3 | **artifact_type tool + router** | 2 h | `tools/switch_artifact_type.py` new · `tools/__init__.py` register · `prompts/planner.md` update · `schema.py` add `ArtifactType` enum + `DesignSpec.artifact_type` field | Default to `poster`; planner must call this on first turn of new sessions |
+| 4 | **CLI chat shell (REPL)** | 4 h | New `longcat_design/chat.py` with message loop, `:save`/`:load`/`:edit`/`:export`/`:new`/`:help`/`:exit` slash commands · `cli.py` grows two subcommands (`run` one-shot, `chat` default) · session persistence to `sessions/<id>.json` | State machine is: `idle → designing → iterating → exporting`. Planner's `Trajectory` becomes `ChatSession` (outer) containing `Trajectory[]` (per artifact iteration). |
+| 5 | **edit_layer tool** | 2 h | `tools/edit_layer.py` new · `tools/__init__.py` · `prompts/planner.md` conversational-edit guidance | Accepts layer_id + diff (text/font/color/bbox/effects); re-renders just that layer; doesn't recompose automatically (planner calls `composite` next) |
+| 6 | **HTML renderer (posters + landing)** | 6 h | New `tools/html_renderer.py` · `composite.py` adds HTML output path · extends `CompositionArtifacts` | Structured `<main>` with absolutely-positioned layers (poster) OR semantic sections (landing). Tailwind via a single `<style>` block with needed classes only. Images inlined as `data:` URIs. Fonts inlined as WOFF2. Self-contained single file. |
+| 7 | **PPTX renderer (decks)** | 4 h | New `tools/pptx_renderer.py` · deck-specific planner prompt section · `schema.py` adds `DeckStructure` | Based on python-pptx (same lib Paper2Any uses — see [COMPETITORS.md](COMPETITORS.md)). One slide per `LayerNode` with `kind: "slide"`. Text in slides uses native `TextFrame` (PowerPoint-editable). |
+| 8 | **Landing-page prompt + schema** | 2 h | `prompts/planner.md` landing-specific guidance · `schema.py` accepts semantic sections (header, hero, features, cta, footer) | Unlike posters (absolute positioning), landing pages use flow layout → schema shifts. `LayerNode.kind` gets `section` as another value. |
+| 9 | **README product page + quickstart** | 2 h | `README.md` rewrite as product landing | Screenshots of all 3 artifact types, quickstart 3-line install, feature matrix vs Claude Design |
+| 10 | **Demo video / screencast** | 2 h | External (asciinema or OBS) | Record 1 session: brief → poster → iterate → switch to deck → iterate → export HTML + PPTX |
+| 11 | **Smoke test extension** | 1 h | `longcat_design/smoke.py` — add HTML + PPTX output verification (no API) | Same pattern as existing smoke; generate fake layers, verify each renderer produces a valid file |
+
+**Total estimate**: **~25 hours focused dev time**. Distribute as: 2-3 intensive days OR ~1 week part-time.
+
+---
+
+## Detailed dependencies (cross-item)
+
+```
+#1 (docs) ──────► (everything else — lock narrative first)
+     │
+     ▼
+#2 (rename) ────► #3, #4, #5 (all touch the package)
+     │
+     ▼
+#3 (artifact_type) ───► #7, #8 (deck + landing need the switching)
+     │
+     ▼
+#4 (chat shell) ───► #5, #9 (edit_layer called from chat; README documents chat)
+     │
+     ▼
+#5 (edit_layer) ──► #4 (chat shell's `:edit` uses this tool)
+     │
+     ▼
+#6 (HTML) ──┐
+            ├───► #9 (README shows HTML output)
+#7 (PPTX) ──┤
+            │
+#8 (landing) ► #6 (landing IS HTML) + #3 (routed to)
+     │
+     ▼
+#11 (smoke) ──► #9 (README quickstart runs smoke)
+     │
+     ▼
+#10 (demo) ──► (last; needs everything working)
+```
+
+Parallel-safe pairs: #3 & #6 (independent), #7 & #8 (independent once #3 done).
+
+---
+
+## Schema changes (v0 → v1.0)
+
+```python
+# NEW enum
+class ArtifactType(str, Enum):
+    POSTER = "poster"
+    DECK = "deck"
+    LANDING = "landing"
+
+# DesignSpec gains:
+class DesignSpec(BaseModel):
+    ...existing...
+    artifact_type: ArtifactType = ArtifactType.POSTER   # NEW default
+
+# LayerNode.kind enum broadens:
+LayerKind = Literal["background", "text", "brand_asset", "group",
+                    "image",     # NEW for v1.1 image insets
+                    "slide",     # NEW for decks
+                    "section"]   # NEW for landing sections
+
+# CompositionArtifacts adds HTML + PPTX paths:
+class CompositionArtifacts(BaseModel):
+    psd_path: str | None                 # None for landing (no PSD output)
+    svg_path: str | None                 # None for deck/landing
+    html_path: str                       # NEW — required for all artifacts
+    pptx_path: str | None                # populated for deck
+    preview_path: str                    # PNG, flattened preview
+    layer_manifest: list[dict]
+
+# NEW — the outer container for a chat session (wraps N trajectories)
+class ChatSession(BaseModel):
+    session_id: str
+    created_at: datetime
+    message_history: list[ChatMessage]   # user/assistant alternating
+    trajectories: list[Trajectory]       # one per artifact iteration
+    current_artifact_type: ArtifactType
+    metadata: dict
+```
+
+`metadata.version` bumps `v0` → `v1.0`. Loaders branch on it.
+
+---
+
+## Chat shell design (item #4 detail)
+
+Behavior sketch:
+
+```
+$ longcat-design                          # default: start new chat session
+LongcatDesign v1.0 — type your brief, or :help
+
+> design a 3:4 poster for "国宝回家 公益项目"
+ │ [planner thinking... calls propose_design_spec + generate_background + render_text_layer × N + composite]
+ │ → Generated poster. Preview: sessions/abc123/artifacts/poster_1/preview.png
+ │   PSD: sessions/abc123/artifacts/poster_1/poster.psd
+ │   SVG: sessions/abc123/artifacts/poster_1/poster.svg
+ │   HTML: sessions/abc123/artifacts/poster_1/poster.html
+
+> make the title bigger and move the 归途 stamp to the top-left
+ │ [planner calls edit_layer × 2 + composite]
+ │ → Updated. Preview: sessions/abc123/artifacts/poster_1/preview.png
+
+> now do a matching landing page for this project
+ │ [planner calls switch_artifact_type(landing) + new propose_design_spec + ...]
+ │ → Generated landing page. HTML: sessions/abc123/artifacts/landing_1/index.html
+
+> :export ~/Desktop/guobao
+ │ → Copied all artifacts to ~/Desktop/guobao/
+
+> :save
+ │ → Session saved: sessions/abc123.json (resume with :load abc123)
+
+> :exit
+```
+
+Slash commands:
+
+| Command | Effect |
+|---|---|
+| `:save [id]` | Persist session state to `sessions/<id>.json` |
+| `:load <id>` | Replace current session with loaded one |
+| `:new` | Start fresh session (prompts to save current) |
+| `:edit <layer_id> <field>=<value>` | Direct layer edit (CLI shortcut; also fires `edit_layer` tool) |
+| `:export [path]` | Copy all artifacts + session.json to `path/` |
+| `:history` | Show message history (paginated) |
+| `:tokens` | Show cumulative tokens + cost |
+| `:model <name>` | Switch planner model mid-session |
+| `:help` | Command reference |
+| `:exit` / `:quit` / Ctrl-D | Exit (prompts save) |
+
+Text not starting with `:` goes to the planner as the next user turn.
+
+---
+
+## HTML renderer design (item #6 detail)
+
+Two modes based on `DesignSpec.artifact_type`:
+
+**Poster mode** — one absolutely-positioned layer per LayerNode:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+  <style>
+    @font-face { font-family: 'NotoSerifSC-Bold';
+                 src: url(data:font/woff2;base64,{{subset_b64}}) format('woff2'); }
+    .canvas { position: relative; width: {{w}}px; height: {{h}}px; }
+    .layer { position: absolute; }
+    /* ... minimal Tailwind subset inlined ... */
+  </style>
+</head>
+<body>
+  <div class="canvas">
+    <img class="layer" src="data:image/png;base64,{{bg_b64}}"
+         style="left:0; top:0; width:{{w}}px; height:{{h}}px;">
+    <div class="layer"
+         style="left:80px; top:110px; width:1200px; height:180px;
+                font-family:'NotoSerifSC-Bold'; font-size:220px;
+                color:#fafafa; text-align:center;">国宝回家</div>
+    <!-- ...more layers... -->
+  </div>
+</body>
+</html>
+```
+
+**Landing mode** — semantic sections, flow layout, Tailwind-style classes:
+
+```html
+<main class="min-h-screen">
+  <header class="flex items-center justify-between p-8">
+    <img src="data:image/png;base64,...logo...">
+    <nav>...</nav>
+  </header>
+  <section class="hero bg-gradient-to-br from-stone-900 to-amber-900 ...">
+    <h1 class="text-6xl font-serif">国宝回家</h1>
+    <p>让流失海外的中华文物，踏上归途</p>
+  </section>
+  <section class="features grid grid-cols-3 gap-8 ...">...</section>
+  <footer>...</footer>
+</main>
+```
+
+Key: **both modes produce a single self-contained `.html` file** with all CSS inline, all fonts embedded (WOFF2 subset), all images as data URIs. No external deps. Open in browser, works everywhere.
+
+---
+
+## Acceptance criteria for v1.0 launch
+
+Before tagging `v1.0`:
+
+- [ ] `pip install longcat-design` works from TestPyPI
+- [ ] `longcat-design --version` returns `1.0.0`
+- [ ] `longcat-design` (no args) launches chat shell
+- [ ] All 3 artifact types produce viewable output in a real session
+- [ ] HTML outputs render correctly in Chrome + Safari + Firefox (spot check)
+- [ ] PPTX outputs open in PowerPoint and Keynote (spot check)
+- [ ] Smoke test passes (`python -m longcat_design.smoke`)
+- [ ] README matches reality (all commands work as shown)
+- [ ] Demo video recorded + linked from README
+- [ ] Docs pass a "new-to-project in 30 min" onboarding test (Ctrl-A friend tries, reports blockers)
+- [ ] Repo is MIT licensed with proper headers, `LICENSE` file, `CONTRIBUTING.md` stub, `CODE_OF_CONDUCT.md`
+- [ ] Linked from Longcat team's channels
+
+---
+
+## Risks + mitigations
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| HTML renderer complexity explodes (landing page is wide scope) | Medium | Time-box item #6 to 6 h; if landing mode isn't working, ship poster-mode HTML only and defer landing to v1.1 |
+| Chat shell state machine gets messy | Medium | Start with the smallest state set (idle / running_tool / waiting_user); add edge cases only when they hit. Don't over-engineer. |
+| PPTX Chinese font rendering fails on some systems | Low | Embed common CJK fonts hint in PPTX; document which fonts users should install. Keynote and MS PowerPoint generally have CJK support. |
+| Python-pptx type-frame API quirks | Medium | Reference Paper2Any's `Paper2Any/dataflow_agent/toolkits/postertool/src/agents/renderer.py` as a working example. We validated they use native type frames — we can copy that approach. |
+| Rename breaks imports in unexpected places | Low | Full `grep -r design_agent` before and after; run smoke test after rename. |
+
+---
+
+## What this plan intentionally omits
+
+- **Marketing / launch strategy** — content, tweets, HN post, timing. Separate plan needed.
+- **Docs site hosting** (mkdocs vs GitHub Pages vs custom) — ROADMAP open question.
+- **CI/CD** — basic GitHub Actions for lint+test is a 1-hour add before launch, not blocking.
+- **Perf benchmarks** — ship v1.0 first, measure in the wild, optimize in v1.x.

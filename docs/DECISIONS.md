@@ -1,0 +1,195 @@
+# Decisions Log
+
+Append-only record of non-obvious design choices and the reasoning behind them. **Don't reopen settled questions without reading the rationale here first.** When you make a new decision, add an entry at the top with the date.
+
+Format: each entry has **Decision** (one-line), **Alternatives considered**, **Rationale**, optionally **Revisit when** (conditions that should trigger reopening).
+
+---
+
+## 2026-04-18 — PIVOT: rebrand as LongcatDesign, reposition as open-source Claude Design alternative
+
+**Decision**: Stop framing the project primarily as "Longcat-Next training-data pipeline / research prototype." Rename to **LongcatDesign** and ship as an **open-source product** — a terminal-first conversational design agent that is a true alternative to Claude Design (Anthropic's closed SaaS released 2026-04-18). v1.0 MVP covers three artifact types (poster / slide deck / landing page) with HTML as first-class output.
+
+**Alternatives considered**:
+1. **Stay the course** — continue v0.1 → v0.2 → v0.3 under trajectory-first framing. Rejected: after Claude Design launched, the product-form for AI design agents is validated in a way training-data emission isn't; missing the window leaves us building for a use case (Longcat-Next model training) that may not monetize user pain the way shipping a real product does.
+2. **Build full SaaS clone of Claude Design** (browser UI, multi-user, Canva integration) — rejected as [VISION.md](VISION.md) / [COMPETITORS.md](COMPETITORS.md) note: we can't win on UX polish budget against Anthropic, but can win on open-source + terminal-first + open formats.
+3. **Abandon trajectory emission entirely** — rejected: kept as internal session state. Enables resume / undo / optional future training-data harvesting with no product dilution.
+
+**Rationale**: Claude Design validates the UX thesis (conversational iteration > one-shot) and reveals the market gap we can actually own: open-source, terminal-first, open output formats, self-hostable, model-agnostic. Also: rebranding to `LongcatDesign` aligns with our team's Longcat ecosystem (Longcat-Next et al.) — signals team credibility without forcing the training-data framing into the product pitch. Trajectory machinery is preserved; if the Longcat-Next team wants to harvest session data later, it's a feature-flag flip, not a refactor.
+
+**Consequences**:
+- [VISION.md](VISION.md) rewritten around product positioning.
+- [ROADMAP.md](ROADMAP.md) reordered: v1.0 = MVP launch; old v0.x items (multi-image insets, real PSD type layer, Brand Kit) become v1.1-v1.5.
+- [DATA-CONTRACT.md](DATA-CONTRACT.md) carries a banner: schema preserved, no longer the product — see its header for details.
+- [COMPETITORS.md](COMPETITORS.md) needs partial revision (flagged for rewrite); differentiation-vs-Claude-Design section is newly relevant.
+- [V1-MVP-PLAN.md](V1-MVP-PLAN.md) (new doc) is the single-page shipping plan for v1.0.
+- Package will rename `design_agent` → `longcat_design` (pending user confirmation; tracked in todo).
+
+**Revisit when**: (a) v1.0 ships and we have real adoption numbers — if GitHub stars/active users stay in low dozens after 3 months, reconsider positioning; (b) Anthropic open-sources Claude Design or exposes a "layered output" API — would shift the competitive landscape; (c) Longcat-Next team explicitly needs the training-data pipeline to launch — can reactivate with config flag without abandoning product.
+
+---
+
+## 2026-04-18 — OpenRouter as primary LLM backend (with stock Anthropic fallback)
+
+**Decision**: Support both `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY` in env; OpenRouter takes precedence when both are set. Anthropic Python SDK is used either way (OpenRouter exposes Anthropic-compatible `/messages`).
+
+**Alternatives**:
+- Anthropic only — simpler, but locks the user to one billing relationship + the user's account had credit issues.
+- OpenAI SDK against OpenRouter's OpenAI-compat endpoint — would require rewriting `planner.py` (different tool_use protocol).
+- LiteLLM or similar abstraction layer — extra dependency, extra abstraction, no concrete benefit since OpenRouter Anthropic-format works.
+
+**Rationale**: Path of least code change (just `base_url` swap on the existing Anthropic SDK), preserves the entire tool-use protocol verbatim, gives the user a single key for many providers + per-call cost reporting, removes the credit-balance failure mode.
+
+**Revisit when**: OpenRouter goes down or changes their Anthropic-compat endpoint behavior; or Longcat-Next is hostable and we want to point planner/critic at our own model.
+
+---
+
+## 2026-04-18 — `load_dotenv(override=True)`
+
+**Decision**: `.env` always wins over shell-exported env vars.
+
+**Rationale**: Shells (especially zsh with random `.zshrc` lines or keychain integration) can export empty values for `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` that silently mask `.env`. We hit this twice in one session. Project-local `.env` is the explicit source of truth for this project's config; shell env is for the user's defaults. `.env` wins.
+
+**Revisit when**: Never. This is the right default for project-local config.
+
+---
+
+## 2026-04-18 — Gemini SDK output: always re-encode through PIL
+
+**Decision**: After `part.as_image().save()`, force a Pillow `Image.open(BytesIO(inline_data.data)).save(path, format='PNG')` re-encode regardless of what the SDK returned.
+
+**Rationale**: `genai.Image.save("foo.png")` writes the raw `inline_data.data` bytes (which are JPEG from Gemini's side) and just names the file `.png`. Downstream tooling (psd-tools embedding, browsers parsing the SVG `<image>` tag) checks magic bytes, gets confused. Re-encoding through PIL guarantees the file format matches the file extension.
+
+**Revisit when**: Gemini SDK starts returning true PNG bytes consistently (would need to verify across model variants).
+
+---
+
+## 2026-04-17 — v0 = Plan B (PSD pixel layers + SVG vector text), NOT real PSD type layer
+
+**Decision**: In v0, every text element is rendered to a transparent RGBA PNG (Pillow) and embedded into the PSD as a *named pixel layer*. The SVG carries the *real* vector text via `<text>` elements with embedded subsetted-WOFF2 fonts. Photoshop's true `TypeLayer` is deferred to v0.2+.
+
+**Alternatives**:
+- Plan A — real PSD type layer (`psd-tools` writes a `TypeTool` block)
+- Plan C — only output SVG, skip PSD entirely
+
+**Rationale**: `psd-tools` real type layer support is brittle (font matching across systems is non-deterministic, OpenType feature support is partial, and the API is poorly documented). Getting it right would have eaten 1-2 weeks before the first end-to-end run. SVG with embedded fonts gives true editability *now* with zero font-matching risk. PSD as named pixel layers gives Photoshop users the right *layer structure* (move/resize/order/blend works) at the cost of needing to retype text — acceptable v0 compromise.
+
+**Revisit when**: v0.2 work begins; or when a user blocks on "I need to edit Chinese text directly in Photoshop without re-typing."
+
+---
+
+## 2026-04-17 — Anthropic SDK + handwritten tool loop, NOT LangGraph / CrewAI / etc.
+
+**Decision**: The planner's tool-use loop is a hand-written ~150-line `PlannerLoop` class that calls `client.messages.create(..., tools=[...])` directly and threads `tool_result` messages back manually.
+
+**Alternatives**: LangGraph, CrewAI, AutoGen, Anthropic's `beta.tools` helpers, etc.
+
+**Rationale**: The trajectory IS the product. We need byte-exact replayable traces with paired `tool_use_id` ↔ `tool_result` entries, per-turn token/cost tracking, and the ability to add custom step types (`design_spec`, `critique`) at semantic boundaries. High-level frameworks abstract those mechanics away and make trajectory emission painful. Hand-written loop = ~150 lines, full control, easy to audit. The trade-off is that we re-implement what frameworks give for free (retry, streaming, etc.), but those aren't on the v0 critical path.
+
+**Revisit when**: We need streaming responses for UX, OR when we want to run multiple planners in parallel and a framework's worker-pool abstractions would help.
+
+---
+
+## 2026-04-17 — `propose_design_spec` is a tool, NOT free-form text
+
+**Decision**: The planner submits its initial DesignSpec via a `propose_design_spec` tool call (with the spec as JSON in `tool_args.design_spec`), not as a JSON blob inside a free-form `text` block.
+
+**Alternatives**: Have the planner emit the spec as a markdown JSON code block in its first response, parse it out with regex.
+
+**Rationale**: Two benefits. (a) Pydantic validation happens cleanly at the tool boundary; bad JSON returns a structured `ToolObservation{status:"error"}` the planner can react to. (b) The trace records a clean `tool_call` ↔ `tool_result` ↔ `design_spec` (with `spec_snapshot`) sequence — downstream extractors don't have to parse free-form text to find the spec.
+
+**Revisit when**: We add streaming + want the planner to start spec-emission incrementally before all fields are known.
+
+---
+
+## 2026-04-17 — Trajectory ownership: runner builds it, planner doesn't see it
+
+**Decision**: `agent_trace` is owned by the `PlannerLoop` instance and accumulated turn-by-turn. `critique_loop` lives in `ctx.state["critique_results"]` and is appended by the `critique` tool. The runner stitches them together with everything else only at finalize-time. The planner LLM never sees trajectory state.
+
+**Alternatives**: Pass the trajectory-so-far as context to the planner each turn so it can self-reflect on its history.
+
+**Rationale**: Keeps the planner's working context lean (essential because tool definitions + spec + last few results already eat 30-60K tokens per turn). The planner doesn't need to read its own trace to make good decisions — the recent assistant + tool messages already give it the relevant short-term context. Adding the trajectory as context would balloon cost AND risk recursive reasoning issues.
+
+**Revisit when**: We have a clear failure mode where the planner forgets a constraint from many turns ago that's not in its recent context.
+
+---
+
+## 2026-04-17 — Background generation: hard-enforce text-free via prompt suffix
+
+**Decision**: `tools/generate_background.py` always appends the literal sentence `"No text, no characters, no lettering, no symbols, no logos, no watermarks."` to the planner's prompt before sending to Gemini. The Gemini SDK has no native `negative_prompt` parameter.
+
+**Alternatives**: Trust the planner to include the suffix (planner.md already instructs it); use a negative-prompt parameter (doesn't exist for `gemini-3-pro-image-preview`); post-OCR check + retry.
+
+**Rationale**: Trust-but-verify isn't enough — the entire pipeline assumes background carries zero text. A planner regression that drops the suffix would silently corrupt training data (model would learn to bake text into background). Cheap belt-and-suspenders enforcement at the tool boundary. Post-OCR check is v0.2+ tightening.
+
+**Revisit when**: Gemini exposes a real `negative_prompt`; OR we want to allow some backgrounds to contain text (e.g., a poster of a sign, where the sign text is intentional).
+
+---
+
+## 2026-04-17 — SVG fonts: subset to used glyphs only
+
+**Decision**: Use `fonttools.subset` to extract only the glyphs actually used in this poster's text, encode as WOFF2, embed via `data:font/woff2;base64,...` in `<defs><style>@font-face{...}</style></defs>`.
+
+**Alternatives**: Embed the full Noto fonts (~16-24 MB each), reference by URL, rely on system-installed fonts.
+
+**Rationale**: Full embed would produce 40+ MB SVG files per poster. URL references break self-containment (SVG won't render correctly when emailed/shared). System fonts break consistency (different machines, different rendering). Subsetted WOFF2 embedded inline gives self-contained SVGs at ~10-30 KB per font (vs 16-24 MB unsubsetted). The tradeoff: editing text to add new characters not in the original may show as fallback glyphs — see [GOTCHAS.md](GOTCHAS.md) "SVG character set drift" and [ROADMAP.md](ROADMAP.md) v0.1 rerender command.
+
+**Revisit when**: Users frequently edit text content post-export and hit the character-drift issue more often than they hit the file-size issue.
+
+---
+
+## 2026-04-17 — Critic: max 2 iterations, hard cap
+
+**Decision**: `Settings.max_critique_iters = 2`. Critic prompt forbids `verdict: "revise"` past iteration 2 (forces `fail`). Runner doesn't restart on `fail` — partial output still counts as a valid trajectory.
+
+**Alternatives**: No cap; cap by total tokens; ask user to confirm continuation.
+
+**Rationale**: Critic loops can become recursive when the model gets attached to a particular fix that doesn't help. 2 iterations is enough for one round of meaningful revision (initial → fix → final). Beyond that is diminishing returns. Partial trajectories are still useful training data — they teach the critic+planner what "stuck" looks like.
+
+**Revisit when**: We have evidence that 3-4 iterations meaningfully improve final scores in a measurable way.
+
+---
+
+## 2026-04-17 — Pydantic 2 for schema, NOT free-form dicts
+
+**Decision**: Every data shape that crosses module boundaries (especially `Trajectory`, `DesignSpec`, `LayerNode`, `ToolObservation`) is a Pydantic 2 `BaseModel`. Free-form dicts only appear inside `metadata` and `canvas` dicts where the keys can vary by run.
+
+**Alternatives**: TypedDict, dataclasses, raw dicts.
+
+**Rationale**: Pydantic gives runtime validation (catches bad LLM JSON early), JSON serialization with `.model_dump(mode="json")` (handles datetime, enums, nested models for free), and self-documenting schemas (you can read `schema.py` like a spec). Downstream consumers (training data loaders) get free type safety. The cost is a dependency we already have.
+
+**Revisit when**: Pydantic becomes a perf bottleneck (won't happen at our scale).
+
+---
+
+## 2026-04-17 — Bundled fonts: Noto SC family (sans + serif)
+
+**Decision**: Ship `NotoSansSC-Bold.otf` and `NotoSerifSC-Bold.otf` (Open Font License) in `assets/fonts/`. The renderer only knows about these two; unknown `font_family` strings fall back to `NotoSansSC-Bold` with a `partial` warning.
+
+**Alternatives**: Use system fonts; ship more font weights; integrate a Font Generator tool (Lovart-style).
+
+**Rationale**: Two fonts cover 95% of CJK + Latin needs (sans for body/Latin, serif for titles/calligraphic feel). System fonts vary by machine, breaking reproducibility. More weights add 16-24 MB each — a regular-weight pair would double bundled size for small visual benefit. Custom font generation (Lovart's "Bronze Calligraphy" feature) is v0.5+ work.
+
+**Revisit when**: Users frequently complain that fallback to NotoSansSC ruins the design intent; OR we add the Font Generator tool.
+
+---
+
+## 2026-04-17 — Layer coordinates: top-left origin, pixel units
+
+**Decision**: All `bbox` fields use top-left origin and pixel units. This matches PSD convention, Pillow convention, and SVG default.
+
+**Alternatives**: Bottom-left origin (mathematician convention); normalized [0..1] coordinates; em / pt units.
+
+**Rationale**: Three downstream rendering targets all use top-left pixel coords. Aligning the spec to them eliminates per-tool conversion bugs. Normalized coordinates would require knowing canvas size at every layer — possible, but adds friction. Top-left pixel is the unambiguous lingua franca.
+
+**Revisit when**: We add print-medium output where physical units (mm/inches) matter more.
+
+---
+
+## Schema version history
+
+When the trajectory schema changes, add a row here. **Never break old trajectories** — branch on `metadata.version` in downstream loaders.
+
+| Date | Version | Change |
+|---|---|---|
+| 2026-04-17 | `v0` | Initial trajectory schema with 5 SFT-ready lanes. |

@@ -1,0 +1,41 @@
+# ---- Secrets ----
+.env
+.env.local
+.env.*.local
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# ---- Runtime artifacts ----
+out/
+sessions/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Local dev reference (not redistributed) ----
+# WeChat blog seed reference — copyright, kept local only
+design_agent_blog.pdf
+# Cloned third-party reference repo, safety net (already moved outside project)
+Paper2Any/
+
+# ---- Claude Code local state ----
+.claude/
