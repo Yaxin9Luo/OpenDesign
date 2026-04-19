@@ -745,9 +745,11 @@ def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
     name = getattr(section_node, "name", "") or "content"
     variant = _section_variant(name)
     children = getattr(section_node, "children", None) or []
+    has_image = any(getattr(c, "kind", None) == "image" for c in children)
 
     parts: list[str] = [
-        f'  <section class="ld-section" '
+        f'  <section class="ld-section"'
+        f'{" data-has-image=\"true\"" if has_image else ""} '
         f'data-layer-id="{_attr(layer_id)}" '
         f'data-kind="section" '
         f'data-layer-name="{_attr(name)}" '
@@ -755,10 +757,35 @@ def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
         f'data-z-index="{int(getattr(section_node, "z_index", 0) or 0)}">',
     ]
     for child in children:
-        if getattr(child, "kind", None) == "text" and getattr(child, "text", None):
+        kind = getattr(child, "kind", None)
+        if kind == "text" and getattr(child, "text", None):
             parts.append(_landing_text_html(child, ctx))
+        elif kind == "image" and getattr(child, "src_path", None):
+            parts.append(_landing_image_html(child))
     parts.append("  </section>")
     return "\n".join(parts)
+
+
+def _landing_image_html(image_node: Any) -> str:
+    """Inline image layer inside a landing section — embedded as data: URI."""
+    src_path = getattr(image_node, "src_path", None)
+    if not src_path:
+        return ""
+    data_uri = _inline_image(src_path)
+    layer_id = getattr(image_node, "layer_id", "") or ""
+    name = getattr(image_node, "name", "") or layer_id
+    aspect = getattr(image_node, "aspect_ratio", None) or ""
+    alt = name.replace("_", " ")
+    return (
+        f'    <figure class="layer image" '
+        f'data-layer-id="{_attr(layer_id)}" '
+        f'data-kind="image" '
+        f'data-z-index="{int(getattr(image_node, "z_index", 0) or 0)}" '
+        f'data-layer-name="{_attr(name)}" '
+        f'data-aspect-ratio="{_attr(aspect)}">'
+        f'<img src="{data_uri}" alt="{_attr(alt)}" loading="lazy">'
+        f'</figure>'
+    )
 
 
 def _landing_text_html(text_node: Any, ctx: ToolContext) -> str:

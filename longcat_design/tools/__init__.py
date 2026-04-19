@@ -13,6 +13,7 @@ from .edit_layer import edit_layer
 from .fetch_brand_asset import fetch_brand_asset
 from .finalize import finalize
 from .generate_background import generate_background
+from .generate_image import generate_image
 from .propose_design_spec import propose_design_spec
 from .render_text_layer import render_text_layer
 from .switch_artifact_type import switch_artifact_type
@@ -125,6 +126,59 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["layer_id", "prompt", "aspect_ratio", "image_size"],
+        },
+    },
+    {
+        "name": "generate_image",
+        "description": (
+            "Generate an inline image for a landing-page section via Gemini "
+            "Nano Banana Pro. Use this for landing hero visuals (product "
+            "photography, brand illustration) and feature-card icons/art. "
+            "Images are TEXT-FREE — the renderer overlays real HTML text. "
+            "Output is stored as a `kind: \"image\"` layer with a PNG file; "
+            "you then reference it in a section's `children` list so the "
+            "landing HTML renderer emits `<img>` inline with the flow text. "
+            "NOT for posters — poster uses generate_background with safe_zones. "
+            "Prompting tip: use the per-style imagery-prompt prefix from the "
+            "design-system guide (e.g. 'soft 3D clay render, pastel palette' "
+            "for claymorphism) so all images on the same landing feel "
+            "stylistically coherent. "
+            "Returns ToolObservation; artifact is the PNG path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "layer_id": {"type": "string"},
+                "name": {
+                    "type": "string",
+                    "description": "Semantic name: 'hero_image' | 'feature_1_icon' | 'cta_banner' etc.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Scene-only description (no text, no logos). Include "
+                        "the design-system style prefix. Example: 'soft 3D clay "
+                        "render of a warm milk tea in a glass cup, pastel "
+                        "off-white background, gentle top-light, rounded forms, "
+                        "peaceful handcrafted feel'."
+                    ),
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "3:4", "4:3", "16:9", "9:16",
+                             "2:3", "3:2", "4:5", "5:4", "21:9"],
+                    "description": (
+                        "Typical picks: '16:9' or '3:2' for hero, '1:1' for "
+                        "feature icons, '4:3' for mid-section banners."
+                    ),
+                },
+                "image_size": {
+                    "type": "string", "enum": ["1K", "2K"],
+                    "description": "'1K' for feature icons (cheaper); '2K' for hero (higher quality).",
+                },
+                "z_index": {"type": "integer"},
+            },
+            "required": ["layer_id", "name", "prompt", "aspect_ratio", "image_size"],
         },
     },
     {
@@ -344,6 +398,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "switch_artifact_type": switch_artifact_type,
     "propose_design_spec": propose_design_spec,
     "generate_background": generate_background,
+    "generate_image": generate_image,
     "render_text_layer": render_text_layer,
     "edit_layer": edit_layer,
     "fetch_brand_asset": fetch_brand_asset,

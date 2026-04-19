@@ -69,6 +69,31 @@ body {
   border-top: 1px solid var(--ld-glass-border);
 }
 
+/* Image layers (v1.0 #8.75) — frosted frame around images too */
+.ld-landing figure.layer.image {
+  margin: 0; padding: 0; width: 100%;
+  background: var(--ld-glass-bg);
+  backdrop-filter: blur(var(--ld-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--ld-blur)) saturate(1.4);
+  border: 1px solid var(--ld-glass-border);
+  border-radius: 20px; overflow: hidden;
+  box-shadow: var(--ld-shadow-soft);
+}
+.ld-landing figure.layer.image img {
+  width: 100%; height: auto; display: block;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
+  text-align: left;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] figure.layer.image {
+  aspect-ratio: 3 / 4;
+}
+.ld-section[data-section-variant="features"][data-has-image="true"] figure.layer.image {
+  aspect-ratio: 1 / 1; max-width: 96px; margin-bottom: 12px;
+  border-radius: 50%;
+}
+
 .ld-landing .layer.text {
   font-family: system-ui, -apple-system, sans-serif;
   color: var(--ld-fg);

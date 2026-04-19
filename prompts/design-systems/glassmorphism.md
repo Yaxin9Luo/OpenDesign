@@ -51,3 +51,20 @@ Text-heavy docs (glass cards can't hold essays), low-end devices (backdrop-filte
 - `effects.fill`: `#f8fafc` throughout — the gradient backdrop is the color story, text stays white
 - Keep glass panels' text short — 3–5 lines max per card
 - Use `accent_color` to shift the CTA button color only (the gradient palette stays aurora unless you override CSS)
+
+## Imagery prompts (for `generate_image`)
+
+Glassmorphism images are **abstract, colorful, dreamy** — often holographic / iridescent gradients, soft-focused photography, or generative color fields. They should feel like they could be the backdrop the glass sits on. Always prefix with:
+
+> `abstract holographic gradient, iridescent pastel to vivid (magenta, violet, cyan, aqua), soft blur, dreamy ethereal quality, no hard edges, no text, atmospheric depth`
+
+**Aspect ratios**:
+- hero: `3:4` or `4:3`, `2K`
+- feature icon: `1:1`, `1K` — CSS wraps in frosted circle
+- mid banner: `16:9`, `1K`
+
+**Concrete examples (AI/creative SaaS)**:
+- Hero: `abstract holographic gradient flowing from violet to cyan to magenta, soft blurred bokeh, iridescent dreamy atmosphere, no subject`
+- Feature icon: `abstract circular gradient orb, translucent iridescent center, soft glow, minimal`
+
+**Avoid**: flat colors, hard graphic icons, neubrutalism-esque shapes, realistic photography.

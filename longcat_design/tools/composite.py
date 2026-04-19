@@ -107,6 +107,10 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
     canvas = spec.canvas or {}
     cw = int(canvas.get("w_px", 1200))
 
+    # Re-hydrate image children with src_path from rendered_layers before
+    # manifest build / HTML write — see _hydrate_landing_image_srcs docstring.
+    _hydrate_landing_image_srcs(layer_graph, ctx)
+
     manifest: list[dict[str, Any]] = []
     for node in layer_graph:
         kind = getattr(node, "kind", None)
@@ -117,7 +121,8 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
                 "kind": "section",
                 "children": [
                     {"layer_id": c.layer_id, "name": c.name, "kind": c.kind,
-                     "text": c.text}
+                     "text": getattr(c, "text", None),
+                     "src_path": getattr(c, "src_path", None)}
                     for c in (node.children or [])
                 ],
             })
@@ -127,6 +132,13 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
                 "name": node.name,
                 "kind": "text",
                 "text": node.text,
+            })
+        elif kind == "image":
+            manifest.append({
+                "layer_id": node.layer_id,
+                "name": node.name,
+                "kind": "image",
+                "src_path": node.src_path,
             })
 
     try:
@@ -149,16 +161,66 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
     ctx.state["composition"] = artifacts
 
     section_ct = sum(1 for n in layer_graph if getattr(n, "kind", None) == "section")
+    image_ct = sum(
+        1 for sec in layer_graph
+        for c in (getattr(sec, "children", None) or [])
+        if getattr(c, "kind", None) == "image" and getattr(c, "src_path", None)
+    )
     log("composite.landing.done",
         html=str(html_path), preview=str(preview_path),
-        sections=section_ct, top_level=len(layer_graph))
+        sections=section_ct, images=image_ct, top_level=len(layer_graph))
 
     return obs_ok(
-        f"Composed landing page: {section_ct} section(s) → HTML + preview "
-        f"(width {cw}px, flow layout)",
+        f"Composed landing page: {section_ct} section(s), {image_ct} image(s) "
+        f"→ HTML + preview (width {cw}px, flow layout)",
         artifacts=[str(html_path), str(preview_path)],
         next_actions=["call critique to self-review", "or call finalize"],
     )
+
+
+def _hydrate_landing_image_srcs(layer_graph: list[Any], ctx: ToolContext) -> None:
+    """Copy `src_path` from ctx.state['rendered_layers'] onto matching image
+    children in the spec's layer_graph — so write_landing_html's data-URI
+    embedding finds a real file.
+
+    The planner typically declares the section tree in propose_design_spec
+    with children having the intended `layer_id`, then separately invokes
+    generate_image(layer_id=...) which puts the PNG + src_path into
+    rendered_layers. Without this hydration step, the children nodes have
+    no src_path and the renderer would silently skip them.
+    """
+    rendered = ctx.state.get("rendered_layers") or {}
+    if not rendered:
+        return
+    for section in layer_graph:
+        if getattr(section, "kind", None) != "section":
+            continue
+        children = list(getattr(section, "children", None) or [])
+        changed = False
+        new_children: list[Any] = []
+        for child in children:
+            if getattr(child, "kind", None) != "image":
+                new_children.append(child)
+                continue
+            if getattr(child, "src_path", None):
+                new_children.append(child)
+                continue  # already has src_path
+            rec = rendered.get(getattr(child, "layer_id", None))
+            if rec and rec.get("src_path"):
+                try:
+                    new_child = child.model_copy(update={
+                        "src_path": rec["src_path"],
+                        "aspect_ratio": rec.get("aspect_ratio") or child.aspect_ratio,
+                    })
+                    new_children.append(new_child)
+                    changed = True
+                except Exception:
+                    child.src_path = rec["src_path"]
+                    new_children.append(child)
+            else:
+                new_children.append(child)
+        if changed:
+            section.children = new_children
 
 
 def _write_landing_preview(spec: Any, out_path: Path, ctx: ToolContext) -> None:

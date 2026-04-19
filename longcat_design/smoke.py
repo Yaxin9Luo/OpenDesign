@@ -34,7 +34,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/11] imports")
+    print("[1/12] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,11 +47,12 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/11] tool registry")
+    print("[2/12] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
-                "generate_background", "render_text_layer", "edit_layer",
+                "generate_background", "generate_image",
+                "render_text_layer", "edit_layer",
                 "fetch_brand_asset", "composite", "critique", "finalize"}
     schema_names = {s["name"] for s in TOOL_SCHEMAS}
     handler_names = set(TOOL_HANDLERS.keys())
@@ -74,7 +75,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/11] pydantic schema round-trip")
+    print("[3/12] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +118,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/11] fonts")
+    print("[4/12] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +138,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/11] composite (no API)")
+    print("[5/12] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -238,7 +239,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/11] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/12] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -309,7 +310,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/11] chat session save/load")
+    print("[7/12] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -371,7 +372,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/11] edit_layer (no API)")
+    print("[8/12] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -496,13 +497,13 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/11] apply-edits round-trip (no API)")
+    print("[9/12] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
     src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
     if not src_html.exists():
-        _fail("smoke HTML missing — [5/11] composite step must run first")
+        _fail("smoke HTML missing — [5/12] composite step must run first")
 
     # Simulate a user edit: bump font size + change color on the title.
     # Re-emit with a changed data-font-size-px/data-fill so round-trip should
@@ -573,7 +574,7 @@ def check_apply_edits_roundtrip() -> None:
 
 def check_landing_mode() -> None:
     """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
-    print("[10/11] landing mode (no API)")
+    print("[10/12] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -713,7 +714,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/11] design-system styles (no API)")
+    print("[11/12] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -810,6 +811,122 @@ def check_design_system_styles() -> None:
     _ok("accent_color override propagated to --ld-accent token")
 
 
+def check_landing_with_images() -> None:
+    """Landing mode with image children in sections. No NBP call —
+    pre-stages a stub PNG in rendered_layers and asserts the renderer
+    inlines it + apply-edits round-trips the image layer."""
+    print("[12/12] landing with images (no API)")
+    from .apply_edits import apply_edits
+    from .config import REPO_ROOT, Settings
+    from .schema import ArtifactType
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_landing_img"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stub a hero image PNG so generate_image doesn't need to be called.
+    hero_img_path = layers_dir / "img_H0_stub.png"
+    Image.new("RGB", (600, 800), (244, 200, 180)).save(hero_img_path)
+    feat_img_path = layers_dir / "img_F_stub.png"
+    Image.new("RGB", (256, 256), (220, 214, 247)).save(feat_img_path)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7", critic_model="claude-opus-4-7",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-landing-img")
+
+    # Seed rendered_layers as if generate_image was called
+    ctx.state["rendered_layers"]["H0_img"] = {
+        "layer_id": "H0_img", "name": "hero_image", "kind": "image",
+        "z_index": 1, "bbox": None, "src_path": str(hero_img_path),
+        "prompt": "(stub)", "aspect_ratio": "3:4",
+        "image_size": "2K", "sha256": "stub",
+    }
+    ctx.state["rendered_layers"]["F1_img"] = {
+        "layer_id": "F1_img", "name": "feature_1_icon", "kind": "image",
+        "z_index": 1, "bbox": None, "src_path": str(feat_img_path),
+        "prompt": "(stub)", "aspect_ratio": "1:1",
+        "image_size": "1K", "sha256": "stub",
+    }
+
+    if switch_artifact_type({"type": "landing"}, ctx=ctx).status != "ok":
+        _fail("switch_artifact_type")
+
+    spec_args = {"design_spec": {
+        "brief": "landing with images test",
+        "artifact_type": "landing",
+        "design_system": {"style": "claymorphism"},
+        "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96,
+                   "aspect_ratio": "1:2", "color_mode": "RGB"},
+        "palette": ["#f4f0ea", "#3a2f4a"],
+        "typography": {}, "mood": ["test"], "composition_notes": "",
+        "layer_graph": [
+            {"layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
+             "children": [
+                 {"layer_id": "H0_img", "name": "hero_image", "kind": "image",
+                  "z_index": 1, "aspect_ratio": "3:4"},
+                 {"layer_id": "H1", "name": "hero_headline", "kind": "text",
+                  "z_index": 2, "text": "Test Hero",
+                  "font_family": "NotoSerifSC-Bold", "font_size_px": 88,
+                  "align": "center", "effects": {"fill": "#3a2f4a"}},
+             ]},
+            {"layer_id": "S2", "name": "features", "kind": "section", "z_index": 2,
+             "children": [
+                 {"layer_id": "F1_img", "name": "feature_1_icon", "kind": "image",
+                  "z_index": 1, "aspect_ratio": "1:1"},
+                 {"layer_id": "F1", "name": "feature_1", "kind": "text",
+                  "z_index": 2, "text": "First feature copy.",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 20,
+                  "effects": {"fill": "#3a2f4a"}},
+             ]},
+        ],
+    }}
+    if propose_design_spec(spec_args, ctx=ctx).status != "ok":
+        _fail("propose_design_spec")
+    if composite({}, ctx=ctx).status != "ok":
+        _fail("composite (with images)")
+
+    comp = ctx.state["composition"]
+    html_text = Path(comp.html_path).read_text(encoding="utf-8")
+
+    required = {
+        "figure.layer.image":     '<figure class="layer image"',
+        "<img tag":               "<img src=\"data:image/",
+        "data-has-image":         'data-has-image="true"',
+        "hero image layer_id":    'data-layer-id="H0_img"',
+        "feature image layer_id": 'data-layer-id="F1_img"',
+        "aspect-ratio data":      'data-aspect-ratio=',
+    }
+    for label, needle in required.items():
+        if needle not in html_text:
+            _fail(f"landing+images HTML missing — {label}: {needle!r}")
+    _ok(f"landing HTML ({Path(comp.html_path).stat().st_size // 1024} KB) — "
+        f"2 <figure> image layers inlined with data URIs")
+
+    # Apply-edits round-trip: reparse HTML, rebuild section tree with images
+    traj, _ = apply_edits(
+        Path(comp.html_path), settings=settings,
+        out_dir=out_dir / "restored",
+    )
+    sections = [n for n in traj.layer_graph if n.kind == "section"]
+    all_children = [c for s in sections for c in (s.children or [])]
+    image_kids = [c for c in all_children if c.kind == "image"]
+    if len(image_kids) != 2:
+        _fail(f"round-trip lost images: expected 2, got {len(image_kids)}")
+    for img in image_kids:
+        if not img.src_path or not Path(img.src_path).exists():
+            _fail(f"round-trip image has no file: {img.layer_id} src={img.src_path}")
+    _ok(f"round-trip: {len(sections)} sections + {len(image_kids)} image layers "
+        f"all restored with src_path decoded from data: URI")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -822,9 +939,10 @@ def main() -> int:
     check_apply_edits_roundtrip()
     check_landing_mode()
     check_design_system_styles()
+    check_landing_with_images()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
-          "out/smoke_landing/, out/smoke_styles/")
+          "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/")
     return 0
 
 

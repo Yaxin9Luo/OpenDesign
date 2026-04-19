@@ -48,3 +48,20 @@ Finance, legal, medical, enterprise, anything that needs to feel "safe" or "seri
 - `effects.fill`: `#000000` on light sections, `#ffffff` on dark
 - Hero headline as short and loud as possible ("BUILD LOUD", "SHIP UGLY", "POSTERS, NOT POSTING")
 - Features titles with quippy edge; subheads direct / aggressive
+
+## Imagery prompts (for `generate_image`)
+
+Neubrutalism images are **loud flat graphics or high-contrast photography**. Think sticker art, risograph prints, punk zine aesthetic. Always prefix with:
+
+> `flat bold graphic illustration, neubrutalism aesthetic, thick black outlines, saturated candy colors (hot pink, electric yellow, Klein blue, lime), zero gradients, zero shadows inside the image, sharp geometric shapes, risograph-print feel, punk zine energy`
+
+**Aspect ratios**:
+- hero: `1:1` or `4:5`, `2K` — bold square works with the grid-block aesthetic
+- feature icon: `1:1`, `1K` — CSS frames them with black border + offset shadow
+- mid banner: `16:9`, `1K`
+
+**Concrete examples (indie devtool)**:
+- Hero: `flat bold graphic of a lightning bolt on hot pink background, thick black outline, neubrutalism, risograph style, no gradients, no shadows`
+- Feature icon: `flat bold line icon of a gear wheel on electric yellow, thick black stroke, neubrutalism sticker aesthetic`
+
+**Avoid**: realistic photography, soft gradients, glossy textures, anything pastel or calm.

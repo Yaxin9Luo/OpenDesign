@@ -71,6 +71,32 @@ body {
   border-radius: 0 0 32px 32px;
 }
 
+/* Image layers (v1.0 #8.75) — clay puffiness applied to images too */
+.ld-landing figure.layer.image {
+  margin: 0; padding: 0; width: 100%;
+  border-radius: 32px; overflow: hidden;
+  box-shadow: var(--ld-shadow-clay);
+}
+.ld-landing figure.layer.image img {
+  width: 100%; height: auto; display: block;
+}
+/* Hero with image: image on right, text on left, rounded puffy card */
+.ld-section[data-section-variant="hero"][data-has-image="true"] {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 56px;
+  align-items: center; text-align: left;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] .layer.text:first-of-type {
+  background: transparent; box-shadow: none; padding: 0; max-width: none;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] figure.layer.image {
+  aspect-ratio: 3 / 4; border-radius: 40px;
+}
+/* Feature images: circular puffy icon inside each card */
+.ld-section[data-section-variant="features"][data-has-image="true"] figure.layer.image {
+  width: 96px; height: 96px; border-radius: 50%; margin-bottom: 12px;
+  box-shadow: var(--ld-shadow-clay);
+}
+
 .ld-landing .layer.text {
   font-family: 'Nunito', 'Quicksand', 'DM Sans', system-ui, sans-serif;
   font-weight: 600; line-height: 1.65;

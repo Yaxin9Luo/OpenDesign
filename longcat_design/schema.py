@@ -54,7 +54,14 @@ StepType = Literal[
     "design_spec", "critique", "finalize",
     "artifact_switch",  # new v1.0: emitted when switch_artifact_type is called
 ]
-LayerKind = Literal["background", "text", "brand_asset", "group", "section"]
+LayerKind = Literal[
+    "background",    # full-canvas raster (poster/deck only)
+    "text",          # rendered text layer (poster) OR inline HTML text (landing)
+    "brand_asset",   # user-supplied brand imagery (v1 stub)
+    "group",         # organisational grouping (unused in v1.0)
+    "section",       # landing section container (v1.0 #8)
+    "image",         # NBP-generated inline image inside a landing section (v1.0 #8.75)
+]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
 IssueCategory = Literal[

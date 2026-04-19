@@ -45,3 +45,20 @@ Avoid for consumer-playful products, creator-indie brands, media-heavy landings,
 - `font_size_px` ~96 on hero headline, 44 on features title, 36 on CTA headline
 - `effects.fill` — use `--fg` tokens: `#0a0a0a` on light sections, `#f5f5f5` on dark
 - Keep text short: hero headline ≤ 6 words, subhead ≤ 12 words, CTA ≤ 4 words
+
+## Imagery prompts (for `generate_image`)
+
+Minimalist images are **clean product photography or precise diagrammatic illustration**. Zero ornament, one subject, honest lighting, neutral background. Always prefix with:
+
+> `clean minimalist product photography, single subject centered, pure white or very light gray background, soft even studio lighting, no ornament, no props, high-resolution, editorial-grade composition`
+
+**Aspect ratios**:
+- hero: `4:3` or `3:2`, `2K`
+- feature icon: `1:1`, `1K` — CSS renders these as 120px squares (no decorative frame)
+- mid banner: `16:9`, `1K`
+
+**Concrete examples (dev tool brand)**:
+- Hero: `clean minimalist product photo of a laptop displaying code editor UI, pure white background, soft top-light, no reflections, honest composition, editorial`
+- Feature icon: `minimalist black-and-white line icon representing 'fast', thin strokes, single motif, solid white background`
+
+**Avoid**: gradients, drop shadows, colorful backgrounds, illustrated/cartoon styles, busy compositions.

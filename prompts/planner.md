@@ -158,12 +158,15 @@ The top level is a flat list of `kind: "section"` nodes (one per page section), 
     {
       "layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
       "children": [
-        {"layer_id": "H1", "name": "hero_headline", "kind": "text", "z_index": 1,
+        {"layer_id": "H0", "name": "hero_image", "kind": "image", "z_index": 1,
+         "prompt": "(will be filled in by generate_image call)",
+         "aspect_ratio": "3:4"},
+        {"layer_id": "H1", "name": "hero_headline", "kind": "text", "z_index": 2,
          "text": "LongcatDesign",
          "font_family": "NotoSerifSC-Bold", "font_size_px": 96,
          "align": "center",
          "effects": {"fill": "#f8fafc"}},
-        {"layer_id": "H2", "name": "hero_subhead", "kind": "text", "z_index": 2,
+        {"layer_id": "H2", "name": "hero_subhead", "kind": "text", "z_index": 3,
          "text": "Open-source conversational design agent — terminal-first, editable HTML.",
          "font_family": "NotoSansSC-Bold", "font_size_px": 28,
          "align": "center",
@@ -201,7 +204,8 @@ The top level is a flat list of `kind: "section"` nodes (one per page section), 
 1. `switch_artifact_type("landing")` — first, as always.
 2. `propose_design_spec(...)` — full spec with the section tree above. No layers have `bbox` (landing is flow layout).
 3. **SKIP `generate_background`** — landing HTML has no background image layers in v1.0 #8. (Section backgrounds are auto-themed by name: hero/cta/footer get dark variants, features gets a light variant.)
-4. **SKIP `render_text_layer`** — landing text is emitted directly as native HTML inside sections. No rasterization needed.
+4. **`generate_image`** — call once per image layer you want inline in a section (hero product shot, feature-card icons). Use the per-style prompt prefix from the chosen `prompts/design-systems/<style>.md`'s "Imagery prompts" section so all images on the page feel stylistically coherent. Each image layer must also appear in the correct section's `children[]` in the DesignSpec (same `layer_id`). Typical counts: 1 hero image + 3-4 feature icons = 4-5 images per landing. **SKIP entirely if the brief is text-only or the user asks "no images."**
+5. **SKIP `render_text_layer`** — landing text is emitted directly as native HTML inside sections. No rasterization needed.
 5. `composite` — reads `design_spec.layer_graph` directly, writes `index.html` + `preview.png` (no PSD / SVG). Takes empty args as usual.
 6. `critique` — optional. The critic sees the rendered preview.png (stacked section wireframe) — useful for checking text length / hierarchy, not pixel-perfection.
 7. `edit_layer` / re-propose spec on revise, then `composite` again.

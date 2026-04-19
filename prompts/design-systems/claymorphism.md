@@ -50,3 +50,21 @@ Enterprise, finance, legal, dashboards, dense data UIs, "serious" B2B. Clay read
 - `effects.fill`: `#3a2f4a` on light sections, `#f4f0ea` on dark
 - Feature cards get different `accent_color` per card naturally (the CSS handles this via nth-of-type coloring — planner just writes the text)
 - Headlines can be warmer / more informal: "Take a breath. We'll handle the rest." > "Enterprise-grade mindfulness"
+
+## Imagery prompts (for `generate_image`)
+
+Claymorphism images should look like they're **sculpted from warm soft clay**, photographed with soft overhead light. Always prefix prompts with:
+
+> `soft 3D clay render, rounded pastel shapes, warm off-white background (#f4f0ea), gentle top-light, no hard shadows, cute stylized forms, claymorphism 3d aesthetic`
+
+**Aspect ratios by slot**:
+- hero image: `3:4` or `4:3` (portrait works well with the puffy card framing), `image_size: "2K"`
+- feature icon: `1:1`, `image_size: "1K"` — the CSS renders these as 96px circles
+- mid-section banner: `4:3` or `16:9`, `image_size: "1K"`
+
+**Concrete prompt examples (milk tea brand)**:
+- Hero: `soft 3D clay render, a warm milk tea in a rounded ceramic cup on a creamy pastel background, puffy plump forms, gentle top-light with no harsh shadows, claymorphism aesthetic, cute stylized, warm pastel palette — no text, no logos`
+- Feature "手工糖浆": `soft 3D clay render, a small round copper pot with thick golden syrup bubbling, pastel peachy background, puffy stylized clay forms, claymorphism, cute miniature, top-down centered`
+- Feature "茶农直采": `soft 3D clay render, stylized green tea leaves in cupped hands, soft mint pastel background, rounded clay forms, warm light, cute handmade feel`
+
+**Avoid** in prompts: realism, photographic detail, metallic/glossy textures, dark moody palettes (clay should always feel warm/soft/pastel).

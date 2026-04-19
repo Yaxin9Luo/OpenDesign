@@ -275,7 +275,7 @@ def _restore_landing(main_el: Tag, ctx: ToolContext,
                      skipped: list[str]) -> list[LayerNode]:
     """Walk a `<main class='ld-landing'>` tree and return a list[LayerNode]
     for design_spec.layer_graph. Each <section> becomes a kind='section'
-    node with children = text layers inside."""
+    node with children = text / image layers inside."""
     out: list[LayerNode] = []
     for section in main_el.find_all("section", class_="ld-section", recursive=False):
         s_layer_id = section.get("data-layer-id") or ""
@@ -283,10 +283,20 @@ def _restore_landing(main_el: Tag, ctx: ToolContext,
         s_z = _int_attr(section, "data-z-index", len(out) + 1)
 
         children: list[LayerNode] = []
+        # Text layers are <div class="layer text">
         for div in section.find_all("div", class_="layer", recursive=False):
             text_node = _landing_text_from_div(div, skipped)
             if text_node is not None:
                 children.append(text_node)
+        # Image layers are <figure class="layer image"> — decode data: URI
+        for figure in section.find_all("figure", class_="layer", recursive=False):
+            image_node = _landing_image_from_figure(figure, ctx, skipped)
+            if image_node is not None:
+                children.append(image_node)
+
+        # Sort children by their z_index so the DOM-order preservation isn't
+        # lost (text and image were in different select calls).
+        children.sort(key=lambda n: int(getattr(n, "z_index", 0) or 0))
 
         out.append(LayerNode(
             layer_id=s_layer_id or f"S{len(out) + 1}",
@@ -297,6 +307,43 @@ def _restore_landing(main_el: Tag, ctx: ToolContext,
             children=children,
         ))
     return out
+
+
+def _landing_image_from_figure(fig: Tag, ctx: ToolContext,
+                               skipped: list[str]) -> LayerNode | None:
+    if fig.get("data-kind") != "image":
+        return None
+    img = fig.find("img")
+    if img is None:
+        return None
+    src = img.get("src", "")
+    if not src.startswith("data:image/"):
+        return None
+    layer_id = fig.get("data-layer-id") or f"img-{id(fig)}"
+    name = fig.get("data-layer-name") or layer_id
+
+    # Decode data: URI → write a real PNG into the new run's layers_dir so
+    # composite.html_renderer can re-inline it.
+    mime, b64_data = _parse_data_uri(src)
+    ext = {"image/png": "png", "image/jpeg": "jpg",
+           "image/webp": "webp"}.get(mime, "png")
+    out_path = ctx.layers_dir / f"img_{layer_id}.{ext}"
+    try:
+        out_path.write_bytes(base64.b64decode(b64_data))
+    except Exception as e:
+        log("apply.landing.image_decode_fail", layer_id=layer_id, error=str(e))
+        skipped.append(layer_id)
+        return None
+
+    return LayerNode(
+        layer_id=layer_id,
+        name=name,
+        kind="image",
+        z_index=_int_attr(fig, "data-z-index", 1),
+        bbox=None,
+        src_path=str(out_path),
+        aspect_ratio=fig.get("data-aspect-ratio") or None,
+    )
 
 
 def _landing_text_from_div(div: Tag, skipped: list[str]) -> LayerNode | None:

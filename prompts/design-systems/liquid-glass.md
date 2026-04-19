@@ -47,3 +47,20 @@ Utility / budget / workhorse products (liquid-glass reads costly-and-knows-it), 
 - `effects.fill`: `#f5f5f7` on all dark sections, `#1d1d1f` if any light section
 - Keep headlines poetic / short — liquid-glass prefers the typography to do the work: "Think. Different." over "Our AI platform empowers teams to..."
 - `accent_color` overrides `--accent` for the system-colored CTAs; prefer iOS system colors (blue `#0a84ff`, indigo `#5e5ce6`, pink `#ff375f`, teal `#64d2ff`)
+
+## Imagery prompts (for `generate_image`)
+
+Liquid-glass images are **premium cinematic product renders or dark-moody photography**. Think Apple keynote stills: pristine product photography, deep saturated blacks, subtle rim-light reflections, minimal props. Always prefix with:
+
+> `premium cinematic product render, deep saturated blacks, dark moody background, subtle rim light, glossy reflections, Apple keynote aesthetic, high-resolution, ultra-sharp, no ornament`
+
+**Aspect ratios**:
+- hero: `4:5` or `3:4`, `2K` — portrait mirrors the premium-product-on-pedestal feel
+- feature icon: `1:1`, `1K` — CSS frames with hairline border + soft shadow
+- mid banner: `16:9`, `2K`
+
+**Concrete examples (premium AI / creative app)**:
+- Hero: `premium cinematic render of a glass orb floating above dark stone, deep blacks, cyan rim-light, ultra-sharp, Apple product photography aesthetic`
+- Feature icon: `premium minimalist icon of a pen nib on matte black backdrop, subtle rim-light, high-detail, product-photography feel`
+
+**Avoid**: bright colors, cartoon/illustrated styles, busy compositions, daylit outdoor scenes.

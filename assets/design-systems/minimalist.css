@@ -37,6 +37,30 @@ body { background: #f4f4f5; color: var(--ld-fg); font-family: system-ui, -apple-
   padding: 48px 80px; color: var(--ld-fg-muted); font-size: 14px;
 }
 
+/* Image layers (v1.0 #8.75) */
+.ld-landing figure.layer.image {
+  margin: 0; padding: 0; width: 100%;
+  border-radius: 12px; overflow: hidden;
+  box-shadow: var(--ld-shadow-soft);
+  border: 1px solid var(--ld-border);
+}
+.ld-landing figure.layer.image img {
+  width: 100%; height: auto; display: block;
+}
+/* Hero with image: side-by-side layout */
+.ld-section[data-section-variant="hero"][data-has-image="true"] {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 48px;
+  align-items: center; text-align: left;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] .layer.text { max-width: none; }
+/* Features grid image goes above text within each card */
+.ld-section[data-section-variant="features"][data-has-image="true"] {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px;
+}
+.ld-section[data-section-variant="features"][data-has-image="true"] figure.layer.image {
+  aspect-ratio: 1 / 1; max-width: 120px; box-shadow: none; border: none;
+}
+
 .ld-landing .layer.text { font-family: system-ui, -apple-system, sans-serif; }
 .ld-section[data-section-variant="hero"] .layer.text:first-of-type,
 .ld-section[data-section-variant="features"] .layer.text:first-of-type,

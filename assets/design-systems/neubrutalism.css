@@ -49,6 +49,27 @@ body { background: var(--ld-fg); color: var(--ld-fg); font-family: 'Archivo Blac
   padding: 48px 64px; border: none;
 }
 
+/* Image layers (v1.0 #8.75) — chunky border + hard offset shadow */
+.ld-landing figure.layer.image {
+  margin: 0; padding: 0; width: 100%;
+  border: var(--ld-border); box-shadow: var(--ld-shadow-hard);
+  border-radius: 0; overflow: hidden; background: var(--ld-fg);
+}
+.ld-landing figure.layer.image img {
+  width: 100%; height: auto; display: block;
+  filter: contrast(1.1) saturate(1.2);
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
+  text-align: left;
+}
+.ld-section[data-section-variant="hero"][data-has-image="true"] figure.layer.image {
+  aspect-ratio: 1 / 1;
+}
+.ld-section[data-section-variant="features"][data-has-image="true"] figure.layer.image {
+  width: 80px; height: 80px; margin-bottom: 16px;
+}
+
 .ld-landing .layer.text {
   font-family: 'Archivo Black', 'Space Grotesk', system-ui, sans-serif;
 }

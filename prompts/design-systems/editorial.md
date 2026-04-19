@@ -47,3 +47,20 @@ Data-dense UIs, checklist-heavy product pitches, anything requiring a button-for
 - `font_size_px`: 80 hero, 48 features title, 20 body, 14 footer
 - `effects.fill`: `#1a1a1a` on cream, `#f5ece0` on dark
 - Headlines can be longer (editorial tolerates 10+ word headlines) but subheads stay under 20 words
+
+## Imagery prompts (for `generate_image`)
+
+Editorial images read like **photojournalism or large-format magazine photography**. Muted palette, classical composition, natural lighting, no saturation boost. Always prefix with:
+
+> `editorial magazine photography, muted desaturated palette, classical composition, natural window light, slightly grainy film look, thoughtful serious tone, no digital gloss`
+
+**Aspect ratios**:
+- hero: `3:2` or `4:3`, `2K`
+- feature thumbnail: `4:3`, `1K` — CSS frames with hairline rules (no roundness)
+- mid banner: `16:9` or `21:9`, `2K`
+
+**Concrete examples (publication/research lab)**:
+- Hero: `editorial magazine photo of a cluttered wooden desk with an open notebook, fountain pen, morning natural light from side window, muted warm tones, film grain, thoughtful mood`
+- Feature thumbnail: `editorial black-and-white close-up portrait of hands typing on a typewriter, soft grain, magazine style`
+
+**Avoid**: neon/saturated colors, 3D renders, cartoon/illustrated looks, stock-photo staging.
