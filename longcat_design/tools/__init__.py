@@ -9,6 +9,7 @@ from __future__ import annotations
 from ._contract import ToolContext, ToolHandler  # re-export
 from .composite import composite
 from .critique_tool import critique
+from .edit_layer import edit_layer
 from .fetch_brand_asset import fetch_brand_asset
 from .finalize import finalize
 from .generate_background import generate_background
@@ -192,6 +193,85 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "edit_layer",
+        "description": (
+            "Apply a targeted subset-diff to an existing TEXT layer — tweak its "
+            "text/font/color/size/bbox/effects without re-declaring the whole "
+            "LayerNode or re-rendering the rest of the artifact. Handler reads "
+            "the current layer from ctx.state.rendered_layers[layer_id], merges "
+            "`diff` (nested merge for bbox + effects, replace otherwise), and "
+            "overwrites the layer's PNG in place. No implicit composite — call "
+            "`composite` after batching all your edits. "
+            "Text layers only: for backgrounds call generate_background with "
+            "the same layer_id; for brand assets call fetch_brand_asset. "
+            "Use this for 'make the title bigger', 'try red', 'move the stamp "
+            "down 40px', 'bolder shadow' — anything that tweaks one layer. "
+            "Returns ToolObservation{status, summary, artifacts}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "layer_id": {
+                    "type": "string",
+                    "description": (
+                        "ID of the existing text layer to edit. Must match a "
+                        "layer_id present in ctx.state.rendered_layers."
+                    ),
+                },
+                "diff": {
+                    "type": "object",
+                    "description": (
+                        "Subset of editable fields. Only provide what you want "
+                        "to change; other fields keep their current value."
+                    ),
+                    "properties": {
+                        "text": {"type": "string"},
+                        "font_family": {
+                            "type": "string",
+                            "description": (
+                                "'NotoSansSC-Bold' or 'NotoSerifSC-Bold' "
+                                "(unknown families fall back to NotoSansSC-Bold)."
+                            ),
+                        },
+                        "font_size_px": {"type": "integer"},
+                        "fill": {"type": "string", "description": "Hex color"},
+                        "bbox": {
+                            "type": "object",
+                            "description": (
+                                "Partial bbox update. Fields you omit keep "
+                                "their existing value."
+                            ),
+                            "properties": {
+                                "x": {"type": "integer"},
+                                "y": {"type": "integer"},
+                                "w": {"type": "integer"},
+                                "h": {"type": "integer"},
+                            },
+                        },
+                        "align": {
+                            "type": "string",
+                            "enum": ["left", "center", "right"],
+                        },
+                        "z_index": {"type": "integer"},
+                        "effects": {
+                            "type": "object",
+                            "description": (
+                                "Partial effects update. Nested merge: shadow "
+                                "+ stroke sub-objects are replaced whole."
+                            ),
+                            "properties": {
+                                "stroke": {"type": "object"},
+                                "shadow": {"type": "object"},
+                            },
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["layer_id", "diff"],
+        },
+    },
+    {
         "name": "fetch_brand_asset",
         "description": (
             "v0 STUB: always returns ToolObservation{status:'not_found'}. "
@@ -265,6 +345,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "propose_design_spec": propose_design_spec,
     "generate_background": generate_background,
     "render_text_layer": render_text_layer,
+    "edit_layer": edit_layer,
     "fetch_brand_asset": fetch_brand_asset,
     "composite": composite,
     "critique": critique,

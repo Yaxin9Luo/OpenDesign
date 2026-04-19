@@ -12,6 +12,7 @@ Slash commands (v1.0 subset):
   :list                  list recent sessions (most recent first)
   :history               show message history
   :tokens  /  :cost      show cumulative stats
+  :edit                  (v1.0 #5 stub) explains why natural language is preferred
   :export [path]         copy all artifacts + session to path/
   :exit  /  :quit  /  :q exit (prompts save)
 
@@ -258,6 +259,7 @@ def _dispatch_slash(line: str, state: dict) -> bool:
         "history": _cmd_history,
         "tokens":  _cmd_tokens,
         "cost":    _cmd_tokens,
+        "edit":    _cmd_edit,
         "export":  _cmd_export,
         "exit":    _cmd_exit,
         "quit":    _cmd_exit,
@@ -283,6 +285,7 @@ def _cmd_help(arg: str, state: dict) -> bool:
           :list / :ls           list recent sessions
           :history              show message history
           :tokens / :cost       cumulative tokens + cost for this session
+          :edit                 (stub) explains why natural-language edits are preferred
           :export [path]        copy artifacts + session to path (default: ~/Desktop/<id>)
           :exit / :quit / :q    exit (auto-saves)
 
@@ -376,6 +379,44 @@ def _cmd_tokens(arg: str, state: dict) -> bool:
               f"${t.cost_usd}  "
               f"{t.wall_s}s  "
               f"run_id={t.run_id}")
+    return True
+
+
+def _cmd_edit(arg: str, state: dict) -> bool:
+    """Conversational edits go through the planner, not a slash shortcut.
+
+    v1.0 #5 ships the `edit_layer` tool (planner-callable) but NOT a
+    functional `:edit` slash. Rationale: natural language ("make the title
+    bigger", "try red") gives the planner richer intent + leverages
+    typography/color judgment the LLM already has. A slash with KV syntax
+    (`:edit layer_001 font_size_px=280`) would be narrower UX for the same
+    capability, and would require reconstructing a full ToolContext from the
+    prior trajectory on every edit — fragile plumbing for a worse experience.
+    This handler exists to route the user towards the better path.
+    """
+    session: ChatSession = state["session"]
+    if not session.trajectories:
+        print("  no artifact yet in this session — describe what you want to make first.")
+        return True
+    latest = session.trajectories[-1]
+    print(textwrap.dedent(f"""
+          :edit is not a functional slash in v1.0 — use natural language instead.
+          The planner picks up 'make the title bigger', 'try red', 'move the
+          stamp down 40px', 'bolder shadow' etc. directly and will call the
+          `edit_layer` tool under the hood for targeted text-layer tweaks.
+
+          Latest artifact:
+            run_id:       {latest.run_id}
+            type:         {latest.artifact_type.value}
+            layers:       {latest.n_layers}
+            preview:      {latest.preview_path}
+
+          Examples you can just type:
+            make the title bigger and add a red drop shadow
+            change the subtitle to '让流失海外的中华文物踏上归途'
+            move the stamp to the top-left corner
+            darker palette, keep the mood but more dramatic contrast
+    """).strip())
     return True
 
 

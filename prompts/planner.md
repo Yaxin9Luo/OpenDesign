@@ -44,9 +44,41 @@ make a new one?**
 - any request that introduces a new subject / topic
 
 When revising: skip `switch_artifact_type` (artifact type unchanged), re-call
-`propose_design_spec` with the tweaks, re-render only affected layers (SAME
-`layer_id` values to overwrite), recomposite. DO NOT regenerate the background
-unless the user explicitly asks for a different visual.
+`propose_design_spec` with the tweaks, then either re-render only the affected
+text layers via `render_text_layer` (SAME `layer_id` values to overwrite) OR
+use `edit_layer` for targeted single-field tweaks (see next section), then
+`composite`. DO NOT regenerate the background unless the user explicitly asks
+for a different visual.
+
+## Conversational edits: `edit_layer` vs `render_text_layer`
+
+For **targeted text-layer tweaks** (one or two fields on one or two layers),
+`edit_layer` is the smaller hammer and should be preferred:
+
+- `edit_layer(layer_id, diff={font_size_px: 280})` — "make the title bigger"
+- `edit_layer(layer_id, diff={fill: "#e04040"})` — "try red"
+- `edit_layer(layer_id, diff={bbox: {y: 320}})` — "move it down a bit" (partial
+  bbox merge — unspecified x/w/h keep current values)
+- `edit_layer(layer_id, diff={effects: {shadow: {blur: 24, dy: 8}}})` — "bolder shadow"
+
+`edit_layer` merges the diff onto the layer's current state (nested merge for
+`bbox` and `effects`) and re-renders only that layer's PNG. Other layers
+untouched. Text layers only — for background regeneration use
+`generate_background` with the same layer_id; for brand assets use
+`fetch_brand_asset`.
+
+Use `render_text_layer` (not `edit_layer`) when you're:
+- creating a layer for the first time,
+- changing more than 3-4 fields at once,
+- replacing the full `LayerNode` after a `propose_design_spec` revision,
+- or the planned layer_id doesn't yet exist in the current turn.
+
+After all edits, call `composite` ONCE to regenerate PSD/SVG/preview.
+
+Still always re-call `propose_design_spec` first on a revision turn so the
+saved DesignSpec reflects the post-edit layer_graph — `edit_layer` rewrites
+the rendered PNG + ctx state, but the DesignSpec is your record of what the
+design intends to be.
 
 **⚠️ When the prefix contains a `### Prior DesignSpec` JSON block: that IS
 the starting point. COPY it verbatim as your initial `design_spec` argument,

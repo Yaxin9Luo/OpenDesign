@@ -6,6 +6,29 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-19 — `edit_layer` scope: within-turn critique-revise helper, NOT cross-turn chat edit (verified by dogfood)
+
+**Decision**: Keep `edit_layer` reading from `ctx.state["rendered_layers"]` (live per-turn blackboard). Do NOT extend it to read from the prior Trajectory on disk. Its primary value lies in the **within-turn critique-revise loop**, not cross-turn chat edits.
+
+**Alternatives**:
+1. **Extend `edit_layer` to reconstruct state from prior Trajectory** (the "Route X" from planning) — would make cross-turn `:edit foo.bar=baz` or chat-turn "make title bigger" hit edit_layer directly, but breaks the 2026-04-18 ToolContext isolation decision and doubles the tool's responsibility.
+2. **Make `edit_layer` read from `ctx.state["design_spec"].layer_graph`** — changes the source of truth from "what was rendered" to "what was declared", breaks the principle that edit_layer edits _rendered_ artifacts.
+3. **Status quo (chosen)** — cross-turn revisions use `render_text_layer` with updated values (the prior DesignSpec in the brief prefix gives the planner the baseline); within-turn revise loops use `edit_layer` for targeted diffs.
+
+**Rationale**: Confirmed by dogfood run `20260419-133320-46eb3e8a` ($3.19, 120s, 2 critique iters):
+- Planner called `edit_layer` 2× in the iter-1 revise phase (L1_version: bbox + font_size_px; L4_rule: partial bbox + fill) with correct semantics and status=ok.
+- Planner correctly distinguished NEW layers (L6/L7/L8 via render_text_layer) from EXISTING layers needing tweaks (L1/L4 via edit_layer).
+- Partial bbox merge survived real use: L4's diff was `{y: 1790}`, x/w/h preserved from prior state.
+- No `edit_layer → not_found` failures → Opus 4.7 respects the planner.md guidance that edit_layer is for layers already in the current turn's rendered_layers.
+
+Per-turn cost of fully supporting cross-turn edits: +1h implementation + permanent architectural complexity. Benefit: edit_layer would be callable in chat revision turns, saving maybe $0.1 per turn vs render_text_layer. Not worth it — planner can just pass the updated values to render_text_layer directly on a new-ctx turn, same end result.
+
+**Consequence**: V1-MVP-PLAN.md #5 remains accurate as written; the `edit_layer` tool's "Conversational edits" framing in planner.md is correct — "conversational" here means "within the planner's tool-use conversation with itself during the critique-revise loop", not "between chat turns".
+
+**Revisit when**: (a) users start chaining many short-command revisions in chat (5+ per session) where the extra render_text_layer cost dominates — at that point, Route X becomes defensible; (b) the trajectory-as-unit-of-work model gets replaced by something finer-grained.
+
+---
+
 ## 2026-04-18 — Chat shell: `ChatSession` is a thin outer wrapper; each turn gets a FRESH `ToolContext`
 
 **Decision**: In chat mode, each user turn that triggers generation creates a brand-new `PipelineRunner` + `ToolContext`. The outer `ChatSession` only stores `TrajectoryRef` entries (paths + summary metadata) and `ChatMessage` history, NOT carrying `ToolContext` state across turns.

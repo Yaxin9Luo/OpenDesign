@@ -34,24 +34,24 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/7] imports")
+    print("[1/8] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
-        composite, critique_tool, fetch_brand_asset, finalize,
+        composite, critique_tool, edit_layer, fetch_brand_asset, finalize,
         generate_background, propose_design_spec, render_text_layer,
         switch_artifact_type,
     )  # noqa
     from .util import ids, io, logging  # noqa
-    _ok("all modules import (incl. chat + session)")
+    _ok("all modules import (incl. chat + session + edit_layer)")
 
 
 def check_tool_registry() -> None:
-    print("[2/7] tool registry")
+    print("[2/8] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
-                "generate_background", "render_text_layer",
+                "generate_background", "render_text_layer", "edit_layer",
                 "fetch_brand_asset", "composite", "critique", "finalize"}
     schema_names = {s["name"] for s in TOOL_SCHEMAS}
     handler_names = set(TOOL_HANDLERS.keys())
@@ -74,7 +74,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/7] pydantic schema round-trip")
+    print("[3/8] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +117,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/7] fonts")
+    print("[4/8] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +137,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/7] composite (no API)")
+    print("[5/8] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -236,7 +236,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/7] SVG vector text")
+    print("[6/8] SVG vector text")
     from .config import REPO_ROOT
     svg_path = REPO_ROOT / "out" / "smoke" / "poster.svg"
     if not svg_path.exists():
@@ -256,7 +256,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/7] chat session save/load")
+    print("[7/8] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -316,6 +316,131 @@ def check_chat_session_roundtrip() -> None:
     path.unlink(missing_ok=True)
 
 
+def check_edit_layer_no_api() -> None:
+    """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
+    print("[8/8] edit_layer (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.edit_layer import edit_layer
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.render_text_layer import render_text_layer
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_edit"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7",
+        critic_model="claude-opus-4-7",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke_edit")
+
+    # Seed: switch type + spec + one text layer + one fake bg layer
+    if switch_artifact_type({"type": "poster"}, ctx=ctx).status != "ok":
+        _fail("seed: switch_artifact_type")
+
+    spec_args = {"design_spec": {
+        "brief": "edit_layer smoke",
+        "canvas": {"w_px": 768, "h_px": 1024, "dpi": 150,
+                   "aspect_ratio": "3:4", "color_mode": "RGB"},
+        "palette": ["#1a1a1a", "#ffffff"],
+        "typography": {"title_font": "NotoSerifSC-Bold",
+                       "subtitle_font": "NotoSansSC-Bold"},
+        "mood": ["test"], "composition_notes": "", "layer_graph": [],
+    }}
+    if propose_design_spec(spec_args, ctx=ctx).status != "ok":
+        _fail("seed: propose_design_spec")
+
+    # Fake bg layer (non-text — should be refused by edit_layer)
+    ctx.state["rendered_layers"]["L0_bg"] = {
+        "layer_id": "L0_bg", "name": "background", "kind": "background",
+        "z_index": 0, "bbox": {"x": 0, "y": 0, "w": 768, "h": 1024},
+        "src_path": "/tmp/fake.png", "sha256": "stub",
+    }
+
+    # Real text layer via render_text_layer
+    obs = render_text_layer({
+        "layer_id": "L1_title", "name": "title", "text": "原标题",
+        "font_family": "NotoSerifSC-Bold", "font_size_px": 100, "fill": "#000000",
+        "bbox": {"x": 48, "y": 80, "w": 672, "h": 180}, "align": "center",
+        "z_index": 1,
+    }, ctx=ctx)
+    if obs.status not in ("ok", "partial"):
+        _fail(f"seed: render_text_layer: {obs.summary}")
+
+    before = ctx.state["rendered_layers"]["L1_title"]
+    before_sha = before["sha256"]
+    before_path = Path(before["src_path"])
+    if not before_path.exists():
+        _fail("seed: initial PNG missing before edit")
+
+    # --- Happy path: multi-field diff -------------------------------------
+    obs = edit_layer({
+        "layer_id": "L1_title",
+        "diff": {"text": "新标题！", "font_size_px": 140, "fill": "#ff0000"},
+    }, ctx=ctx)
+    if obs.status not in ("ok", "partial"):
+        _fail(f"edit_layer happy path: status={obs.status} summary={obs.summary}")
+
+    after = ctx.state["rendered_layers"]["L1_title"]
+    if after["font_size_px"] != 140:
+        _fail(f"font_size_px not applied: got {after['font_size_px']}")
+    if after["fill"] != "#ff0000":
+        _fail(f"fill not applied: got {after['fill']}")
+    if after["text"] != "新标题！":
+        _fail(f"text not applied: got {after['text']!r}")
+    # Unchanged fields preserved
+    if after["name"] != "title":
+        _fail(f"name should be preserved: got {after['name']!r}")
+    if after["align"] != "center":
+        _fail(f"align should be preserved: got {after['align']!r}")
+    if after["bbox"]["w"] != 672:
+        _fail(f"bbox should be preserved: got {after['bbox']}")
+    # PNG should have been rewritten (different content → different sha)
+    if after["sha256"] == before_sha:
+        _fail("PNG sha256 unchanged after edit — render_text_layer didn't re-run")
+    _ok("happy path: text+font_size_px+fill applied, other fields preserved, PNG rewritten")
+
+    # --- Partial bbox merge ------------------------------------------------
+    obs = edit_layer({
+        "layer_id": "L1_title",
+        "diff": {"bbox": {"y": 200}},  # only y changes
+    }, ctx=ctx)
+    if obs.status not in ("ok", "partial"):
+        _fail(f"bbox partial merge: {obs.summary}")
+    bbox = ctx.state["rendered_layers"]["L1_title"]["bbox"]
+    if not (bbox["x"] == 48 and bbox["y"] == 200 and bbox["w"] == 672 and bbox["h"] == 180):
+        _fail(f"bbox partial merge broken: {bbox}")
+    _ok("partial bbox merge: y updated, x/w/h preserved")
+
+    # --- Missing layer_id --------------------------------------------------
+    obs = edit_layer({"layer_id": "nope", "diff": {"text": "x"}}, ctx=ctx)
+    if obs.status != "not_found":
+        _fail(f"unknown layer should return not_found, got {obs.status}")
+    _ok("unknown layer_id → not_found")
+
+    # --- Non-text layer rejected ------------------------------------------
+    obs = edit_layer({"layer_id": "L0_bg", "diff": {"text": "x"}}, ctx=ctx)
+    if obs.status != "error":
+        _fail(f"bg layer edit should error, got {obs.status}")
+    if "generate_background" not in obs.summary:
+        _fail(f"bg-error summary should mention generate_background; got: {obs.summary}")
+    _ok("non-text layer → error with redirect to generate_background")
+
+    # --- Empty / unknown diff fields --------------------------------------
+    if edit_layer({"layer_id": "L1_title", "diff": {}}, ctx=ctx).status != "error":
+        _fail("empty diff should error")
+    if edit_layer({"layer_id": "L1_title",
+                   "diff": {"color": "#ff0000"}}, ctx=ctx).status != "error":
+        _fail("unknown diff field should error (caught 'color' instead of 'fill')")
+    _ok("empty diff + unknown field both rejected")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -324,8 +449,9 @@ def main() -> int:
     check_composite_no_api()
     check_svg_text_is_vector()
     check_chat_session_roundtrip()
+    check_edit_layer_no_api()
     print("\n  smoke test passed.")
-    print("  artifacts in: out/smoke/")
+    print("  artifacts in: out/smoke/, out/smoke_edit/")
     return 0
 
 
