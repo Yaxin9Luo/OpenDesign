@@ -4,6 +4,34 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-19 — Landing critic judges Pillow preview.png, not the real HTML → false "fail" verdicts
+
+**Symptom**: Good landing HTML gets scored `fail / 0.18 / 8 blocker issues` by critic. Issues list looks like "dark empty canvas, tofu emojis, cards overlap, hero 60px not 180px" — all things the real browser-rendered HTML doesn't have. Real instance: first milk-tea landing dogfood `20260419-192002-bfcf00b0` produced a polished claymorphism landing with 180px hero + correct emojis + section layout, but critic called it unshippable.
+
+**Root cause**: Landing mode's `preview.png` is a simplified Pillow wireframe (composite.py `_write_landing_preview`) — it stacks section headlines on a color band but can't actually render CSS, so things like grid layouts, backdrop-filter, and system-font emoji coverage are all missing. The critic was handed this bad raster and graded it honestly against the poster-visual rubric.
+
+**Fix**: `critic.py` now branches on `design_spec.artifact_type`. For LANDING it uses `prompts/critic-landing.md` (content-level rubric against the section tree JSON) with no image attachment. Runner.py + schema extended so `IssueCategory` accepts `"copy"` / `"content"` which the text-only critic naturally uses. Same milk-tea brief re-run after the fix (`20260419-204503-b5300878`): critic pass 0.94, 2 minor issues.
+
+**Rule of thumb**: If the artifact is HTML-primary (landing), the DesignSpec + section tree IS the source of truth. Grading a lossy rasterization of a good HTML is strictly worse than grading the DesignSpec directly. For visual-primary artifacts (poster, eventually deck PPTX screenshots), vision critique stays — the rendered artifact IS what the user consumes.
+
+**Detection**: If a landing critique comes back with blockers of the form "canvas is dark/empty," "emojis are tofu," "text overlaps," "grid is broken" while the real HTML opens fine in your browser → you're on the old vision-based critic path. Check that `critic.py` is routing LANDING to `_evaluate_landing` and that `prompts/critic-landing.md` exists in the prompts dir.
+
+---
+
+## 2026-04-19 — Landing image layers declared in DesignSpec but `src_path=None` until composite
+
+**Symptom**: Planner calls `propose_design_spec` with `children: [{kind: "image", layer_id: "H0_img", ...}]`, then calls `generate_image(layer_id="H0_img", ...)` — both succeed, but the rendered HTML has no `<img>` for that layer, just empty sections. Grep the output: zero `data:image/png;base64,` data URIs.
+
+**Root cause**: `generate_image` writes the PNG + metadata into `ctx.state["rendered_layers"]["H0_img"]` with a real `src_path`, but the section tree lives on `ctx.state["design_spec"].layer_graph` — the image layer in `section.children` was declared in `propose_design_spec` with `src_path=None` (the planner can't know the path in advance). The HTML renderer walks the section tree for output, never `rendered_layers`, so it sees `src_path=None` and silently skips.
+
+**Fix**: `tools/composite.py` `_hydrate_landing_image_srcs` walks the section tree before render and copies `src_path` (and `aspect_ratio`) from matching entries in `rendered_layers` onto the children using pydantic `model_copy(update=...)`. Called at the top of `_composite_landing` before manifest-build and `write_landing_html`. Once hydrated, the renderer inlines each image as a `data:` URI via `_inline_image`.
+
+**Rule of thumb for two-step planner flows**: When a tool writes content into `rendered_layers` but the DesignSpec also needs to carry that content for downstream consumers (trajectory persistence, round-trip parsers, downstream renderers), build a hydration helper that bridges them. Don't ask the planner to call `propose_design_spec` twice — the bookkeeping should be runtime, not LLM work.
+
+**Detection**: If `composite.landing.done` logs `images=0` but `rendered_layers` contains kind="image" entries → hydration didn't run or didn't find matches. Check that every image child's `layer_id` is identical to the one passed to `generate_image`.
+
+---
+
 ## 2026-04-19 — Chat "revise" turns regress to the few-shot anchor (wrong poster generated)
 
 **Symptom**: First turn of a chat session generates poster A (e.g. a Neural Networks course poster, 9 layers). Second turn user says "make the title bigger". Agent runs, produces a 4-layer poster about 国宝回家 with palette `['#1a0f0a','#fafafa','#a02018','#c9a45a']` and layers `国宝回家 / National Treasures / 归途` — nothing to do with the NN poster. Real instance: session `session_20260418-231218_f285acbc`, turn-2 run_id `20260418-232431-0ce827fc`, $1.44 wasted.

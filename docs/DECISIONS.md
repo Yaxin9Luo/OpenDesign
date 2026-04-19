@@ -6,6 +6,63 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-19 — NBP generates landing imagery too, via a NEW tool `generate_image` (not overloaded `generate_background`)
+
+**Decision**: Introduce a second image-generation tool dedicated to landing-mode inline imagery. `generate_background` stays poster-only (full-canvas, text-free, has `safe_zones`); `generate_image` is landing-only (inline in a section's `children[]`, no `safe_zones`, flow layout). Both hit NBP under the hood but are semantically separate in the tool vocabulary.
+
+**Alternatives considered**:
+1. **Overload `generate_background`** with a `kind` parameter or context-detect. Rejected: "background" literally means "behind everything, full canvas" — using it for a `80×80` feature-card icon breaks the mental model and makes the prompt schema's `safe_zones` semantically weird.
+2. **Defer landing imagery to v1.1** (keep landings text-only for v1.0 launch). Rejected after user feedback: a text-only landing "能用 but 不能商业化," landing as a product category requires imagery to read as real.
+3. **Use a third-party stock image service** (Unsplash / Pexels) instead of NBP. Rejected: kills the "one-conversation one-landing" pitch — users would have to curate images separately. NBP is the differentiator.
+
+**Rationale**: Clean separation of semantics in the tool registry was cheap (1 new file `tools/generate_image.py`, ~90 LOC) and pays off in planner prompting — the per-style "Imagery prompts" guides can speak directly to `generate_image` without carrying the "this tool is also used for full-canvas backgrounds" caveat. Verified by milk-tea brand dogfood (run `20260419-204503-b5300878`): 10 tools wired, planner correctly picked `generate_image` for 5 landing slots (1 hero + 4 feature icons), $2.20 total, critic pass 0.94.
+
+**Coupled decision — hydrating image src_path into the section tree**: The planner uses a two-step flow — declare the image layer inside a section's `children[]` via `propose_design_spec` (structure), then separately call `generate_image(layer_id=...)` (content, writes PNG to `rendered_layers`). The DesignSpec's `children[]` initially has `src_path=None`. Before composite renders the HTML, a new helper `_hydrate_landing_image_srcs` walks the section tree and copies `src_path` from `rendered_layers` onto matching children via `model_copy(update=...)`. This keeps the two sources of truth consistent without the planner having to re-issue `propose_design_spec` after every `generate_image` call.
+
+**Revisit when**: (a) NBP's API gains native negative-prompt support (we could then consolidate generate_background + generate_image if they become truly symmetric); (b) users consistently want non-NBP images in landings (would need a third tool `fetch_image(url)` or similar).
+
+---
+
+## 2026-04-19 — Landing design systems ship as BUNDLED in-repo assets, NOT as references to user's local skill files
+
+**Decision**: All 6 landing design-system guides + their CSS live inside the repo at `prompts/design-systems/*.md` and `assets/design-systems/*.css`. The planner reads the bundled guides; the HTML renderer loads the bundled CSS via `_load_design_system_css` and inlines it. The package is completely self-contained — no dependency on the user's local `~/.claude/skills/` or anywhere else.
+
+**Alternatives considered**:
+1. **Reference `~/.claude/skills/ccg/domains/frontend-design/*` directly at runtime**. Rejected immediately once we realized this is a distribution bug: external users who `pip install longcat-design` don't have those skill files on their machine, so the planner would get empty guides and the renderer would have no CSS.
+2. **Distill to ONE "design system guide" covering all 6 styles in a single file**. Rejected: too coarse — planner needs style-specific vocabulary (claymorphism's "soft 3D clay render" prefix, neubrutalism's "thick black outlines + saturated candy colors," etc.), not a generic lecture.
+3. **Ship CSS as Python string constants in `html_renderer.py`**. Rejected: ~500 LOC of CSS in a Python file is unreadable and makes CSS changes require Python edits + imports. Splitting to `.css` files + runtime `read_text` is cleaner and lets CSS tooling (formatters, linters) work naturally.
+
+**Rationale**: Product-distribution correctness (user's pointed-out concern) + maintainability. The dev-time workflow was: read my local skill files → distill patterns into LongcatDesign-specific guides (NOT copy-paste, to avoid license questions and because skill files are too generic for a landing-with-contenteditable use case) → write fresh CSS tuned to our specific HTML structure. Runtime workflow: zero external lookups.
+
+**Style loudness ladder (codified in `prompts/design-systems/README.md`)**:
+- 3/10 `minimalist` (Stripe/Linear) — default if in doubt
+- 3/10 `editorial` (NYT magazine) — publications, long-form
+- 5/10 `claymorphism` (soft 3D pastel) — friendly consumer
+- 5/10 `liquid-glass` (Apple premium) — media-rich, design-forward
+- 6/10 `glassmorphism` (aurora frosted) — AI/SaaS with color energy
+- 10/10 `neubrutalism` (candy + hard shadows) — indie / devtool with attitude
+
+**Revisit when**: (a) the 6 styles need a 7th (e.g. Material You, skeuomorphism) — plug in one more `.md` + `.css` pair, update the LandingStyle Literal and the README ladder; (b) Anthropic adopts a public skill-distribution channel — we could then re-link instead of bundle to reduce repo size.
+
+---
+
+## 2026-04-19 — Landing critic is TEXT-ONLY; poster/deck critic stays vision-based
+
+**Decision**: `Critic.evaluate` branches on `design_spec.artifact_type`. For LANDING, it skips the preview-PNG vision input entirely and grades against a content-level rubric in `prompts/critic-landing.md` (section composition, copy quality, design-system fit, typography hierarchy, content pacing). For poster/deck, it keeps the existing vision-based rubric in `prompts/critic.md`.
+
+**Alternatives considered**:
+1. **Use vision on landing anyway, just live with the false fails**. Rejected: the first milk-tea dogfood (run `20260419-192002-bfcf00b0`) produced a perfect claymorphism landing but the critic, seeing the simplified Pillow-rendered `preview.png` (no CSS, tofu-square emojis, grid layout broken), called it "fail, 0.18, 8 blockers." This would poison trajectory.critique_loop for every landing and undermine user trust in critique signals.
+2. **Render the real HTML via headless browser (Playwright/Selenium) for the critic**. Rejected for v1.0: adds ~150MB dep + binary setup complexity, slows critique from ~2s to ~20s+, and gives marginal value when the DesignSpec itself already encodes everything a critic needs (section tree, fonts, colors, copy).
+3. **Skip critique entirely for landing**. Rejected: critic still catches real issues — content pacing, missing sections, style/brief mismatch, copy length — that add genuine value without needing a rendered image.
+
+**Rationale**: The DesignSpec for a landing IS the source of truth. The HTML is a deterministic render of it. Asking a vision model to grade a bad render of a good spec is strictly worse than asking it to grade the spec directly. Confirmed by re-run on the same milk-tea brief (run `20260419-204503-b5300878` with the fix): 0.94 pass, 2 minor issues — matches what a human would call "commercially shippable."
+
+**Companion fix — `IssueCategory` widened**: added `"copy"` and `"content"` to the Literal so the landing critic's natural categories (copy quality, content balance) don't fail Pydantic validation. Doesn't affect the poster/deck critic (those categories just go unused there).
+
+**Revisit when**: (a) landing HTMLs reliably get rasterized with full CSS fidelity (Playwright deps become acceptable, or a lightweight CSS-aware raster emerges); (b) text-only critique misses a class of bugs that only a visual inspection would catch — so far (milk-tea pass 0.94 matches user verdict) there's no evidence of this.
+
+---
+
 ## 2026-04-19 — `edit_layer` scope: within-turn critique-revise helper, NOT cross-turn chat edit (verified by dogfood)
 
 **Decision**: Keep `edit_layer` reading from `ctx.state["rendered_layers"]` (live per-turn blackboard). Do NOT extend it to read from the prior Trajectory on disk. Its primary value lies in the **within-turn critique-revise loop**, not cross-turn chat edits.
