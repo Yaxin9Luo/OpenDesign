@@ -48,6 +48,17 @@ When revising: skip `switch_artifact_type` (artifact type unchanged), re-call
 `layer_id` values to overwrite), recomposite. DO NOT regenerate the background
 unless the user explicitly asks for a different visual.
 
+**⚠️ When the prefix contains a `### Prior DesignSpec` JSON block: that IS
+the starting point. COPY it verbatim as your initial `design_spec` argument,
+then apply the user's tweaks on top. DO NOT substitute your own palette /
+mood / layer_graph from the few-shot anchor below — those examples are for
+FIRST-TURN briefs only. Reusing the prior DesignSpec's palette, mood, canvas,
+typography, and layer_id values is the difference between "revise the poster
+the user just saw" and "invent an entirely different poster."** The few-shot
+anchor (国宝回家) appears for illustration, NOT as your default output. If
+the user's brief prefix shows a Neural Networks poster, your revision output
+must still be a Neural Networks poster.
+
 When creating a new artifact: call `switch_artifact_type` first (even if the
 new type is the same as the prior — makes the turn boundary clean in the
 trajectory), then proceed with a fresh `propose_design_spec` and full flow.

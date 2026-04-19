@@ -162,32 +162,79 @@ def _handle_brief(brief: str, state: dict) -> None:
 
 
 def _build_contextual_brief(user_text: str, session: ChatSession) -> str:
-    """Prepend session context for the planner when prior artifacts exist."""
+    """Prepend session context for the planner when prior artifacts exist.
+
+    CRITICAL: must include the full prior DesignSpec (palette, mood, canvas,
+    layer_graph with per-layer text/font/size/bbox). A metadata-only summary
+    is insufficient — the planner has no filesystem read tool, so if we only
+    give it a path + run_id it regresses to the strongest few-shot anchor in
+    prompts/planner.md (国宝回家) when asked to revise. See DECISIONS.md
+    "Chat context injection: FULL spec" (2026-04-19).
+    """
     if not session.trajectories:
         return user_text
 
-    # Summarize the most recent artifact so the planner has something to
-    # revise-vs-recreate. Don't dump all prior — planner's context budget
-    # stays lean; session file has the full history.
     latest = session.trajectories[-1]
-    latest_summary = (
-        f"## Prior artifact in this chat session\n"
-        f"- type: {latest.artifact_type.value}\n"
-        f"- run_id: {latest.run_id}\n"
-        f"- n_layers: {latest.n_layers}, critic: {latest.verdict} ({latest.score})\n"
-        f"- trajectory: {latest.trajectory_path}\n"
-        f"\n"
-        f"The user's next request may be:\n"
-        f"  (a) a REVISION to this prior artifact (e.g. 'make title bigger', "
-        f"'try a red palette') — re-call propose_design_spec with revisions, "
-        f"re-render only affected layers, recomposite.\n"
-        f"  (b) a NEW artifact, possibly of a different type (e.g. 'now make "
-        f"a landing page') — call switch_artifact_type first, then propose_design_spec.\n"
-        f"Decide based on the user's intent below.\n\n"
-        f"## User's next request\n"
-        f"{user_text}"
-    )
-    return latest_summary
+    prior_spec_json = _load_prior_design_spec(latest)
+
+    parts: list[str] = [
+        "## Prior artifact in this chat session",
+        f"- run_id: {latest.run_id}",
+        f"- artifact_type: {latest.artifact_type.value}",
+        f"- layers: {latest.n_layers}",
+        f"- critic: {latest.verdict} ({latest.score})",
+        f"- preview: {latest.preview_path}",
+    ]
+    if prior_spec_json is not None:
+        parts.extend([
+            "",
+            "### Prior DesignSpec (this is the source of truth for any revision)",
+            "```json",
+            json.dumps(prior_spec_json, ensure_ascii=False, indent=2),
+            "```",
+        ])
+    else:
+        parts.append(
+            "- (could not load prior design_spec — proceed with caution; "
+            "ask the user to restate their intent if ambiguous)"
+        )
+    parts.extend([
+        "",
+        "## Decision: revision or new artifact?",
+        "The user's next request may be:",
+        "  (a) a REVISION to the prior artifact (e.g. 'make title bigger', "
+        "'try a red palette', 'move the stamp'). **COPY the prior DesignSpec "
+        "above as your starting point**, apply the user's tweaks, keep the "
+        "same layer_id values for layers you're revising (so they overwrite "
+        "cleanly on re-render), DO NOT invent a fresh concept from scratch.",
+        "  (b) a NEW artifact — the user introduces a new subject, type, or "
+        "canvas (e.g. 'now a landing page for this', 'make a poster for "
+        "DIFFERENT project X'). Call switch_artifact_type first, then "
+        "propose_design_spec with a new canvas/mood/palette.",
+        "",
+        "When in doubt, prefer REVISION — ambiguous short commands ('bigger', "
+        "'darker', 'center it') almost always mean the prior artifact.",
+        "",
+        "## User's next request",
+        user_text,
+    ])
+    return "\n".join(parts)
+
+
+def _load_prior_design_spec(ref: TrajectoryRef) -> dict | None:
+    """Load the DesignSpec dict from a prior Trajectory on disk.
+
+    Returns None if the file is missing or malformed — caller falls back
+    to a metadata-only prior summary.
+    """
+    try:
+        path = Path(ref.trajectory_path)
+        if not path.exists():
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("design_spec")
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # --- Slash command dispatch -----------------------------------------------

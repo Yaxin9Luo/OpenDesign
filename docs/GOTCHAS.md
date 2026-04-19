@@ -4,6 +4,25 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-19 — Chat "revise" turns regress to the few-shot anchor (wrong poster generated)
+
+**Symptom**: First turn of a chat session generates poster A (e.g. a Neural Networks course poster, 9 layers). Second turn user says "make the title bigger". Agent runs, produces a 4-layer poster about 国宝回家 with palette `['#1a0f0a','#fafafa','#a02018','#c9a45a']` and layers `国宝回家 / National Treasures / 归途` — nothing to do with the NN poster. Real instance: session `session_20260418-231218_f285acbc`, turn-2 run_id `20260418-232431-0ce827fc`, $1.44 wasted.
+
+**Root cause**: Initial v1.0 #4 context injection was metadata-only: the contextual brief told the planner "there's a prior artifact at `trajectory: /Users/.../out/trajectories/<run_id>.json`" but the planner has NO filesystem read tool in its action space — it can't actually load that file. When asked to revise an artifact it can't see, and instructed to call `propose_design_spec`, the planner pattern-matches to the most detailed concrete example in its context: the 国宝回家 few-shot anchor in `prompts/planner.md`. It copies that example's palette/mood/layers verbatim and tags the brief as "国宝回家... revision: make the title bigger." See DECISIONS.md 2026-04-19 entry for the full post-mortem.
+
+**Fix**: `chat.py._build_contextual_brief` now loads the prior trajectory's `design_spec` from disk and dumps the full JSON (palette, mood, canvas, layer_graph with per-layer text/font/size/bbox) into the contextual brief inside a ```` ```json ```` block. `prompts/planner.md` got a guard clause: "when the brief prefix contains a `### Prior DesignSpec` block, COPY it verbatim; few-shot anchors are for FIRST-TURN briefs only."
+
+**Detection**: If a chat-revision turn produces:
+- an output whose palette/mood/layer_graph matches the few-shot anchor (国宝回家-flavored) but the user's turn-1 brief was about something else
+- `design_spec.brief` contains the string "国宝回家" when the session's first message never mentioned it
+- n_layers drops dramatically from turn 1 → turn 2 (agent rebuilding from scratch vs tweaking)
+
+→ this regression is back. Check that `_build_contextual_brief` is actually loading the prior spec (JSON block in trajectory.brief) and that `prompts/planner.md` still has the guard clause.
+
+**Rule of thumb for future context-injection tuning**: ALWAYS dump the actual prior state (spec, layer_graph, critique issues). Metadata pointers are useless to a planner with no file-read tool. Token cost is tiny (~1K tokens per 10-layer spec ≈ $0.02) compared to the cost of wasted generation (~$1.5 per wrong artifact).
+
+---
+
 ## 2026-04-18 — macOS marks pip-installed `.pth` files as UF_HIDDEN, Python silently skips them → `ModuleNotFoundError` via script entry
 
 **Symptom**: After `pip install -e .` on macOS (≥14.x / Sequoia-era), the editable install works via `python -m longcat_design.cli ...` BUT fails via the `longcat-design` console script with `ModuleNotFoundError: No module named 'longcat_design'`. Same Python interpreter, different invocation, different result.

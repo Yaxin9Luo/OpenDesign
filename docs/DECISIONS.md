@@ -20,9 +20,29 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
-## 2026-04-18 — Chat context injection: summarize ONLY the latest trajectory, not the full history
+## 2026-04-19 — CORRECTION: Chat context injection must include the FULL prior DesignSpec, not just metadata
 
-**Decision**: Each new user brief in a chat session is prefixed with a summary of *only the latest* `TrajectoryRef` (run_id, artifact_type, n_layers, verdict, path). Not the full `ChatSession.trajectories` list. Not the full design_spec. Just a pointer to the most recent and a decision prompt.
+**Decision**: `chat.py._build_contextual_brief` now injects the full prior `DesignSpec` JSON (including `layer_graph` with per-layer text, font_family, font_size_px, bbox, palette, mood, composition_notes) whenever the session has a prior trajectory. Metadata-only summary (run_id + verdict + path) was insufficient.
+
+**This overrides** the 2026-04-18 decision (immediately below) which argued for latest-only metadata summary on token-budget grounds. That decision was wrong.
+
+**Root-cause bug** that triggered the correction: user ran a Neural Networks poster on turn 1 (9 layers), then said "make the title bigger" on turn 2. Planner received a brief prefixed with `run_id: 20260418-231249-ede40b1a` + `type: poster` + path, but had no actual access to the prior spec (no filesystem-read tool). When forced to revise "the prior artifact" with zero visibility into its content, the planner regressed to the strongest few-shot anchor in `prompts/planner.md` (国宝回家) and produced a poster with palette `['#1a0f0a','#fafafa','#a02018','#c9a45a']`, mood `['oriental epic',...]`, layers `国宝回家 / National Treasures / 归途` — verbatim from the few-shot example. Cost: $1.44 wasted on generating the wrong poster. Session: `session_20260418-231218_f285acbc`.
+
+**Fix** (commit pending):
+1. `chat.py`: load the prior trajectory's `design_spec` from disk, dump it as indented JSON inside a ```` ```json ```` block in the contextual brief, alongside a "COPY this, don't invent" instruction.
+2. `prompts/planner.md`: add an explicit guard — when the brief prefix contains a `### Prior DesignSpec` block, that IS the starting point; few-shot anchors (国宝回家) are for FIRST-TURN briefs only.
+
+**Rationale for the reversal**: token cost was the wrong optimization. A 9-layer spec serializes to ~3-4 KB (~1K tokens ≈ ~$0.02 extra per turn). The alternative is the planner fabricating a completely different artifact — costing a full $1-4 per wrong turn and, worse, poisoning the training-data trajectory with a spec that doesn't actually describe what the user wanted. Grounding > token-saving.
+
+**Revisit when**: sessions accumulate long histories (>10 trajectories) where even latest-only injection becomes heavy. At that point, compact the injected spec: drop references field, trim layer_graph to `(id, kind, bbox, text, font_size_px)` per layer, drop src_path (runtime-only). For now, full spec is fine at <10 trajectories per session.
+
+---
+
+## 2026-04-18 — Chat context injection: summarize ONLY the latest trajectory, not the full history (SUPERSEDED 2026-04-19)
+
+> **⚠️ This decision was wrong. Superseded by the 2026-04-19 entry above.** The token-budget argument held, but the quality impact (planner regressed to the 国宝回家 few-shot when asked to revise a Neural Networks poster) outweighed the savings by 50-100×. Kept here as record; the fix is full-spec injection.
+
+**Decision (superseded)**: Each new user brief in a chat session is prefixed with a summary of *only the latest* `TrajectoryRef` (run_id, artifact_type, n_layers, verdict, path). Not the full `ChatSession.trajectories` list. Not the full design_spec. Just a pointer to the most recent and a decision prompt.
 
 **Alternatives**:
 1. Inject full prior-artifact design_spec (palette, mood, composition_notes, full layer_graph) — lets planner reuse those values exactly.
