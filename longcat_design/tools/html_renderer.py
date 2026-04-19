@@ -554,6 +554,232 @@ def _edit_script(families: list[str]) -> str:
     return template.replace("__FAMILIES__", families_json)
 
 
+# --- landing mode (v1.0 #8) -----------------------------------------------
+
+
+def write_landing_html(
+    spec: Any,  # DesignSpec — avoid schema import cycle at module level
+    out_path: Path,
+    ctx: ToolContext,
+) -> None:
+    """Write a self-contained landing-page HTML from a section-tree spec.
+
+    Unlike the poster renderer, this takes `spec` (not a flat `rendered_layers`
+    list) because landing pages are a tree: each top-level LayerNode has
+    kind="section" with text-layer children. No PNG rasterization — text
+    lives directly as HTML, flow layout, max-width container.
+    """
+    layer_graph = list(getattr(spec, "layer_graph", []) or [])
+    canvas = getattr(spec, "canvas", {}) or {}
+    cw = int(canvas.get("w_px", 1200))
+
+    # Font subsetting — walk the tree and collect every character used.
+    fonts_used: dict[str, set[str]] = {}
+    for family, chars in _walk_text_chars(layer_graph, ctx).items():
+        fonts_used[family] = chars
+    font_face_css = build_font_face_css(fonts_used, ctx)
+    bundled_families = sorted(ctx.settings.fonts.keys())
+
+    title = _doc_title(ctx)
+    head = _landing_head_block(cw, font_face_css, title,
+                               run_id=getattr(ctx, "run_id", "") or "")
+
+    sections_html: list[str] = []
+    for node in layer_graph:
+        kind = getattr(node, "kind", None)
+        if kind == "section":
+            sections_html.append(_landing_section_html(node, ctx))
+        elif kind == "text" and getattr(node, "text", None):
+            # Orphan text at top level — wrap in an implicit section.
+            sections_html.append(
+                '  <section class="ld-section" data-layer-id="__implicit__" '
+                'data-layer-name="content">\n'
+                + _landing_text_html(node, ctx)
+                + "\n  </section>"
+            )
+
+    body_parts: list[str] = [
+        "<body>",
+        _landing_user_comment(),
+        f'<main class="ld-landing" data-mode="landing" data-w="{cw}">',
+        *sections_html,
+        "</main>",
+        _edit_toolbar_html(bundled_families),
+        _save_modal_html(),
+        f"<script>{_edit_script(bundled_families)}</script>",
+        "</body>",
+        "</html>",
+    ]
+
+    doc = head + "\n".join(body_parts)
+    out_path.write_text(doc, encoding="utf-8")
+    total_texts = sum(
+        1 for sec in layer_graph
+        for child in ([sec] if getattr(sec, "kind", None) == "text"
+                      else getattr(sec, "children", []) or [])
+        if getattr(child, "kind", None) == "text"
+    )
+    log("html.landing.written",
+        path=str(out_path),
+        bytes=out_path.stat().st_size,
+        sections=sum(1 for n in layer_graph if getattr(n, "kind", None) == "section"),
+        text_layers=total_texts,
+        fonts=len(fonts_used))
+
+
+def _walk_text_chars(nodes: list, ctx: ToolContext) -> dict[str, set[str]]:
+    acc: dict[str, set[str]] = {}
+    for n in nodes:
+        kind = getattr(n, "kind", None)
+        if kind == "text":
+            fam = getattr(n, "font_family", None) or ctx.settings.default_text_font
+            text = getattr(n, "text", None) or ""
+            acc.setdefault(fam, set()).update(text)
+        children = getattr(n, "children", None) or []
+        if children:
+            for fam, chars in _walk_text_chars(children, ctx).items():
+                acc.setdefault(fam, set()).update(chars)
+    return acc
+
+
+def _landing_head_block(cw: int, font_face_css: str, title: str,
+                        run_id: str = "") -> str:
+    run_id_meta = (
+        f'<meta name="ld-run-id" content="{_attr(run_id)}">\n' if run_id else ""
+    )
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="generator" content="LongcatDesign">\n'
+        '<meta name="ld-artifact-type" content="landing">\n'
+        + run_id_meta
+        + f"<title>{html.escape(title)}</title>\n"
+        "<style>\n"
+        + _landing_base_css(cw)
+        + _toolbar_css()
+        + _modal_css()
+        + f"  {font_face_css}\n"
+        "</style>\n"
+        "</head>\n"
+    )
+
+
+def _landing_base_css(cw: int) -> str:
+    return (
+        "  html, body { margin: 0; padding: 0; }\n"
+        "  body { background: #e9ecef; min-height: 100vh;\n"
+        "         font-family: system-ui, sans-serif; color: #0f172a; }\n"
+        f"  .ld-landing {{ max-width: {cw}px; margin: 0 auto;\n"
+        "             background: #fff; min-height: 100vh;\n"
+        "             box-shadow: 0 0 48px rgba(0,0,0,0.08); }\n"
+        "  .ld-section { padding: 80px 64px; display: flex;\n"
+        "             flex-direction: column; gap: 18px;\n"
+        "             border-bottom: 1px solid #f0f1f3; position: relative; }\n"
+        "  .ld-section:last-child { border-bottom: none; }\n"
+        "  .ld-section[data-section-variant='hero'] {\n"
+        "             background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);\n"
+        "             color: #f8fafc; padding: 120px 64px; }\n"
+        "  .ld-section[data-section-variant='features'] { background: #fafbfc; }\n"
+        "  .ld-section[data-section-variant='cta'] {\n"
+        "             background: #0f172a; color: #f8fafc; text-align: center;\n"
+        "             padding: 96px 64px; }\n"
+        "  .ld-section[data-section-variant='footer'] {\n"
+        "             background: #0f172a; color: #94a3b8;\n"
+        "             padding: 48px 64px; font-size: 14px; }\n"
+        "  .ld-layer.text { outline: none; line-height: 1.3;\n"
+        "             word-break: break-word; box-sizing: border-box;\n"
+        "             cursor: text; margin: 0; }\n"
+        "  .ld-layer.text:hover { outline: 1px dashed rgba(120,180,255,0.35);\n"
+        "             outline-offset: 2px; }\n"
+        "  .ld-layer.text.ld-active { outline: 1px solid rgba(120,180,255,0.9);\n"
+        "             outline-offset: 4px; }\n"
+        "  /* Drag handle hidden in landing mode — flow layout doesn't drag. */\n"
+        "  .ld-landing .ld-drag-handle { display: none !important; }\n"
+    )
+
+
+def _landing_user_comment() -> str:
+    return (
+        "<!--\n"
+        "  LongcatDesign landing page (v1.0 #8).\n"
+        "  \n"
+        "  Sections stack in flow layout — no pixel positioning. Click any\n"
+        "  text to edit with the floating toolbar (font/size/color) or\n"
+        "  double-click for content edits. Save button copies/downloads.\n"
+        "  \n"
+        "  `longcat-design apply-edits <file>` round-trips edits back into\n"
+        "  a fresh trajectory + new HTML (no PSD/SVG for landing mode).\n"
+        "-->"
+    )
+
+
+def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
+    layer_id = getattr(section_node, "layer_id", "") or ""
+    name = getattr(section_node, "name", "") or "content"
+    variant = _section_variant(name)
+    children = getattr(section_node, "children", None) or []
+
+    parts: list[str] = [
+        f'  <section class="ld-section" '
+        f'data-layer-id="{_attr(layer_id)}" '
+        f'data-kind="section" '
+        f'data-layer-name="{_attr(name)}" '
+        f'data-section-variant="{_attr(variant)}" '
+        f'data-z-index="{int(getattr(section_node, "z_index", 0) or 0)}">',
+    ]
+    for child in children:
+        if getattr(child, "kind", None) == "text" and getattr(child, "text", None):
+            parts.append(_landing_text_html(child, ctx))
+    parts.append("  </section>")
+    return "\n".join(parts)
+
+
+def _landing_text_html(text_node: Any, ctx: ToolContext) -> str:
+    layer_id = getattr(text_node, "layer_id", "") or ""
+    name = getattr(text_node, "name", "") or layer_id
+    text = getattr(text_node, "text", "") or ""
+    font_family = getattr(text_node, "font_family", None) or ctx.settings.default_text_font
+    font_size = int(getattr(text_node, "font_size_px", None) or 40)
+    align = getattr(text_node, "align", None) or "left"
+    effects = getattr(text_node, "effects", None)
+    fill = getattr(effects, "fill", None) if effects else None
+    fill = fill or "inherit"
+
+    style_pairs: list[str] = [
+        f"font-family:'{font_family}'",
+        f"font-size:{font_size}px",
+        f"color:{fill}" if fill != "inherit" else "color:inherit",
+        f"text-align:{align}",
+    ]
+    style = "; ".join(style_pairs)
+    inner = html.escape(text)
+    return (
+        f'    <div class="layer text" '
+        f'data-layer-id="{_attr(layer_id)}" '
+        f'data-kind="text" '
+        f'data-z-index="{int(getattr(text_node, "z_index", 0) or 0)}" '
+        f'data-layer-name="{_attr(name)}" '
+        f'data-font-size-px="{font_size}" '
+        f'data-fill="{_attr(fill if fill != "inherit" else "")}" '
+        f'data-font-family="{_attr(font_family)}" '
+        f'data-align="{_attr(align)}" '
+        f'contenteditable="true" spellcheck="false" '
+        f'style="{style}">'
+        f"{inner}</div>"
+    )
+
+
+def _section_variant(name: str) -> str:
+    """Map section name → CSS variant class for themed styling."""
+    low = (name or "").lower()
+    for key in ("hero", "features", "cta", "footer", "header"):
+        if key in low:
+            return key
+    return "content"
+
+
 # --- helpers --------------------------------------------------------------
 
 

@@ -34,7 +34,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/9] imports")
+    print("[1/10] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,7 +47,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/9] tool registry")
+    print("[2/10] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -74,7 +74,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/9] pydantic schema round-trip")
+    print("[3/10] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +117,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/9] fonts")
+    print("[4/10] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +137,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/9] composite (no API)")
+    print("[5/10] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -238,7 +238,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/9] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/10] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -309,7 +309,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/9] chat session save/load")
+    print("[7/10] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -371,7 +371,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/9] edit_layer (no API)")
+    print("[8/10] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -496,13 +496,13 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/9] apply-edits round-trip (no API)")
+    print("[9/10] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
     src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
     if not src_html.exists():
-        _fail("smoke HTML missing — [5/9] composite step must run first")
+        _fail("smoke HTML missing — [5/10] composite step must run first")
 
     # Simulate a user edit: bump font size + change color on the title.
     # Re-emit with a changed data-font-size-px/data-fill so round-trip should
@@ -571,6 +571,145 @@ def check_apply_edits_roundtrip() -> None:
         _ok(f"bg decoded from data URI → {bg_path.name} ({bg_path.stat().st_size} B)")
 
 
+def check_landing_mode() -> None:
+    """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
+    print("[10/10] landing mode (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.switch_artifact_type import switch_artifact_type
+    from .apply_edits import apply_edits
+    from .schema import ArtifactType
+
+    out_dir = REPO_ROOT / "out" / "smoke_landing"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7", critic_model="claude-opus-4-7",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-landing")
+
+    # --- switch + propose landing spec ----------------------------------
+    if switch_artifact_type({"type": "landing"}, ctx=ctx).status != "ok":
+        _fail("switch_artifact_type(landing)")
+
+    spec_args = {"design_spec": {
+        "brief": "LongcatDesign v1.0 landing",
+        "artifact_type": "landing",
+        "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96,
+                   "aspect_ratio": "1:2", "color_mode": "RGB"},
+        "palette": ["#0f172a", "#f8fafc"],
+        "typography": {"title_font": "NotoSerifSC-Bold", "body_font": "NotoSansSC-Bold"},
+        "mood": ["minimal"], "composition_notes": "dark hero, light features, dark cta",
+        "layer_graph": [
+            {"layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
+             "children": [
+                 {"layer_id": "H1", "name": "hero_headline", "kind": "text", "z_index": 1,
+                  "text": "LongcatDesign", "font_family": "NotoSerifSC-Bold",
+                  "font_size_px": 96, "align": "center",
+                  "effects": {"fill": "#f8fafc"}},
+                 {"layer_id": "H2", "name": "hero_subhead", "kind": "text", "z_index": 2,
+                  "text": "Open source conversational design agent.",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 28,
+                  "align": "center", "effects": {"fill": "#94a3b8"}},
+             ]},
+            {"layer_id": "S2", "name": "features", "kind": "section", "z_index": 2,
+             "children": [
+                 {"layer_id": "F1", "name": "features_title", "kind": "text", "z_index": 1,
+                  "text": "Three outputs, one conversation",
+                  "font_family": "NotoSerifSC-Bold", "font_size_px": 48,
+                  "effects": {"fill": "#0f172a"}},
+                 {"layer_id": "F2", "name": "feature_1", "kind": "text", "z_index": 2,
+                  "text": "Poster · PSD + SVG + HTML, fully layered and editable.",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 20,
+                  "effects": {"fill": "#334155"}},
+             ]},
+            {"layer_id": "S3", "name": "cta", "kind": "section", "z_index": 3,
+             "children": [
+                 {"layer_id": "C1", "name": "cta_text", "kind": "text", "z_index": 1,
+                  "text": "pip install longcat-design",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 36,
+                  "align": "center", "effects": {"fill": "#f8fafc"}},
+             ]},
+        ],
+    }}
+    if propose_design_spec(spec_args, ctx=ctx).status != "ok":
+        _fail("propose_design_spec(landing)")
+    if ctx.state["design_spec"].artifact_type != ArtifactType.LANDING:
+        _fail("design_spec.artifact_type not LANDING after propose")
+
+    # --- composite landing ----------------------------------------------
+    obs = composite({}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"landing composite: {obs.summary}")
+    comp = ctx.state["composition"]
+    if comp.psd_path is not None or comp.svg_path is not None:
+        _fail("landing should NOT produce PSD/SVG — got non-None paths")
+    for label, p in [("HTML", comp.html_path), ("preview", comp.preview_path)]:
+        if not p or not Path(p).exists() or Path(p).stat().st_size == 0:
+            _fail(f"landing {label} missing: {p}")
+    _ok(f"landing composite: HTML + preview, NO PSD/SVG (correct)")
+
+    # --- HTML structure --------------------------------------------------
+    html_text = Path(comp.html_path).read_text(encoding="utf-8")
+    required_markers = {
+        "landing container":     '<main class="ld-landing"',
+        "landing mode meta":     '<meta name="ld-artifact-type" content="landing"',
+        "hero section":          'data-section-variant="hero"',
+        "features section":      'data-section-variant="features"',
+        "cta section":           'data-section-variant="cta"',
+        "contenteditable text":  'contenteditable="true"',
+        "data-font-size attr":   'data-font-size-px=',
+        "toolbar container":     'class="ld-toolbar"',
+        "save modal":            'id="ld-modal-backdrop"',
+        "landing hides drag":    "/* Drag handle hidden in landing",
+    }
+    for label, needle in required_markers.items():
+        if needle not in html_text:
+            _fail(f"landing HTML missing marker — {label}: {needle!r}")
+    _ok(f"landing HTML ({Path(comp.html_path).stat().st_size // 1024} KB) — "
+        f"all {len(required_markers)} markers present")
+
+    # --- apply-edits round-trip on a seeded-edit landing ---------------
+    edited_html = html_text.replace(
+        'data-font-size-px="96"', 'data-font-size-px="128"'
+    ).replace(
+        'data-fill="#f8fafc"', 'data-fill="#38bdf8"', 1  # only first occurrence
+    )
+    if edited_html == html_text:
+        _fail("could not seed landing edits — markers missing")
+    edited_path = out_dir / "edited.html"
+    edited_path.write_text(edited_html, encoding="utf-8")
+
+    traj, traj_path = apply_edits(
+        edited_path, settings=settings,
+        out_dir=out_dir / "restored",
+    )
+    if traj.metadata.get("parent_run_id") != "smoke-landing":
+        _fail(f"landing round-trip lost parent_run_id: got "
+              f"{traj.metadata.get('parent_run_id')!r}")
+    if traj.design_spec.artifact_type != ArtifactType.LANDING:
+        _fail("landing round-trip lost artifact_type")
+    # Layer graph should have 3 sections + their children preserved
+    sections = [n for n in traj.layer_graph if n.kind == "section"]
+    if len(sections) != 3:
+        _fail(f"expected 3 sections, got {len(sections)}")
+    # Headline font size should reflect the edit (128, not 96)
+    headline = next((c for s in sections for c in (s.children or [])
+                     if c.name == "hero_headline"), None)
+    if headline is None:
+        _fail("hero_headline lost on round-trip")
+    if headline.font_size_px != 128:
+        _fail(f"edit lost: hero_headline.font_size_px={headline.font_size_px}, expected 128")
+    _ok(f"landing round-trip: 3 sections + children preserved, edits applied "
+        f"(hero_headline: 96px → 128px)")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -581,8 +720,9 @@ def main() -> int:
     check_chat_session_roundtrip()
     check_edit_layer_no_api()
     check_apply_edits_roundtrip()
+    check_landing_mode()
     print("\n  smoke test passed.")
-    print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/")
+    print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, out/smoke_landing/")
     return 0
 
 

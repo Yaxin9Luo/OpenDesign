@@ -30,8 +30,8 @@ from bs4 import BeautifulSoup, Tag
 
 from .config import Settings, load_settings
 from .schema import (
-    CompositionArtifacts, DesignSpec, LayerNode, SafeZone, TextEffect,
-    Trajectory,
+    ArtifactType, CompositionArtifacts, DesignSpec, LayerNode, SafeZone,
+    TextEffect, Trajectory,
 )
 from .tools import ToolContext
 from .tools.composite import composite
@@ -64,14 +64,6 @@ def apply_edits(
     parent_run_id = _meta_content(doc, "ld-run-id") or None
     title = doc.title.get_text(strip=True) if doc.title else ""
 
-    canvas = doc.find("div", class_="canvas")
-    if canvas is None:
-        raise ValueError(f"no .canvas div found in {edited_html}")
-    cw = int(canvas.get("data-w") or 0)
-    ch = int(canvas.get("data-h") or 0)
-    if not (cw > 0 and ch > 0):
-        raise ValueError(f"canvas missing data-w/data-h in {edited_html}")
-
     new_id = new_run_id()
     run_dir = out_dir or settings.out_dir / "runs" / new_id
     layers_dir = run_dir / "layers"
@@ -79,25 +71,58 @@ def apply_edits(
 
     ctx = ToolContext(settings=settings, run_dir=run_dir,
                       layers_dir=layers_dir, run_id=new_id)
-    ctx.state["design_spec"] = _stub_design_spec(title, cw, ch)
+
+    # Detect artifact mode — landing has <main class="ld-landing">,
+    # poster has <div class="canvas">.
+    landing_main = doc.find("main", class_="ld-landing")
+    poster_canvas = doc.find("div", class_="canvas")
 
     skipped: list[str] = []
-    for layer_div in canvas.select(".layer"):
-        assert isinstance(layer_div, Tag)
-        action = _restore_layer(layer_div, cw, ch, ctx)
-        if action == "skipped":
-            skipped.append(layer_div.get("data-layer-id", "?"))
 
-    if not ctx.state["rendered_layers"]:
-        raise RuntimeError(
-            f"no layers recovered from {edited_html} "
-            "(is the HTML an actual LongcatDesign output?)"
+    if landing_main is not None:
+        cw = int(landing_main.get("data-w") or 1200)
+        ctx.state["design_spec"] = _stub_design_spec(title, cw, 2400,
+                                                     ArtifactType.LANDING)
+        layer_graph = _restore_landing(landing_main, ctx, skipped)
+        # Landing doesn't populate rendered_layers; it stores the tree on
+        # design_spec.layer_graph for composite to walk.
+        ctx.state["design_spec"] = ctx.state["design_spec"].model_copy(
+            update={"layer_graph": layer_graph}
         )
-
-    log("apply.layers_restored",
-        count=len(ctx.state["rendered_layers"]),
-        skipped=len(skipped),
-        parent=parent_run_id or "(none)")
+        log("apply.landing.restored",
+            sections=sum(1 for n in layer_graph if n.kind == "section"),
+            text_layers=sum(
+                1 for s in layer_graph for c in (s.children or [])
+                if c.kind == "text"
+            ),
+            skipped=len(skipped),
+            parent=parent_run_id or "(none)")
+    elif poster_canvas is not None:
+        cw = int(poster_canvas.get("data-w") or 0)
+        ch = int(poster_canvas.get("data-h") or 0)
+        if not (cw > 0 and ch > 0):
+            raise ValueError(f"canvas missing data-w/data-h in {edited_html}")
+        ctx.state["design_spec"] = _stub_design_spec(title, cw, ch,
+                                                     ArtifactType.POSTER)
+        for layer_div in poster_canvas.select(".layer"):
+            assert isinstance(layer_div, Tag)
+            action = _restore_layer(layer_div, cw, ch, ctx)
+            if action == "skipped":
+                skipped.append(layer_div.get("data-layer-id", "?"))
+        if not ctx.state["rendered_layers"]:
+            raise RuntimeError(
+                f"no layers recovered from {edited_html} "
+                "(is the HTML an actual LongcatDesign output?)"
+            )
+        log("apply.poster.restored",
+            count=len(ctx.state["rendered_layers"]),
+            skipped=len(skipped),
+            parent=parent_run_id or "(none)")
+    else:
+        raise ValueError(
+            f"neither a poster `.canvas` nor a landing `.ld-landing` container "
+            f"found in {edited_html} — is this a LongcatDesign HTML?"
+        )
 
     obs = composite({}, ctx=ctx)
     if obs.status != "ok":
@@ -229,11 +254,14 @@ def _restore_image(div: Tag, layer_id: str, name: str, kind: str,
 # --- trajectory assembly --------------------------------------------------
 
 
-def _stub_design_spec(title: str, cw: int, ch: int) -> DesignSpec:
-    """Minimal spec — canvas is the only field render_text_layer touches."""
+def _stub_design_spec(title: str, cw: int, ch: int,
+                      artifact_type: ArtifactType = ArtifactType.POSTER) -> DesignSpec:
+    """Minimal spec — canvas is the only field render_text_layer touches
+    (poster path). Landing path reads layer_graph directly."""
     return DesignSpec(
         brief=(title or "(restored from edited HTML)")[:500],
-        canvas={"w_px": cw, "h_px": ch, "dpi": 300,
+        artifact_type=artifact_type,
+        canvas={"w_px": cw, "h_px": ch, "dpi": 96 if artifact_type == ArtifactType.LANDING else 300,
                 "aspect_ratio": f"{cw}:{ch}", "color_mode": "RGB"},
         palette=[],
         typography={},
@@ -243,10 +271,72 @@ def _stub_design_spec(title: str, cw: int, ch: int) -> DesignSpec:
     )
 
 
+def _restore_landing(main_el: Tag, ctx: ToolContext,
+                     skipped: list[str]) -> list[LayerNode]:
+    """Walk a `<main class='ld-landing'>` tree and return a list[LayerNode]
+    for design_spec.layer_graph. Each <section> becomes a kind='section'
+    node with children = text layers inside."""
+    out: list[LayerNode] = []
+    for section in main_el.find_all("section", class_="ld-section", recursive=False):
+        s_layer_id = section.get("data-layer-id") or ""
+        s_name = section.get("data-layer-name") or "content"
+        s_z = _int_attr(section, "data-z-index", len(out) + 1)
+
+        children: list[LayerNode] = []
+        for div in section.find_all("div", class_="layer", recursive=False):
+            text_node = _landing_text_from_div(div, skipped)
+            if text_node is not None:
+                children.append(text_node)
+
+        out.append(LayerNode(
+            layer_id=s_layer_id or f"S{len(out) + 1}",
+            name=s_name,
+            kind="section",
+            z_index=s_z,
+            bbox=None,
+            children=children,
+        ))
+    return out
+
+
+def _landing_text_from_div(div: Tag, skipped: list[str]) -> LayerNode | None:
+    kind = div.get("data-kind")
+    if kind != "text":
+        return None
+    layer_id = div.get("data-layer-id") or ""
+    # Strip the drag-handle span defensively (shouldn't be there for landing,
+    # but round-tripped HTMLs might).
+    for span in div.find_all(class_="ld-drag-handle"):
+        span.decompose()
+    text = div.get_text(strip=False).strip()
+    if not text:
+        skipped.append(layer_id or "?")
+        return None
+    fill_raw = div.get("data-fill") or ""
+    return LayerNode(
+        layer_id=layer_id or f"L-{id(div)}",
+        name=div.get("data-layer-name") or layer_id,
+        kind="text",
+        z_index=_int_attr(div, "data-z-index", 1),
+        bbox=None,
+        text=text,
+        font_family=div.get("data-font-family") or None,
+        font_size_px=_int_attr(div, "data-font-size-px", 40) or None,
+        align=div.get("data-align") or None,
+        effects=TextEffect(fill=fill_raw) if fill_raw else None,
+    )
+
+
 def _build_trajectory(ctx: ToolContext, parent_run_id: str | None,
                       source_html: Path, skipped: list[str],
                       title: str) -> Trajectory:
-    layer_graph = _layer_graph_from_rendered(ctx)
+    # Landing keeps its layer_graph on design_spec (the section tree);
+    # poster rebuilds it from rendered_layers (the flat blackboard).
+    spec = ctx.state["design_spec"]
+    if spec.artifact_type == ArtifactType.LANDING:
+        layer_graph = list(spec.layer_graph or [])
+    else:
+        layer_graph = _layer_graph_from_rendered(ctx)
     comp = ctx.state["composition"]
     if not isinstance(comp, CompositionArtifacts):
         comp = CompositionArtifacts.model_validate(comp)

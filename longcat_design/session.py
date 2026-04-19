@@ -45,7 +45,7 @@ class TrajectoryRef(BaseModel):
     artifact_type: ArtifactType
     created_at: datetime
     trajectory_path: str                       # absolute path to trajectory.json
-    preview_path: str                          # absolute path to flattened preview
+    preview_path: str | None = None            # absolute path to flattened preview
     psd_path: str | None = None
     svg_path: str | None = None
     html_path: str | None = None

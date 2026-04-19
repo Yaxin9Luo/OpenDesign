@@ -36,7 +36,7 @@ StepType = Literal[
     "design_spec", "critique", "finalize",
     "artifact_switch",  # new v1.0: emitted when switch_artifact_type is called
 ]
-LayerKind = Literal["background", "text", "brand_asset", "group"]
+LayerKind = Literal["background", "text", "brand_asset", "group", "section"]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
 IssueCategory = Literal[
@@ -75,12 +75,17 @@ class TextEffect(BaseModel):
 
 
 class LayerNode(BaseModel):
-    """Polymorphic layer descriptor. Fields populated depend on `kind`."""
+    """Polymorphic layer descriptor. Fields populated depend on `kind`.
+
+    `bbox` is optional as of v1.0 #8: poster/deck layers use pixel coords;
+    landing layers (kind="section" and their text children) use flow layout
+    with no pixel bbox.
+    """
     layer_id: str
     name: str
     kind: LayerKind
     z_index: int
-    bbox: SafeZone
+    bbox: SafeZone | None = None
 
     # text-only
     text: str | None = None
@@ -166,10 +171,13 @@ class CritiqueResult(BaseModel):
 
 
 class CompositionArtifacts(BaseModel):
-    psd_path: str
-    svg_path: str
+    """Paths are per-artifact-type: poster produces PSD+SVG+HTML+preview;
+    landing (v1.0 #8) produces HTML+preview only (no PSD/SVG); deck (#7)
+    will add PPTX. `None` means "not applicable for this artifact type"."""
+    psd_path: str | None = None
+    svg_path: str | None = None
     html_path: str | None = None        # v1.0 #6 — self-contained, contenteditable
-    preview_path: str
+    preview_path: str | None = None
     layer_manifest: list[dict[str, Any]] = Field(default_factory=list)
 
 

@@ -486,6 +486,7 @@ def _trajectory_to_ref(traj: Trajectory, traj_path: Path) -> TrajectoryRef:
         preview_path=traj.composition.preview_path,
         psd_path=traj.composition.psd_path,
         svg_path=traj.composition.svg_path,
+        html_path=traj.composition.html_path,
         n_layers=len(traj.layer_graph),
         verdict=latest_critique.verdict if latest_critique else None,
         score=latest_critique.score if latest_critique else None,
@@ -511,11 +512,14 @@ def _display_turn_result(traj: Trajectory, ref: TrajectoryRef,
     print(f"    layers:     {ref.n_layers}")
     print(f"    critique:   {verdict_str}")
     print(f"    cost:       ${ref.cost_usd}  ({ref.wall_s}s wall)")
-    print(f"    preview:    {ref.preview_path}")
+    if ref.preview_path:
+        print(f"    preview:    {ref.preview_path}")
     if ref.psd_path:
         print(f"    PSD:        {ref.psd_path}")
     if ref.svg_path:
         print(f"    SVG:        {ref.svg_path}")
+    if ref.html_path:
+        print(f"    HTML:       {ref.html_path}")
     print(f"    trajectory: {ref.trajectory_path}")
     print(f"  session total: {len(session.trajectories)} artifact(s), "
           f"${session.total_cost_usd()}, {session.total_wall_s()}s")

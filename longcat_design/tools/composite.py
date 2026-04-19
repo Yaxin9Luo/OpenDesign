@@ -21,8 +21,8 @@ from psd_tools.constants import BlendMode, Compression
 
 from ._contract import ToolContext, obs_error, obs_ok
 from ._font_embed import build_font_face_css
-from .html_renderer import write_html
-from ..schema import CompositionArtifacts, ToolObservation
+from .html_renderer import write_html, write_landing_html
+from ..schema import ArtifactType, CompositionArtifacts, ToolObservation
 from ..util.logging import log
 
 
@@ -30,6 +30,11 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     spec = ctx.state.get("design_spec")
     if spec is None:
         return obs_error("propose_design_spec must be called first")
+
+    # Landing mode (v1.0 #8) is HTML-only — no PSD/SVG, no per-layer PNGs.
+    # It reads the section tree directly from design_spec.layer_graph.
+    if spec.artifact_type == ArtifactType.LANDING:
+        return _composite_landing(spec, ctx)
 
     rendered = ctx.state["rendered_layers"]
     if not rendered:
@@ -85,6 +90,158 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         artifacts=[str(psd_path), str(svg_path), str(html_path), str(preview_path)],
         next_actions=["call critique to self-review", "or call finalize"],
     )
+
+
+def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
+    """HTML-only landing-mode composite. Reads the section tree from
+    design_spec.layer_graph (not ctx.state['rendered_layers'])."""
+    layer_graph = list(spec.layer_graph or [])
+    if not layer_graph:
+        return obs_error(
+            "landing design_spec has empty layer_graph — "
+            "propose_design_spec with a section tree first"
+        )
+
+    html_path = ctx.run_dir / "index.html"
+    preview_path = ctx.run_dir / "preview.png"
+    canvas = spec.canvas or {}
+    cw = int(canvas.get("w_px", 1200))
+
+    manifest: list[dict[str, Any]] = []
+    for node in layer_graph:
+        kind = getattr(node, "kind", None)
+        if kind == "section":
+            manifest.append({
+                "layer_id": node.layer_id,
+                "name": node.name,
+                "kind": "section",
+                "children": [
+                    {"layer_id": c.layer_id, "name": c.name, "kind": c.kind,
+                     "text": c.text}
+                    for c in (node.children or [])
+                ],
+            })
+        elif kind == "text":
+            manifest.append({
+                "layer_id": node.layer_id,
+                "name": node.name,
+                "kind": "text",
+                "text": node.text,
+            })
+
+    try:
+        write_landing_html(spec, html_path, ctx)
+    except Exception as e:
+        return obs_error(f"landing HTML write failed: {e}")
+
+    try:
+        _write_landing_preview(spec, preview_path, ctx)
+    except Exception as e:
+        return obs_error(f"landing preview render failed: {e}")
+
+    artifacts = CompositionArtifacts(
+        psd_path=None,
+        svg_path=None,
+        html_path=str(html_path),
+        preview_path=str(preview_path),
+        layer_manifest=manifest,
+    )
+    ctx.state["composition"] = artifacts
+
+    section_ct = sum(1 for n in layer_graph if getattr(n, "kind", None) == "section")
+    log("composite.landing.done",
+        html=str(html_path), preview=str(preview_path),
+        sections=section_ct, top_level=len(layer_graph))
+
+    return obs_ok(
+        f"Composed landing page: {section_ct} section(s) → HTML + preview "
+        f"(width {cw}px, flow layout)",
+        artifacts=[str(html_path), str(preview_path)],
+        next_actions=["call critique to self-review", "or call finalize"],
+    )
+
+
+def _write_landing_preview(spec: Any, out_path: Path, ctx: ToolContext) -> None:
+    """Render a simplified preview PNG for a landing page — a stacked
+    top-down rasterization of each section's headline + subhead.
+
+    Not pixel-accurate with the HTML; it exists so the trajectory has a
+    preview.png for chat UX + critique.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    canvas = spec.canvas or {}
+    w = min(1200, int(canvas.get("w_px", 1200)))
+    # Grow vertically with the number of sections so no section gets clipped.
+    layer_graph = list(spec.layer_graph or [])
+    section_count = max(1, sum(
+        1 for n in layer_graph if getattr(n, "kind", None) == "section"
+    ))
+    h = 280 + 280 * section_count
+
+    img = Image.new("RGB", (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    def _font(family: str, size: int) -> ImageFont.FreeTypeFont:
+        fonts = ctx.settings.fonts
+        fname = fonts.get(family) or fonts[ctx.settings.default_text_font]
+        return ImageFont.truetype(str(ctx.settings.fonts_dir / fname), size=size)
+
+    y = 80
+    x = 64
+    for node in layer_graph:
+        kind = getattr(node, "kind", None)
+        name = (getattr(node, "name", "") or "").lower()
+        variant = next(
+            (v for v in ("hero", "features", "cta", "footer", "header") if v in name),
+            "content",
+        )
+        # Section banner row
+        if kind == "section":
+            # Variant stripe
+            band_color = {
+                "hero": (15, 23, 42),
+                "cta": (15, 23, 42),
+                "footer": (15, 23, 42),
+                "features": (250, 251, 252),
+            }.get(variant, (255, 255, 255))
+            text_color = (248, 250, 252) if variant in ("hero", "cta", "footer") else (15, 23, 42)
+            section_top = y - 20
+            draw.rectangle([(0, section_top), (w, section_top + 220)], fill=band_color)
+            # Section tag
+            tag = f"§ {variant.upper()}"
+            tag_font = _font(ctx.settings.default_text_font, 14)
+            draw.text((x, section_top + 12), tag,
+                      fill=(248, 250, 252, 200) if variant in ("hero", "cta", "footer") else (148, 163, 184),
+                      font=tag_font)
+            inner_y = section_top + 52
+            for child in (getattr(node, "children", None) or []):
+                if getattr(child, "kind", None) != "text":
+                    continue
+                text = (getattr(child, "text", "") or "")[:80]
+                raw_size = int(getattr(child, "font_size_px", None) or 40)
+                size = max(16, min(48, raw_size // 2))  # downscale for preview
+                fam = getattr(child, "font_family", None) or ctx.settings.default_text_font
+                try:
+                    f = _font(fam, size)
+                except Exception:
+                    f = _font(ctx.settings.default_text_font, size)
+                draw.text((x, inner_y), text, fill=text_color, font=f)
+                inner_y += size + 12
+                if inner_y > section_top + 200:
+                    break
+            y = section_top + 240
+        elif kind == "text":
+            text = (getattr(node, "text", "") or "")[:80]
+            size = max(20, min(60, int(getattr(node, "font_size_px", None) or 48) // 2))
+            try:
+                f = _font(getattr(node, "font_family", None) or ctx.settings.default_text_font, size)
+            except Exception:
+                f = _font(ctx.settings.default_text_font, size)
+            draw.text((x, y), text, fill=(15, 23, 42), font=f)
+            y += size + 20
+
+    img.save(out_path, format="PNG", optimize=True)
 
 
 def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,

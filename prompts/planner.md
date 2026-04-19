@@ -110,7 +110,92 @@ matching landing page"):
 
 - **poster**: absolutely-positioned layers over a text-free background. Canvas e.g. 1536×2048 (3:4) or 2048×1536 (4:3). Use `generate_background` for the main visual, then `render_text_layer` for each text element.
 - **deck**: N slides, one LayerNode per slide (kind will broaden to `"slide"` in v1.1). Output is PPTX with PowerPoint-native editable type frames (once the PPTX renderer lands). For now, compose slides via the existing poster path with slide-sized canvas (e.g. 1920×1080).
-- **landing**: single self-contained HTML page with semantic sections (header / hero / features / cta / footer). Flow layout, not absolute positioning. The HTML renderer (v1.0 item #6) handles this by emitting Tailwind-styled sections with inline fonts + base64 assets.
+- **landing**: single self-contained HTML page with semantic sections (header / hero / features / cta / footer). Flow layout, not absolute positioning. See the **Landing workflow** section below.
+
+# Landing workflow (artifact_type = "landing")
+
+Landing pages are FUNDAMENTALLY DIFFERENT from posters — they're web pages, not visual artifacts. The pipeline skips background generation and text rasterization entirely; text lives as native HTML inside semantic sections.
+
+**Shape of the DesignSpec.layer_graph for a landing:**
+
+The top level is a flat list of `kind: "section"` nodes (one per page section), each with a `children: [...]` list of `kind: "text"` nodes for the text content inside that section. Sections stack top-to-bottom in flow layout.
+
+```json
+{
+  "brief": "...",
+  "artifact_type": "landing",
+  "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96, "aspect_ratio": "1:2", "color_mode": "RGB"},
+  "palette": ["#0f172a", "#f8fafc", "#38bdf8", "#e11d48"],
+  "typography": {"title_font": "NotoSerifSC-Bold", "body_font": "NotoSansSC-Bold"},
+  "mood": ["minimal", "developer-focused"],
+  "composition_notes": "Dark hero, light features grid, dark CTA, subtle footer.",
+  "layer_graph": [
+    {
+      "layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
+      "children": [
+        {"layer_id": "H1", "name": "hero_headline", "kind": "text", "z_index": 1,
+         "text": "LongcatDesign",
+         "font_family": "NotoSerifSC-Bold", "font_size_px": 96,
+         "align": "center",
+         "effects": {"fill": "#f8fafc"}},
+        {"layer_id": "H2", "name": "hero_subhead", "kind": "text", "z_index": 2,
+         "text": "Open-source conversational design agent — terminal-first, editable HTML.",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 28,
+         "align": "center",
+         "effects": {"fill": "#94a3b8"}}
+      ]
+    },
+    {
+      "layer_id": "S2", "name": "features", "kind": "section", "z_index": 2,
+      "children": [
+        {"layer_id": "F1", "name": "features_title", "kind": "text", "z_index": 1,
+         "text": "Three output formats, one conversation",
+         "font_family": "NotoSerifSC-Bold", "font_size_px": 48,
+         "effects": {"fill": "#0f172a"}},
+        {"layer_id": "F2", "name": "feature_1", "kind": "text", "z_index": 2,
+         "text": "Poster · PSD / SVG / HTML — layered and fully editable.",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 20,
+         "effects": {"fill": "#334155"}}
+      ]
+    },
+    {
+      "layer_id": "S3", "name": "cta", "kind": "section", "z_index": 3,
+      "children": [
+        {"layer_id": "C1", "name": "cta_headline", "kind": "text", "z_index": 1,
+         "text": "pip install longcat-design",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 36,
+         "align": "center", "effects": {"fill": "#f8fafc"}}
+      ]
+    }
+  ]
+}
+```
+
+**Tools to call for landing (in order):**
+
+1. `switch_artifact_type("landing")` — first, as always.
+2. `propose_design_spec(...)` — full spec with the section tree above. No layers have `bbox` (landing is flow layout).
+3. **SKIP `generate_background`** — landing HTML has no background image layers in v1.0 #8. (Section backgrounds are auto-themed by name: hero/cta/footer get dark variants, features gets a light variant.)
+4. **SKIP `render_text_layer`** — landing text is emitted directly as native HTML inside sections. No rasterization needed.
+5. `composite` — reads `design_spec.layer_graph` directly, writes `index.html` + `preview.png` (no PSD / SVG). Takes empty args as usual.
+6. `critique` — optional. The critic sees the rendered preview.png (stacked section wireframe) — useful for checking text length / hierarchy, not pixel-perfection.
+7. `edit_layer` / re-propose spec on revise, then `composite` again.
+8. `finalize`.
+
+**Section name conventions** (used by the renderer for auto-theming):
+
+- `hero` — dark background, large headline, centered
+- `features` — light background, multi-text grid
+- `cta` — dark background, big centered text (call-to-action)
+- `footer` — dark, small text (copyright, links)
+- `header` — top of page, nav-style
+- anything else → neutral content section
+
+Name them consistently (exact match or containing the keyword works — `"hero"`, `"hero_section"`, `"page_hero"` all get the hero theme).
+
+**Landing canvas conventions:**
+
+`canvas.w_px` becomes the HTML's max-width; `canvas.h_px` is just metadata (flow layout means actual page height varies). Typical values: `w_px: 1200` for standard, `1440` for wider.
 
 # Available fonts (font_family strings)
 
