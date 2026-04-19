@@ -1,15 +1,16 @@
-"""composite — bundle layers into PSD + SVG + flattened preview.
+"""composite — bundle layers into PSD + SVG + HTML + flattened preview.
 
 PSD = psd-tools 1.11+ PixelLayers (text layers cropped to bbox for size).
 SVG = svgwrite with embedded background + real <text> vector elements.
       Fonts subsetted (only used glyphs) and embedded as base64 WOFF2 in @font-face.
+HTML = tools.html_renderer — absolute-positioned poster with contenteditable
+       text layers, inlined fonts + images (v1.0 #6).
 Preview = PIL alpha_composite chain over an RGB white base.
 """
 
 from __future__ import annotations
 
 import base64
-import io
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,9 @@ from psd_tools import PSDImage
 from psd_tools.constants import BlendMode, Compression
 
 from ._contract import ToolContext, obs_error, obs_ok
+from ._font_embed import build_font_face_css
+from .html_renderer import write_html
 from ..schema import CompositionArtifacts, ToolObservation
-from ..util.io import sha256_file
 from ..util.logging import log
 
 
@@ -40,6 +42,7 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
 
     psd_path = ctx.run_dir / "poster.psd"
     svg_path = ctx.run_dir / "poster.svg"
+    html_path = ctx.run_dir / "poster.html"
     preview_path = ctx.run_dir / "preview.png"
 
     layer_manifest: list[dict[str, Any]] = []
@@ -55,6 +58,11 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         return obs_error(f"SVG write failed: {e}")
 
     try:
+        write_html(sorted_layers, cw, ch, html_path, ctx)
+    except Exception as e:
+        return obs_error(f"HTML write failed: {e}")
+
+    try:
         _write_preview(sorted_layers, cw, ch, preview_path)
     except Exception as e:
         return obs_error(f"preview render failed: {e}")
@@ -62,18 +70,19 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     artifacts = CompositionArtifacts(
         psd_path=str(psd_path),
         svg_path=str(svg_path),
+        html_path=str(html_path),
         preview_path=str(preview_path),
         layer_manifest=layer_manifest,
     )
     ctx.state["composition"] = artifacts
     log("composite.done",
-        psd=str(psd_path), svg=str(svg_path), preview=str(preview_path),
-        layers=len(sorted_layers))
+        psd=str(psd_path), svg=str(svg_path), html=str(html_path),
+        preview=str(preview_path), layers=len(sorted_layers))
 
     return obs_ok(
-        f"Composed {len(sorted_layers)} layers into PSD + SVG + preview "
+        f"Composed {len(sorted_layers)} layers into PSD + SVG + HTML + preview "
         f"({cw}×{ch}px)",
-        artifacts=[str(psd_path), str(svg_path), str(preview_path)],
+        artifacts=[str(psd_path), str(svg_path), str(html_path), str(preview_path)],
         next_actions=["call critique to self-review", "or call finalize"],
     )
 
@@ -133,7 +142,7 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
         family = L.get("font_family") or ctx.settings.default_text_font
         fonts_used.setdefault(family, set()).update(L["text"])
 
-    font_face_css = _build_font_face_css(fonts_used, ctx)
+    font_face_css = build_font_face_css(fonts_used, ctx)
 
     dwg = svgwrite.Drawing(str(out_path), size=(cw, ch))
     dwg.viewbox(0, 0, cw, ch)
@@ -181,52 +190,6 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
         dwg.add(dwg.text(L["text"], **attrs))
 
     dwg.save(pretty=True)
-
-
-def _build_font_face_css(fonts_used: dict[str, set[str]], ctx: ToolContext) -> str:
-    """Subset each font to only used glyphs + WOFF2-encode + base64-embed."""
-    if not fonts_used:
-        return ""
-    try:
-        from fontTools import subset as ft_subset
-    except ImportError:
-        log("svg.font.skip", reason="fonttools not installed; SVG fonts will rely on system")
-        return ""
-
-    css_parts: list[str] = []
-    for family, chars in fonts_used.items():
-        font_file = ctx.settings.fonts.get(family)
-        if not font_file:
-            continue
-        font_path = ctx.settings.fonts_dir / font_file
-        if not font_path.exists():
-            continue
-        try:
-            options = ft_subset.Options()
-            options.flavor = "woff2"
-            options.with_zopfli = False
-            options.layout_features = ["*"]
-            options.name_IDs = ["*"]
-            options.notdef_glyph = True
-            options.recommended_glyphs = True
-            options.drop_tables += ["DSIG"]
-            font = ft_subset.load_font(str(font_path), options)
-            subsetter = ft_subset.Subsetter(options=options)
-            subsetter.populate(unicodes={ord(c) for c in chars if not c.isspace()})
-            subsetter.subset(font)
-            buf = io.BytesIO()
-            ft_subset.save_font(font, buf, options)
-            woff2_bytes = buf.getvalue()
-        except Exception as e:
-            log("svg.font.subset_fail", family=family, error=str(e))
-            continue
-        b64 = base64.b64encode(woff2_bytes).decode("ascii")
-        css_parts.append(
-            f"@font-face {{ font-family: '{family}'; "
-            f"src: url(data:font/woff2;base64,{b64}) format('woff2'); }}"
-        )
-        log("svg.font.embed", family=family, glyphs=len(chars), bytes=len(woff2_bytes))
-    return "\n".join(css_parts)
 
 
 def _write_preview(layers: list[dict[str, Any]], cw: int, ch: int, out_path: Path) -> None:

@@ -228,7 +228,9 @@ def check_composite_no_api() -> None:
 
     comp = ctx.state["composition"]
     for label, p in [("PSD", comp.psd_path), ("SVG", comp.svg_path),
-                     ("preview", comp.preview_path)]:
+                     ("HTML", comp.html_path), ("preview", comp.preview_path)]:
+        if p is None:
+            _fail(f"{label} path missing on CompositionArtifacts")
         path = Path(p)
         if not path.exists() or path.stat().st_size == 0:
             _fail(f"{label} not written: {p}")
@@ -236,22 +238,73 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/8] SVG vector text")
+    print("[6/8] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
-    svg_path = REPO_ROOT / "out" / "smoke" / "poster.svg"
+    out_dir = REPO_ROOT / "out" / "smoke"
+
+    # --- SVG -------------------------------------------------------------
+    svg_path = out_dir / "poster.svg"
     if not svg_path.exists():
         _fail("smoke SVG not found — composite step likely failed")
-    text = svg_path.read_text(encoding="utf-8")
-    if "<text" not in text:
+    svg = svg_path.read_text(encoding="utf-8")
+    if "<text" not in svg:
         _fail("SVG has no <text> element — text was rasterized!")
-    if "国宝回家" not in text:
+    if "国宝回家" not in svg:
         _fail("Chinese title not present as vector text in SVG")
-    if "@font-face" not in text:
-        print("  warn  no @font-face block (font subsetting may have failed; "
-              "SVG will rely on system fonts)")
+    if "@font-face" not in svg:
+        print("  warn  SVG missing @font-face (font subsetting may have failed; "
+              "will rely on system fonts)")
     else:
-        _ok("@font-face block embedded with subsetted WOFF2")
+        _ok("SVG: @font-face block embedded with subsetted WOFF2")
     _ok("SVG contains <text>国宝回家</text> as real vector")
+
+    # --- HTML ------------------------------------------------------------
+    html_path = out_dir / "poster.html"
+    if not html_path.exists():
+        _fail("smoke HTML not found — html_renderer step likely failed")
+    html_text = html_path.read_text(encoding="utf-8")
+
+    required_markers = {
+        "canvas container":     '<div class="canvas"',
+        "contenteditable text": 'contenteditable="true"',
+        "inline fonts":         "@font-face",
+        "WOFF2 data URI":       "data:font/woff2;base64,",
+        "data-layer-id attr":   "data-layer-id=",
+        "data-kind attr":       "data-kind=",
+        "Chinese title text":   "国宝回家",
+        "bg data URI":          "data:image/png;base64,",
+        "generator meta":       '<meta name="generator" content="LongcatDesign"',
+        # Edit toolbar markers (v1.0 #6 edit UX)
+        "bbox data attrs":      'data-bbox-x=',
+        "font-size data attr":  'data-font-size-px=',
+        "fill data attr":       'data-fill=',
+        "font-family data attr": 'data-font-family=',
+        "drag handle":          'class="ld-drag-handle"',
+        "toolbar container":    'class="ld-toolbar"',
+        "font select":          'id="ld-family"',
+        "size input":           'id="ld-size"',
+        "color input":          'id="ld-color"',
+        "save button":          'id="ld-save"',
+        "save modal":           'id="ld-modal-backdrop"',
+        "copy button":          'id="ld-copy"',
+        "download button":      'id="ld-download"',
+        "apply-edits hint":     "longcat-design apply-edits",
+    }
+    for label, needle in required_markers.items():
+        if needle not in html_text:
+            _fail(f"HTML missing expected marker — {label}: {needle!r}")
+    _ok(f"HTML poster.html ({html_path.stat().st_size // 1024} KB) — "
+        f"all {len(required_markers)} markers present "
+        "(canvas / contenteditable / inline fonts+images / data-* attrs)")
+
+    # Structure sanity: exactly one <canvas> div and at least 2 text layers
+    if html_text.count('class="canvas"') != 1:
+        _fail(f"HTML should contain exactly 1 .canvas div; got "
+              f"{html_text.count('class=\"canvas\"')}")
+    if html_text.count('class="layer text"') < 2:
+        _fail(f"HTML should contain ≥2 text layers (smoke has title + subtitle); "
+              f"got {html_text.count('class=\"layer text\"')}")
+    _ok("HTML structure: 1 .canvas + ≥2 text layers, all attributed")
 
 
 def check_chat_session_roundtrip() -> None:

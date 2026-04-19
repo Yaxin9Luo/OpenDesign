@@ -168,6 +168,7 @@ class CritiqueResult(BaseModel):
 class CompositionArtifacts(BaseModel):
     psd_path: str
     svg_path: str
+    html_path: str | None = None        # v1.0 #6 — self-contained, contenteditable
     preview_path: str
     layer_manifest: list[dict[str, Any]] = Field(default_factory=list)
 
