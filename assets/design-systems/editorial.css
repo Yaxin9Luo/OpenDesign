@@ -1,0 +1,51 @@
+/* Editorial — magazine-grade serif hierarchy.
+   See prompts/design-systems/editorial.md for rationale. */
+
+:root {
+  --ld-bg: #fbf9f4;
+  --ld-bg-alt: #f2ede1;
+  --ld-bg-dark: #1a1a1a;
+  --ld-fg: #1a1a1a;
+  --ld-fg-muted: #6b6358;
+  --ld-fg-inverse: #f5ece0;
+  --ld-rule: #2a2824;
+  --ld-accent: #7a2020;
+}
+
+body { background: #e8e2d3; color: var(--ld-fg); font-family: Georgia, 'Times New Roman', serif; }
+.ld-landing { background: var(--ld-bg); }
+
+.ld-section { padding: 120px 80px; gap: 24px; }
+.ld-section[data-section-variant="hero"] {
+  background: var(--ld-bg); text-align: center; align-items: center;
+  padding: 180px 80px 140px;
+}
+.ld-section[data-section-variant="hero"] .layer.text { max-width: 720px; }
+.ld-section[data-section-variant="features"] {
+  background: var(--ld-bg-alt);
+  border-top: 1px solid var(--ld-rule); border-bottom: 1px solid var(--ld-rule);
+}
+.ld-section[data-section-variant="cta"] {
+  background: var(--ld-bg-dark); color: var(--ld-fg-inverse);
+  text-align: center; align-items: center; padding: 120px 80px;
+}
+.ld-section[data-section-variant="footer"] {
+  background: var(--ld-bg); color: var(--ld-fg-muted);
+  border-top: 1px solid var(--ld-rule);
+  padding: 48px 80px; font-size: 13px; letter-spacing: 0.05em;
+}
+
+.ld-landing .layer.text {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-feature-settings: "liga" 1, "dlig" 1, "kern" 1;
+}
+/* Serif for headline positions (first child of each section), sans-ish for body. */
+.ld-section .layer.text:first-of-type {
+  font-weight: 700; letter-spacing: -0.015em; line-height: 1.2;
+}
+.ld-section .layer.text:not(:first-of-type) {
+  font-style: italic; color: var(--ld-fg-muted); line-height: 1.65;
+}
+.ld-section[data-section-variant="cta"] .layer.text:not(:first-of-type) {
+  color: var(--ld-fg-inverse); opacity: 0.85;
+}

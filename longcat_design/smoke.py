@@ -34,7 +34,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/10] imports")
+    print("[1/11] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,7 +47,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/10] tool registry")
+    print("[2/11] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -74,7 +74,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/10] pydantic schema round-trip")
+    print("[3/11] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +117,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/10] fonts")
+    print("[4/11] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +137,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/10] composite (no API)")
+    print("[5/11] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -238,7 +238,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/10] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/11] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -309,7 +309,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/10] chat session save/load")
+    print("[7/11] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -371,7 +371,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/10] edit_layer (no API)")
+    print("[8/11] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -496,13 +496,13 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/10] apply-edits round-trip (no API)")
+    print("[9/11] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
     src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
     if not src_html.exists():
-        _fail("smoke HTML missing — [5/10] composite step must run first")
+        _fail("smoke HTML missing — [5/11] composite step must run first")
 
     # Simulate a user edit: bump font size + change color on the title.
     # Re-emit with a changed data-font-size-px/data-fill so round-trip should
@@ -573,7 +573,7 @@ def check_apply_edits_roundtrip() -> None:
 
 def check_landing_mode() -> None:
     """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
-    print("[10/10] landing mode (no API)")
+    print("[10/11] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -710,6 +710,106 @@ def check_landing_mode() -> None:
         f"(hero_headline: 96px → 128px)")
 
 
+def check_design_system_styles() -> None:
+    """Render a landing in each of the 6 bundled styles, verify the matching
+    CSS got inlined and the style-specific signature tokens are present."""
+    print("[11/11] design-system styles (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    # A tiny per-style signature: a CSS token string that MUST appear in the
+    # rendered HTML only when that style's CSS is loaded.
+    style_signatures = {
+        "minimalist":     "--ld-shadow-soft",
+        "editorial":      "--ld-rule",
+        "neubrutalism":   "--ld-shadow-hard",
+        "glassmorphism":  "prefers-reduced-transparency",
+        "claymorphism":   "--ld-shadow-clay",
+        "liquid-glass":   "cubic-bezier(0.34, 1.56",
+    }
+
+    base_spec = {
+        "brief": "design-system smoke",
+        "artifact_type": "landing",
+        "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96,
+                   "aspect_ratio": "1:2", "color_mode": "RGB"},
+        "palette": ["#0f172a", "#f8fafc"],
+        "typography": {"title_font": "NotoSerifSC-Bold", "body_font": "NotoSansSC-Bold"},
+        "mood": ["test"], "composition_notes": "",
+        "layer_graph": [
+            {"layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
+             "children": [
+                 {"layer_id": "H1", "name": "hero_headline", "kind": "text",
+                  "z_index": 1, "text": "Test", "font_family": "NotoSansSC-Bold",
+                  "font_size_px": 80, "align": "center",
+                  "effects": {"fill": "#f8fafc"}},
+             ]},
+            {"layer_id": "S2", "name": "features", "kind": "section", "z_index": 2,
+             "children": [
+                 {"layer_id": "F1", "name": "features_title", "kind": "text",
+                  "z_index": 1, "text": "Feature",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 36,
+                  "effects": {"fill": "#0f172a"}},
+             ]},
+        ],
+    }
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7", critic_model="claude-opus-4-7",
+    )
+
+    for style, signature in style_signatures.items():
+        out_dir = REPO_ROOT / "out" / "smoke_styles" / style
+        layers_dir = out_dir / "layers"
+        layers_dir.mkdir(parents=True, exist_ok=True)
+        ctx = ToolContext(settings=settings, run_dir=out_dir,
+                          layers_dir=layers_dir, run_id=f"smoke-style-{style}")
+
+        if switch_artifact_type({"type": "landing"}, ctx=ctx).status != "ok":
+            _fail(f"[{style}] switch_artifact_type")
+        spec_args = {"design_spec": {**base_spec,
+                                     "design_system": {"style": style}}}
+        if propose_design_spec(spec_args, ctx=ctx).status != "ok":
+            _fail(f"[{style}] propose_design_spec")
+        if composite({}, ctx=ctx).status != "ok":
+            _fail(f"[{style}] composite")
+
+        comp = ctx.state["composition"]
+        html = Path(comp.html_path).read_text(encoding="utf-8")
+
+        if f'<meta name="ld-design-system" content="{style}">' not in html:
+            _fail(f"[{style}] missing design-system meta tag")
+        if f'data-ld-style="{style}"' not in html:
+            _fail(f"[{style}] missing data-ld-style attr")
+        if signature not in html:
+            _fail(f"[{style}] CSS signature {signature!r} not inlined — "
+                  "assets/design-systems/<style>.css probably not loaded")
+        _ok(f"  {style:<14} ({Path(comp.html_path).stat().st_size // 1024} KB) — "
+            f"meta + data-attr + CSS signature all present")
+
+    # Final: accent_color override landed in the CSS
+    out_dir = REPO_ROOT / "out" / "smoke_styles" / "accent_override"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-accent")
+    switch_artifact_type({"type": "landing"}, ctx=ctx)
+    spec_args = {"design_spec": {**base_spec,
+                                 "design_system": {"style": "minimalist",
+                                                   "accent_color": "#fe11ba"}}}
+    propose_design_spec(spec_args, ctx=ctx)
+    composite({}, ctx=ctx)
+    html = Path(ctx.state["composition"].html_path).read_text(encoding="utf-8")
+    if "--ld-accent: #fe11ba" not in html:
+        _fail("accent_color override did not reach CSS (--ld-accent: #fe11ba missing)")
+    _ok("accent_color override propagated to --ld-accent token")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -721,8 +821,10 @@ def main() -> int:
     check_edit_layer_no_api()
     check_apply_edits_roundtrip()
     check_landing_mode()
+    check_design_system_styles()
     print("\n  smoke test passed.")
-    print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, out/smoke_landing/")
+    print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
+          "out/smoke_landing/, out/smoke_styles/")
     return 0
 
 

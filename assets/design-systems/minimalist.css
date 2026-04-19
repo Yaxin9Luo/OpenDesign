@@ -1,0 +1,45 @@
+/* Minimalist — Stripe / Linear / Vercel house style.
+   See prompts/design-systems/minimalist.md for rationale.
+
+   Loaded by html_renderer.py when design_system.style == "minimalist".
+   Sits AFTER the base landing CSS, so its selectors win via specificity + order. */
+
+:root {
+  --ld-bg: #ffffff;
+  --ld-bg-alt: #fafafa;
+  --ld-bg-dark: #0a0a0a;
+  --ld-fg: #0a0a0a;
+  --ld-fg-muted: #6b7280;
+  --ld-fg-inverse: #f5f5f5;
+  --ld-border: #e5e7eb;
+  --ld-accent: #3b82f6;
+  --ld-shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+body { background: #f4f4f5; color: var(--ld-fg); font-family: system-ui, -apple-system, sans-serif; }
+.ld-landing { background: var(--ld-bg); box-shadow: var(--ld-shadow-soft); }
+
+.ld-section { padding: 120px 80px; gap: 24px; border-bottom: 1px solid var(--ld-border); }
+.ld-section[data-section-variant="hero"] {
+  background: var(--ld-bg); color: var(--ld-fg);
+  padding: 160px 80px; text-align: center; align-items: center;
+}
+.ld-section[data-section-variant="hero"] .layer.text { max-width: 760px; }
+.ld-section[data-section-variant="features"] {
+  background: var(--ld-bg-alt); padding: 120px 80px;
+}
+.ld-section[data-section-variant="cta"] {
+  background: var(--ld-bg-dark); color: var(--ld-fg-inverse);
+  text-align: center; align-items: center; padding: 120px 80px;
+}
+.ld-section[data-section-variant="footer"] {
+  background: var(--ld-bg); border-top: 1px solid var(--ld-border);
+  padding: 48px 80px; color: var(--ld-fg-muted); font-size: 14px;
+}
+
+.ld-landing .layer.text { font-family: system-ui, -apple-system, sans-serif; }
+.ld-section[data-section-variant="hero"] .layer.text:first-of-type,
+.ld-section[data-section-variant="features"] .layer.text:first-of-type,
+.ld-section[data-section-variant="cta"] .layer.text:first-of-type {
+  font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+}

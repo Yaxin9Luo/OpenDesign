@@ -581,8 +581,14 @@ def write_landing_html(
     bundled_families = sorted(ctx.settings.fonts.keys())
 
     title = _doc_title(ctx)
+    ds = getattr(spec, "design_system", None)
+    style = (getattr(ds, "style", None) or "minimalist").lower()
+    accent_override = getattr(ds, "accent_color", None) if ds else None
+    style_css = _load_design_system_css(style, ctx, accent_override)
     head = _landing_head_block(cw, font_face_css, title,
-                               run_id=getattr(ctx, "run_id", "") or "")
+                               run_id=getattr(ctx, "run_id", "") or "",
+                               style_name=style,
+                               style_css=style_css)
 
     sections_html: list[str] = []
     for node in layer_graph:
@@ -599,9 +605,10 @@ def write_landing_html(
             )
 
     body_parts: list[str] = [
-        "<body>",
-        _landing_user_comment(),
-        f'<main class="ld-landing" data-mode="landing" data-w="{cw}">',
+        f'<body data-ld-style="{_attr(style)}">',
+        _landing_user_comment(style),
+        f'<main class="ld-landing" data-mode="landing" data-w="{cw}" '
+        f'data-ld-style="{_attr(style)}">',
         *sections_html,
         "</main>",
         _edit_toolbar_html(bundled_families),
@@ -643,7 +650,8 @@ def _walk_text_chars(nodes: list, ctx: ToolContext) -> dict[str, set[str]]:
 
 
 def _landing_head_block(cw: int, font_face_css: str, title: str,
-                        run_id: str = "") -> str:
+                        run_id: str = "", style_name: str = "minimalist",
+                        style_css: str = "") -> str:
     run_id_meta = (
         f'<meta name="ld-run-id" content="{_attr(run_id)}">\n' if run_id else ""
     )
@@ -654,56 +662,73 @@ def _landing_head_block(cw: int, font_face_css: str, title: str,
         '<meta charset="utf-8">\n'
         '<meta name="generator" content="LongcatDesign">\n'
         '<meta name="ld-artifact-type" content="landing">\n'
+        f'<meta name="ld-design-system" content="{_attr(style_name)}">\n'
         + run_id_meta
         + f"<title>{html.escape(title)}</title>\n"
         "<style>\n"
+        "  /* --- base landing CSS --- */\n"
         + _landing_base_css(cw)
         + _toolbar_css()
         + _modal_css()
         + f"  {font_face_css}\n"
+        f"\n  /* --- design-system: {style_name} --- */\n"
+        + style_css + "\n"
         "</style>\n"
         "</head>\n"
     )
 
 
+def _load_design_system_css(style: str, ctx: ToolContext,
+                            accent_override: str | None = None) -> str:
+    """Read assets/design-systems/<style>.css from the repo. Falls back to
+    minimalist if the requested style isn't found. If `accent_override` is
+    set, appends a `:root { --ld-accent: <hex>; }` rule so brand colors
+    propagate into the style's tokens without editing the CSS file."""
+    valid = {"minimalist", "editorial", "neubrutalism",
+             "glassmorphism", "claymorphism", "liquid-glass"}
+    if style not in valid:
+        log("html.landing.unknown_style", requested=style, fallback="minimalist")
+        style = "minimalist"
+    css_path = (ctx.settings.repo_root / "assets" / "design-systems"
+                / f"{style}.css")
+    if not css_path.exists():
+        log("html.landing.css_missing", path=str(css_path))
+        return ""
+    css = css_path.read_text(encoding="utf-8")
+    if accent_override:
+        # Append at the end so it wins against the :root block defined above.
+        css += (
+            f"\n/* accent_color override from DesignSystem.accent_color */\n"
+            f":root {{ --ld-accent: {accent_override}; }}\n"
+        )
+    return css
+
+
 def _landing_base_css(cw: int) -> str:
+    """Structural landing CSS only — no colors/backgrounds/shadows/typography.
+    All visual design is owned by `assets/design-systems/<style>.css`, which
+    is appended AFTER this base block and wins for any overlapping rule."""
     return (
         "  html, body { margin: 0; padding: 0; }\n"
-        "  body { background: #e9ecef; min-height: 100vh;\n"
-        "         font-family: system-ui, sans-serif; color: #0f172a; }\n"
         f"  .ld-landing {{ max-width: {cw}px; margin: 0 auto;\n"
-        "             background: #fff; min-height: 100vh;\n"
-        "             box-shadow: 0 0 48px rgba(0,0,0,0.08); }\n"
-        "  .ld-section { padding: 80px 64px; display: flex;\n"
-        "             flex-direction: column; gap: 18px;\n"
-        "             border-bottom: 1px solid #f0f1f3; position: relative; }\n"
-        "  .ld-section:last-child { border-bottom: none; }\n"
-        "  .ld-section[data-section-variant='hero'] {\n"
-        "             background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);\n"
-        "             color: #f8fafc; padding: 120px 64px; }\n"
-        "  .ld-section[data-section-variant='features'] { background: #fafbfc; }\n"
-        "  .ld-section[data-section-variant='cta'] {\n"
-        "             background: #0f172a; color: #f8fafc; text-align: center;\n"
-        "             padding: 96px 64px; }\n"
-        "  .ld-section[data-section-variant='footer'] {\n"
-        "             background: #0f172a; color: #94a3b8;\n"
-        "             padding: 48px 64px; font-size: 14px; }\n"
-        "  .ld-layer.text { outline: none; line-height: 1.3;\n"
-        "             word-break: break-word; box-sizing: border-box;\n"
-        "             cursor: text; margin: 0; }\n"
-        "  .ld-layer.text:hover { outline: 1px dashed rgba(120,180,255,0.35);\n"
+        "             min-height: 100vh; }\n"
+        "  .ld-section { display: flex; flex-direction: column;\n"
+        "             position: relative; }\n"
+        "  .ld-landing .layer.text { outline: none; word-break: break-word;\n"
+        "             box-sizing: border-box; cursor: text; margin: 0; }\n"
+        "  .ld-landing .layer.text:hover { outline: 1px dashed rgba(120,180,255,0.35);\n"
         "             outline-offset: 2px; }\n"
-        "  .ld-layer.text.ld-active { outline: 1px solid rgba(120,180,255,0.9);\n"
+        "  .ld-landing .layer.text.ld-active { outline: 1px solid rgba(120,180,255,0.9);\n"
         "             outline-offset: 4px; }\n"
         "  /* Drag handle hidden in landing mode — flow layout doesn't drag. */\n"
         "  .ld-landing .ld-drag-handle { display: none !important; }\n"
     )
 
 
-def _landing_user_comment() -> str:
+def _landing_user_comment(style: str = "minimalist") -> str:
     return (
         "<!--\n"
-        "  LongcatDesign landing page (v1.0 #8).\n"
+        f"  LongcatDesign landing page · design-system: {style}\n"
         "  \n"
         "  Sections stack in flow layout — no pixel positioning. Click any\n"
         "  text to edit with the floating toolbar (font/size/color) or\n"

@@ -17,6 +17,24 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+LandingStyle = Literal[
+    "minimalist", "editorial", "neubrutalism",
+    "glassmorphism", "claymorphism", "liquid-glass",
+]
+
+
+class DesignSystem(BaseModel):
+    """Landing-specific design-system selector (v1.0 #8.5).
+
+    One of the six bundled styles. The HTML renderer loads the matching
+    `assets/design-systems/<style>.css` at render time and inlines it into
+    the output HTML, so the file stays self-contained after distribution.
+    """
+    style: LandingStyle = "minimalist"
+    accent_color: str | None = None      # override the style's --ld-accent token
+    font_pairing: str | None = None      # free-text planner hint, not enforced
+
+
 class ArtifactType(str, Enum):
     """What kind of design artifact is being produced in the current session slot.
 
@@ -114,6 +132,7 @@ class DesignSpec(BaseModel):
     composition_notes: str = ""
     layer_graph: list[LayerNode] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
+    design_system: DesignSystem | None = None  # landing-only (v1.0 #8.5)
 
     @model_validator(mode="after")
     def _canvas_required_keys(self) -> "DesignSpec":

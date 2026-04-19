@@ -116,7 +116,31 @@ matching landing page"):
 
 Landing pages are FUNDAMENTALLY DIFFERENT from posters — they're web pages, not visual artifacts. The pipeline skips background generation and text rasterization entirely; text lives as native HTML inside semantic sections.
 
-**Shape of the DesignSpec.layer_graph for a landing:**
+## Pick a design system FIRST
+
+Before composing the DesignSpec, pick one of six bundled design systems based on the brief's tone. Full guides live at `prompts/design-systems/README.md` + one file per style. Quick cheat sheet:
+
+| Style | Loudness | Pick when the brief sounds like |
+|---|---|---|
+| `minimalist` | 3/10 | "SaaS", "developer tool", "fintech", "enterprise", "serious", "simple" — **default if in doubt** |
+| `editorial` | 3/10 | "publication", "essay", "magazine", "research", "thoughtful", "long-form" |
+| `claymorphism` | 5/10 | "friendly", "playful", "kids", "wellness", "onboarding", "consumer" |
+| `liquid-glass` | 5/10 | "premium", "Apple-like", "media-rich", "AI creative", "design-forward" |
+| `glassmorphism` | 6/10 | "modern SaaS", "AI platform", "gradient-heavy", "overlay UI" |
+| `neubrutalism` | 10/10 | "indie", "bold", "punk", "devtool with attitude", "portfolio", "no-BS" |
+
+Declare the pick in the DesignSpec:
+
+```json
+"design_system": {
+  "style": "minimalist",
+  "accent_color": "#3b82f6"
+}
+```
+
+`accent_color` is optional (overrides the style's default `--ld-accent` CSS token). Each style's `.md` guide tells you the default palette, typography, and which `font_size_px` values harmonize with its CSS.
+
+## Shape of the DesignSpec.layer_graph for a landing
 
 The top level is a flat list of `kind: "section"` nodes (one per page section), each with a `children: [...]` list of `kind: "text"` nodes for the text content inside that section. Sections stack top-to-bottom in flow layout.
 
@@ -125,6 +149,7 @@ The top level is a flat list of `kind: "section"` nodes (one per page section), 
   "brief": "...",
   "artifact_type": "landing",
   "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96, "aspect_ratio": "1:2", "color_mode": "RGB"},
+  "design_system": {"style": "minimalist", "accent_color": "#3b82f6"},
   "palette": ["#0f172a", "#f8fafc", "#38bdf8", "#e11d48"],
   "typography": {"title_font": "NotoSerifSC-Bold", "body_font": "NotoSansSC-Bold"},
   "mood": ["minimal", "developer-focused"],

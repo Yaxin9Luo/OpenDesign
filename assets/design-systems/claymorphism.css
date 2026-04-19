@@ -1,0 +1,82 @@
+/* Claymorphism — soft, puffy, warm-pastel.
+   See prompts/design-systems/claymorphism.md for rationale. */
+
+:root {
+  --ld-bg: #f4f0ea;
+  --ld-bg-alt: #eee7dc;
+  --ld-bg-dark: #2a2530;
+  --ld-fg: #3a2f4a;
+  --ld-fg-muted: #7a6d8a;
+  --ld-fg-inverse: #f4f0ea;
+  --ld-card-lavender: #dcd6f7;
+  --ld-card-mint: #c8e6c9;
+  --ld-card-peach: #ffd9b3;
+  --ld-card-sky: #c7e9f8;
+  --ld-accent: #a58cff;
+  --ld-shadow-clay:
+    inset 3px 3px 6px rgba(255, 255, 255, 0.6),
+    inset -3px -3px 6px rgba(0, 0, 0, 0.08),
+    10px 10px 24px rgba(170, 150, 200, 0.28);
+}
+
+body {
+  background: #e8e1d2; color: var(--ld-fg);
+  font-family: 'Nunito', 'Quicksand', 'DM Sans', system-ui, sans-serif;
+}
+.ld-landing {
+  background: var(--ld-bg);
+  border-radius: 32px;
+  margin: 48px auto;
+  box-shadow: var(--ld-shadow-clay);
+}
+
+.ld-section { padding: 100px 64px; gap: 28px; }
+.ld-section[data-section-variant="hero"] {
+  background: var(--ld-bg); text-align: center; align-items: center;
+  padding: 140px 64px;
+}
+.ld-section[data-section-variant="hero"] .layer.text:first-of-type {
+  background: var(--ld-card-lavender);
+  border-radius: 40px; padding: 32px 48px;
+  box-shadow: var(--ld-shadow-clay);
+  max-width: 760px;
+}
+.ld-section[data-section-variant="features"] {
+  background: var(--ld-bg-alt);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px; padding: 100px 64px;
+}
+.ld-section[data-section-variant="features"] .layer.text {
+  background: var(--ld-card-lavender); color: var(--ld-fg);
+  border-radius: 28px; padding: 32px;
+  box-shadow: var(--ld-shadow-clay);
+}
+.ld-section[data-section-variant="features"] .layer.text:nth-of-type(2) { background: var(--ld-card-mint); }
+.ld-section[data-section-variant="features"] .layer.text:nth-of-type(3) { background: var(--ld-card-peach); }
+.ld-section[data-section-variant="features"] .layer.text:nth-of-type(4) { background: var(--ld-card-sky); }
+.ld-section[data-section-variant="cta"] {
+  background: var(--ld-bg-dark); color: var(--ld-fg-inverse);
+  text-align: center; align-items: center; padding: 120px 64px;
+  border-radius: 0;
+}
+.ld-section[data-section-variant="cta"] .layer.text:first-of-type {
+  background: var(--ld-accent); color: #ffffff;
+  border-radius: 999px; padding: 28px 56px;
+  box-shadow: var(--ld-shadow-clay);
+  display: inline-flex;
+}
+.ld-section[data-section-variant="footer"] {
+  background: var(--ld-bg); color: var(--ld-fg-muted);
+  padding: 48px 64px; font-size: 14px;
+  border-radius: 0 0 32px 32px;
+}
+
+.ld-landing .layer.text {
+  font-family: 'Nunito', 'Quicksand', 'DM Sans', system-ui, sans-serif;
+  font-weight: 600; line-height: 1.65;
+}
+.ld-section[data-section-variant="hero"] .layer.text:first-of-type,
+.ld-section[data-section-variant="features"] .layer.text:first-of-type,
+.ld-section[data-section-variant="cta"] .layer.text:first-of-type {
+  font-weight: 700; line-height: 1.2;
+}
