@@ -1,8 +1,17 @@
-"""Critic — vision-based self-review producing a structured CritiqueResult.
+"""Critic — produces a structured CritiqueResult via vision (poster) or
+text-only (landing) evaluation.
 
-Downscales preview before sending to respect vision input caps. Asks the model
-for strict JSON; if parsing fails, falls back to a 'fail' verdict so the
-pipeline still ends cleanly.
+Poster / deck: vision-based, sends a downscaled preview PNG alongside the
+DesignSpec and asks the model to grade against a visual rubric.
+
+Landing (v1.0 #8.5-fix): text-only. The Pillow-rendered preview is a lossy
+proxy for the real browser-rendered HTML, so grading it with vision leads to
+false fails (tofu emojis, missing CSS, etc.). Instead, we send the DesignSpec
+section tree + design_system selection and grade against a content-level
+rubric (`prompts/critic-landing.md`).
+
+Falls back to a 'fail' verdict if JSON parsing fails so the pipeline still
+ends cleanly.
 """
 
 from __future__ import annotations
@@ -18,7 +27,7 @@ from anthropic import Anthropic
 from PIL import Image
 from pydantic import ValidationError
 
-from .schema import CritiqueIssue, CritiqueResult, DesignSpec
+from .schema import ArtifactType, CritiqueIssue, CritiqueResult, DesignSpec
 from .util.logging import log
 
 
@@ -33,13 +42,19 @@ class Critic:
         if settings.anthropic_base_url:
             client_kwargs["base_url"] = settings.anthropic_base_url
         self.client = Anthropic(**client_kwargs)
-        self._system_prompt: str | None = None
+        self._poster_prompt: str | None = None
+        self._landing_prompt: str | None = None
 
-    def _system(self) -> str:
-        if self._system_prompt is None:
+    def _system(self, artifact_type: ArtifactType) -> str:
+        if artifact_type == ArtifactType.LANDING:
+            if self._landing_prompt is None:
+                path = self.settings.prompts_dir / "critic-landing.md"
+                self._landing_prompt = path.read_text(encoding="utf-8")
+            return self._landing_prompt
+        if self._poster_prompt is None:
             path = self.settings.prompts_dir / "critic.md"
-            self._system_prompt = path.read_text(encoding="utf-8")
-        return self._system_prompt
+            self._poster_prompt = path.read_text(encoding="utf-8")
+        return self._poster_prompt
 
     def evaluate(
         self,
@@ -50,17 +65,42 @@ class Critic:
         iteration: int,
         max_iters: int,
     ) -> CritiqueResult:
-        b64, media_type = _downscale_b64(preview_path, self.settings.critic_preview_max_edge)
+        # Landing: text-only. Preview PNG is not representative of the real
+        # HTML (emojis → tofu, CSS not applied, etc.), so we skip vision.
+        if design_spec.artifact_type == ArtifactType.LANDING:
+            return self._evaluate_landing(
+                design_spec=design_spec,
+                iteration=iteration,
+                max_iters=max_iters,
+            )
 
+        return self._evaluate_with_vision(
+            preview_path=preview_path,
+            design_spec=design_spec,
+            layer_manifest=layer_manifest,
+            iteration=iteration,
+            max_iters=max_iters,
+        )
+
+    def _evaluate_with_vision(
+        self,
+        *,
+        preview_path: Path,
+        design_spec: DesignSpec,
+        layer_manifest: list[dict[str, Any]],
+        iteration: int,
+        max_iters: int,
+    ) -> CritiqueResult:
+        b64, media_type = _downscale_b64(preview_path, self.settings.critic_preview_max_edge)
         user_text = _build_user_text(design_spec, layer_manifest, iteration, max_iters)
 
         log("critic.request", iter=iteration, max_iters=max_iters,
-            preview_kb=len(b64) * 3 // 4 // 1024)
+            preview_kb=len(b64) * 3 // 4 // 1024, mode="vision")
 
         resp = self.client.messages.create(
             model=self.settings.critic_model,
             max_tokens=2048,
-            system=self._system(),
+            system=self._system(design_spec.artifact_type),
             messages=[{
                 "role": "user",
                 "content": [
@@ -72,8 +112,31 @@ class Critic:
         )
 
         text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        result = _parse_critique(text, iteration, max_iters)
-        return result
+        return _parse_critique(text, iteration, max_iters)
+
+    def _evaluate_landing(
+        self,
+        *,
+        design_spec: DesignSpec,
+        iteration: int,
+        max_iters: int,
+    ) -> CritiqueResult:
+        user_text = _build_landing_user_text(design_spec, iteration, max_iters)
+
+        log("critic.request", iter=iteration, max_iters=max_iters,
+            mode="text-landing",
+            sections=sum(1 for n in (design_spec.layer_graph or [])
+                         if getattr(n, "kind", None) == "section"))
+
+        resp = self.client.messages.create(
+            model=self.settings.critic_model,
+            max_tokens=2048,
+            system=self._system(ArtifactType.LANDING),
+            messages=[{"role": "user", "content": user_text}],
+        )
+
+        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+        return _parse_critique(text, iteration, max_iters)
 
 
 def _downscale_b64(path: Path, max_edge: int) -> tuple[str, str]:
@@ -105,6 +168,66 @@ def _build_user_text(spec: DesignSpec, manifest: list[dict[str, Any]],
         "Output STRICT JSON inside a single ```json ...``` code block matching "
         "the CritiqueResult schema (iteration, verdict, score, issues[], rationale). "
         "Nothing outside the code block."
+    )
+
+
+def _build_landing_user_text(spec: DesignSpec, iteration: int, max_iters: int) -> str:
+    """Text-only prompt for landing mode. Flattens the section tree into a
+    compact summary so the critic doesn't have to parse nested JSON itself."""
+    ds = spec.design_system
+    design_system_line = (
+        f"style={ds.style}, accent_color={ds.accent_color or '(default)'}"
+        if ds else "(no design_system declared — falls back to minimalist)"
+    )
+
+    section_blocks: list[str] = []
+    sections = list(spec.layer_graph or [])
+    for s in sections:
+        kind = getattr(s, "kind", None)
+        if kind != "section":
+            continue
+        children = getattr(s, "children", None) or []
+        text_lines: list[str] = []
+        for child in children:
+            if getattr(child, "kind", None) != "text":
+                continue
+            name = getattr(child, "name", "?")
+            size = getattr(child, "font_size_px", "?")
+            family = getattr(child, "font_family", "?")
+            fill = "?"
+            effects = getattr(child, "effects", None)
+            if effects is not None:
+                fill = getattr(effects, "fill", "?") or "?"
+            text = (getattr(child, "text", "") or "").strip()
+            text_lines.append(
+                f"    - {name}  (font_size={size}, family={family}, fill={fill}): "
+                f'"{text}"'
+            )
+        section_blocks.append(
+            f"  ### section `{s.name}` (layer_id={s.layer_id}, "
+            f"z_index={s.z_index})\n"
+            + ("\n".join(text_lines) if text_lines else "    (no text children)")
+        )
+
+    return (
+        f"## Iteration {iteration} of {max_iters}\n\n"
+        f"## Brief\n{spec.brief}\n\n"
+        f"## Design system\n{design_system_line}\n\n"
+        f"## Canvas\nwidth={spec.canvas.get('w_px')}, "
+        f"height={spec.canvas.get('h_px')} (height is advisory only for landing)\n\n"
+        f"## Palette\n{', '.join(spec.palette) if spec.palette else '(empty)'}\n\n"
+        f"## Mood tags\n{', '.join(spec.mood) if spec.mood else '(empty)'}\n\n"
+        f"## Composition notes\n{spec.composition_notes or '(empty)'}\n\n"
+        f"## Section tree ({len(section_blocks)} sections)\n"
+        + ("\n".join(section_blocks) if section_blocks else "  (empty)") + "\n\n"
+        "## Full DesignSpec JSON (for reference)\n"
+        f"```json\n{json.dumps(spec.model_dump(mode='json'), ensure_ascii=False, indent=2)}\n```\n\n"
+        "Grade this landing's DesignSpec against the content-level rubric in "
+        "your system prompt. You do NOT have a preview image — base your "
+        "critique on the section tree + design_system + copy above, and remember "
+        "to skip anything that only a visual image could reveal. "
+        "Output STRICT JSON inside a single ```json ...``` code block matching "
+        "the CritiqueResult schema. Nothing outside the code block."
     )
 
 

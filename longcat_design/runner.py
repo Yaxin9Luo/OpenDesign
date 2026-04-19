@@ -14,7 +14,8 @@ from typing import Any
 from .config import Settings
 from .planner import PlannerLoop
 from .schema import (
-    CompositionArtifacts, DesignSpec, LayerNode, SafeZone, TextEffect, Trajectory,
+    ArtifactType, CompositionArtifacts, DesignSpec, LayerNode, SafeZone,
+    TextEffect, Trajectory,
 )
 from .tools import ToolContext
 from .util.io import atomic_write_json, ensure_dirs
@@ -53,7 +54,13 @@ class PipelineRunner:
         if composition is None:
             raise RuntimeError("planner exited without producing composition artifacts")
 
-        final_layer_graph = _materialize_layer_graph(ctx.state["rendered_layers"])
+        # Landing: the authoritative layer tree is the section-tree on the
+        # DesignSpec (rendered_layers stays empty since landing has no PNG
+        # rasterization). Poster: materialize from rendered_layers blackboard.
+        if spec.artifact_type == ArtifactType.LANDING:
+            final_layer_graph = list(spec.layer_graph or [])
+        else:
+            final_layer_graph = _materialize_layer_graph(ctx.state["rendered_layers"])
 
         wall_s = round(time.monotonic() - wall_start, 2)
         in_tok, out_tok = planner.token_totals

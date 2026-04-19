@@ -60,6 +60,10 @@ Severity = Literal["blocker", "major", "minor"]
 IssueCategory = Literal[
     "typography", "composition", "brand",
     "legibility", "cultural", "artifact",
+    # v1.0 #8.5-fix: landing critique often flags text-content concerns that
+    # don't fit the poster-visual vocabulary — "copy" covers headline/body
+    # wording quality, "content" covers section balance / length / pacing.
+    "copy", "content",
 ]
 
 
