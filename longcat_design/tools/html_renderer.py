@@ -56,7 +56,8 @@ def write_html(
     font_face_css = build_font_face_css(fonts_used, ctx)
     bundled_families = sorted(ctx.settings.fonts.keys())
 
-    head = _head_block(cw, ch, font_face_css, _doc_title(ctx))
+    head = _head_block(cw, ch, font_face_css, _doc_title(ctx),
+                       run_id=getattr(ctx, "run_id", "") or "")
     body_parts: list[str] = [
         "<body>",
         _user_comment(),
@@ -94,14 +95,19 @@ def write_html(
 # --- section builders -----------------------------------------------------
 
 
-def _head_block(cw: int, ch: int, font_face_css: str, title: str) -> str:
+def _head_block(cw: int, ch: int, font_face_css: str, title: str,
+                run_id: str = "") -> str:
+    run_id_meta = (
+        f'<meta name="ld-run-id" content="{_attr(run_id)}">\n' if run_id else ""
+    )
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="generator" content="LongcatDesign">\n'
-        f"<title>{html.escape(title)}</title>\n"
+        + run_id_meta
+        + f"<title>{html.escape(title)}</title>\n"
         "<style>\n"
         + _base_css(cw, ch)
         + _toolbar_css()

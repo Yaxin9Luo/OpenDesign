@@ -34,7 +34,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/8] imports")
+    print("[1/9] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,7 +47,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/8] tool registry")
+    print("[2/9] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -74,7 +74,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/8] pydantic schema round-trip")
+    print("[3/9] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -117,7 +117,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/8] fonts")
+    print("[4/9] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -137,7 +137,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/8] composite (no API)")
+    print("[5/9] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -238,7 +238,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/8] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/9] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -309,7 +309,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/8] chat session save/load")
+    print("[7/9] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -371,7 +371,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/8] edit_layer (no API)")
+    print("[8/9] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -494,6 +494,83 @@ def check_edit_layer_no_api() -> None:
     _ok("empty diff + unknown field both rejected")
 
 
+def check_apply_edits_roundtrip() -> None:
+    """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
+    print("[9/9] apply-edits round-trip (no API)")
+    from .apply_edits import apply_edits
+    from .config import REPO_ROOT, Settings
+
+    src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
+    if not src_html.exists():
+        _fail("smoke HTML missing — [5/9] composite step must run first")
+
+    # Simulate a user edit: bump font size + change color on the title.
+    # Re-emit with a changed data-font-size-px/data-fill so round-trip should
+    # reflect the new values in the regenerated layer graph.
+    raw = src_html.read_text(encoding="utf-8")
+    edited = (raw
+              .replace('data-font-size-px="110"', 'data-font-size-px="140"')
+              .replace('data-fill="#fafafa"', 'data-fill="#ff3366"'))
+    if edited == raw:
+        _fail("could not seed edits into smoke HTML — assumed markers missing")
+    edited_html_path = REPO_ROOT / "out" / "smoke_apply" / "edited.html"
+    edited_html_path.parent.mkdir(parents=True, exist_ok=True)
+    edited_html_path.write_text(edited, encoding="utf-8")
+
+    settings = Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="claude-opus-4-7",
+        critic_model="claude-opus-4-7",
+    )
+    out_dir = REPO_ROOT / "out" / "smoke_apply" / "restored"
+
+    traj, traj_path = apply_edits(edited_html_path, settings=settings,
+                                  out_dir=out_dir)
+
+    # --- trajectory assertions -------------------------------------------
+    if traj.metadata.get("source") != "apply-edits":
+        _fail(f"metadata.source != 'apply-edits'; got {traj.metadata.get('source')!r}")
+    if not traj.metadata.get("parent_run_id"):
+        _fail("metadata.parent_run_id missing — <meta name='ld-run-id'> may not be emitted")
+    if traj.agent_trace:
+        _fail(f"apply-edits trajectory should have empty agent_trace; got {len(traj.agent_trace)}")
+    _ok(f"trajectory: source=apply-edits, parent={traj.metadata['parent_run_id']}, "
+        f"{len(traj.layer_graph)} layers")
+
+    # --- artifact files exist --------------------------------------------
+    for label, p in [("PSD", traj.composition.psd_path),
+                     ("SVG", traj.composition.svg_path),
+                     ("HTML", traj.composition.html_path),
+                     ("preview", traj.composition.preview_path)]:
+        if p is None or not Path(p).exists() or Path(p).stat().st_size == 0:
+            _fail(f"{label} not written: {p}")
+    _ok("PSD+SVG+HTML+preview all regenerated in new run_dir")
+
+    # --- edits landed in re-rendered layer graph -------------------------
+    title = next((L for L in traj.layer_graph
+                  if L.kind == "text" and L.name == "title"), None)
+    if title is None:
+        _fail("title layer missing from round-trip layer_graph")
+    if title.font_size_px != 140:
+        _fail(f"edit lost on round-trip — title.font_size_px={title.font_size_px}, expected 140")
+    if (title.effects and title.effects.fill.lower()) != "#ff3366":
+        _fail(f"edit lost on round-trip — title.effects.fill="
+              f"{title.effects.fill if title.effects else None}, expected '#ff3366'")
+    _ok("edits preserved: title.font_size_px=140, fill=#ff3366")
+
+    # --- bg was decoded from data: URI, not copied from original ---------
+    bg = next((L for L in traj.layer_graph if L.kind == "background"), None)
+    if bg is not None:
+        bg_path = Path(bg.src_path)
+        if not bg_path.exists():
+            _fail(f"bg src_path missing: {bg_path}")
+        if out_dir not in bg_path.parents:
+            _fail(f"bg was not written into new run_dir — got {bg_path}")
+        _ok(f"bg decoded from data URI → {bg_path.name} ({bg_path.stat().st_size} B)")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -503,8 +580,9 @@ def main() -> int:
     check_svg_text_is_vector()
     check_chat_session_roundtrip()
     check_edit_layer_no_api()
+    check_apply_edits_roundtrip()
     print("\n  smoke test passed.")
-    print("  artifacts in: out/smoke/, out/smoke_edit/")
+    print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/")
     return 0
 
 
