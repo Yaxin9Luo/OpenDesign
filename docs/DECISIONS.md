@@ -6,6 +6,21 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-20 — Deck uses `kind="slide"` in existing LayerNode tree (no separate `DeckStructure` model); critic is text-only
+
+**Decision**: v1.0 #7's PPTX renderer reuses the existing `LayerNode` tree with a new `kind="slide"` literal — top-level slide nodes, each with `children[]` holding positioned `text` / `image` / `background` elements via pixel `bbox`. No parallel `DeckStructure` pydantic model. The critic for deck mode is **text-only** (mirrors landing) — grades the slide tree / density / arc from the DesignSpec without sending any vision input.
+
+**Alternatives considered**:
+1. **Separate `DeckStructure` / `SlideNode` models** (as suggested loosely in V1-MVP-PLAN.md row 7). Rejected: pattern-match from landing (which already introduced `kind="section"` into the same `LayerNode` tree) says reuse. A parallel model would duplicate `bbox` / `children` / z-index plumbing for zero gain — the runtime, apply-edits (future), and trajectory shape all benefit from one node type.
+2. **Vision-based critic on a stitched multi-slide PNG**. Rejected: (a) for 20-slide decks the stitched PNG risks the 5 MB vision input cap; (b) the Pillow-rendered per-slide PNG is a simplified approximation — PowerPoint/Keynote do the real type layout, so grading the preview grades the approximation, not the artifact; (c) text-only gets us consistent architecture with landing and the DesignSpec IS authoritative for deck structure.
+3. **Skip the critic for deck entirely in v1.0** — ship deck without self-review. Rejected: breaks the UX parity across the 3 artifact types (poster + landing both have critic; absence on deck feels unfinished).
+
+**Rationale**: Reusing `LayerNode` is a 1-line schema change (`LayerKind += "slide"`); the existing `children[]` walking machinery in composite + hydration patterns (`_hydrate_landing_image_srcs` → `_hydrate_deck_image_srcs`) transfer directly. Text-only critic mirrors the `_evaluate_landing` branch almost exactly — a new `_evaluate_deck` + `_build_deck_user_text` helper + `prompts/critic-deck.md` rubric, no vision content block. Smoke [13/13] `check_deck_mode` verifies the .pptx reopens cleanly with correct slide count + native text runs + picture shapes.
+
+**Revisit when**: (a) a user complains that the critic misses visual bugs a renderer-of-the-actual-pptx would catch (would bring back a *headless LibreOffice / Keynote CLI render* path, not the Pillow approximation); (b) deck gets table / chart / shape elements that can't be expressed in the current `LayerNode` polymorphic shape (would motivate a dedicated `SlideElement` union type).
+
+---
+
 ## 2026-04-19 — NBP generates landing imagery too, via a NEW tool `generate_image` (not overloaded `generate_background`)
 
 **Decision**: Introduce a second image-generation tool dedicated to landing-mode inline imagery. `generate_background` stays poster-only (full-canvas, text-free, has `safe_zones`); `generate_image` is landing-only (inline in a section's `children[]`, no `safe_zones`, flow layout). Both hit NBP under the hood but are semantically separate in the tool vocabulary.

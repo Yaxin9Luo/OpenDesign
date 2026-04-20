@@ -61,7 +61,7 @@ class PlannerLoop:
             try:
                 resp = self.client.messages.create(
                     model=self.settings.planner_model,
-                    max_tokens=4096,
+                    max_tokens=16384,
                     system=self.system_prompt,
                     tools=TOOL_SCHEMAS,
                     messages=messages,
@@ -148,13 +148,18 @@ class PlannerLoop:
     def _invoke(self, name: str, args: dict[str, Any], ctx: ToolContext) -> ToolObservation:
         handler = TOOL_HANDLERS.get(name)
         if handler is None:
+            log("tool.call", tool=name, status="unknown")
             return ToolObservation(
                 status="error",
                 summary=f"unknown tool: {name}",
                 next_actions=[f"available tools: {sorted(TOOL_HANDLERS)}"],
             )
+        log("tool.call", tool=name)
         try:
-            return handler(args, ctx=ctx)
+            obs = handler(args, ctx=ctx)
+            log("tool.result", tool=name, status=obs.status,
+                summary=(obs.summary or "")[:240])
+            return obs
         except Exception as e:
             log("tool.exception", tool=name, error=str(e))
             return ToolObservation(

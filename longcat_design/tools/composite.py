@@ -20,8 +20,10 @@ from psd_tools import PSDImage
 from psd_tools.constants import BlendMode, Compression
 
 from ._contract import ToolContext, obs_error, obs_ok
+from ._deck_preview import build_deck_preview_grid
 from ._font_embed import build_font_face_css
 from .html_renderer import write_html, write_landing_html
+from .pptx_renderer import render_slide_preview_png, write_pptx
 from ..schema import ArtifactType, CompositionArtifacts, ToolObservation
 from ..util.logging import log
 
@@ -35,6 +37,12 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     # It reads the section tree directly from design_spec.layer_graph.
     if spec.artifact_type == ArtifactType.LANDING:
         return _composite_landing(spec, ctx)
+
+    # Deck mode (v1.0 #7) is PPTX-primary with per-slide PNG previews.
+    # Reads the slide tree from design_spec.layer_graph (kind="slide"); inline
+    # images inside slides are hydrated from ctx.state["rendered_layers"].
+    if spec.artifact_type == ArtifactType.DECK:
+        return _composite_deck(spec, ctx)
 
     rendered = ctx.state["rendered_layers"]
     if not rendered:
@@ -176,6 +184,138 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
         artifacts=[str(html_path), str(preview_path)],
         next_actions=["call critique to self-review", "or call finalize"],
     )
+
+
+def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
+    """PPTX-primary deck composite. Reads the slide tree from
+    design_spec.layer_graph (top-level `kind="slide"` nodes). Writes:
+      - deck.pptx — native PowerPoint file (editable TextFrames)
+      - slides/slide_<i>.png — per-slide Pillow preview thumbs
+      - preview.png — grid thumb of the slides (for chat UX + critic)
+    """
+    layer_graph = list(spec.layer_graph or [])
+    slides = [n for n in layer_graph if getattr(n, "kind", None) == "slide"]
+    if not slides:
+        return obs_error(
+            "deck design_spec has no slides — propose_design_spec with a "
+            "layer_graph containing at least one kind=\"slide\" node first"
+        )
+
+    # Hydrate inline images inside slides (same pattern as landing — planner
+    # may declare image children separately and call generate_image later).
+    _hydrate_deck_image_srcs(slides, ctx)
+
+    pptx_path = ctx.run_dir / "deck.pptx"
+    slides_dir = ctx.run_dir / "slides"
+    slides_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = ctx.run_dir / "preview.png"
+
+    canvas = spec.canvas or {}
+    slide_w = int(canvas.get("w_px") or 1920)
+    slide_h = int(canvas.get("h_px") or 1080)
+
+    try:
+        slide_count = write_pptx(spec, pptx_path, ctx)
+    except Exception as e:
+        return obs_error(f"PPTX write failed: {e}")
+
+    slide_pngs: list[Path] = []
+    for idx, slide_node in enumerate(slides):
+        png_path = slides_dir / f"slide_{idx:02d}.png"
+        try:
+            render_slide_preview_png(slide_node, slide_w, slide_h, png_path, ctx)
+            slide_pngs.append(png_path)
+        except Exception as e:
+            return obs_error(f"slide {idx} preview render failed: {e}")
+
+    try:
+        build_deck_preview_grid(slide_pngs, preview_path)
+    except Exception as e:
+        return obs_error(f"deck preview grid failed: {e}")
+
+    manifest: list[dict[str, Any]] = []
+    for idx, slide_node in enumerate(slides):
+        entry = {
+            "layer_id": slide_node.layer_id,
+            "name": slide_node.name,
+            "kind": "slide",
+            "index": idx,
+            "children": [
+                {
+                    "layer_id": c.layer_id,
+                    "name": c.name,
+                    "kind": c.kind,
+                    "text": getattr(c, "text", None),
+                    "src_path": getattr(c, "src_path", None),
+                }
+                for c in (slide_node.children or [])
+            ],
+        }
+        manifest.append(entry)
+
+    artifacts = CompositionArtifacts(
+        psd_path=None,
+        svg_path=None,
+        html_path=None,
+        pptx_path=str(pptx_path),
+        preview_path=str(preview_path),
+        layer_manifest=manifest,
+    )
+    ctx.state["composition"] = artifacts
+
+    image_ct = sum(
+        1 for s in slides
+        for c in (getattr(s, "children", None) or [])
+        if getattr(c, "kind", None) in ("image", "background")
+        and getattr(c, "src_path", None)
+    )
+    log("composite.deck.done",
+        pptx=str(pptx_path), preview=str(preview_path),
+        slides=slide_count, images=image_ct)
+
+    return obs_ok(
+        f"Composed deck: {slide_count} slide(s), {image_ct} inline image(s) "
+        f"→ PPTX + per-slide previews + grid ({slide_w}×{slide_h}px)",
+        artifacts=[str(pptx_path), str(preview_path), *[str(p) for p in slide_pngs]],
+        next_actions=["call critique to self-review", "or call finalize"],
+    )
+
+
+def _hydrate_deck_image_srcs(slides: list[Any], ctx: ToolContext) -> None:
+    """Copy src_path from rendered_layers onto each slide's image/background
+    children. Mirrors `_hydrate_landing_image_srcs` — see that docstring.
+    """
+    rendered = ctx.state.get("rendered_layers") or {}
+    if not rendered:
+        return
+    for slide in slides:
+        children = list(getattr(slide, "children", None) or [])
+        new_children: list[Any] = []
+        changed = False
+        for child in children:
+            kind = getattr(child, "kind", None)
+            if kind not in ("image", "background"):
+                new_children.append(child)
+                continue
+            if getattr(child, "src_path", None):
+                new_children.append(child)
+                continue
+            rec = rendered.get(getattr(child, "layer_id", None))
+            if rec and rec.get("src_path"):
+                try:
+                    new_child = child.model_copy(update={
+                        "src_path": rec["src_path"],
+                        "aspect_ratio": rec.get("aspect_ratio") or getattr(child, "aspect_ratio", None),
+                    })
+                    new_children.append(new_child)
+                    changed = True
+                except Exception:
+                    child.src_path = rec["src_path"]
+                    new_children.append(child)
+            else:
+                new_children.append(child)
+        if changed:
+            slide.children = new_children
 
 
 def _hydrate_landing_image_srcs(layer_graph: list[Any], ctx: ToolContext) -> None:

@@ -109,7 +109,7 @@ matching landing page"):
 # Artifact-type specific guidance
 
 - **poster**: absolutely-positioned layers over a text-free background. Canvas e.g. 1536×2048 (3:4) or 2048×1536 (4:3). Use `generate_background` for the main visual, then `render_text_layer` for each text element.
-- **deck**: N slides, one LayerNode per slide (kind will broaden to `"slide"` in v1.1). Output is PPTX with PowerPoint-native editable type frames (once the PPTX renderer lands). For now, compose slides via the existing poster path with slide-sized canvas (e.g. 1920×1080).
+- **deck**: N slides output as a native `.pptx` (python-pptx with live TextFrames — editable in PowerPoint / Keynote / Google Slides). Slide-sized canvas: default `1920×1080` (16:9). Each slide is one top-level `LayerNode` with `kind: "slide"` whose `children` hold per-slide text / image / background elements positioned by pixel `bbox`. See the **Deck workflow** section below.
 - **landing**: single self-contained HTML page with semantic sections (header / hero / features / cta / footer). Flow layout, not absolute positioning. See the **Landing workflow** section below.
 
 # Landing workflow (artifact_type = "landing")
@@ -225,6 +225,165 @@ Name them consistently (exact match or containing the keyword works — `"hero"`
 **Landing canvas conventions:**
 
 `canvas.w_px` becomes the HTML's max-width; `canvas.h_px` is just metadata (flow layout means actual page height varies). Typical values: `w_px: 1200` for standard, `1440` for wider.
+
+# Deck workflow (artifact_type = "deck")
+
+A deck is an editable `.pptx` with N slides. The renderer writes **native PowerPoint TextFrames** — no rasterization — so every title / bullet stays type-editable when the user opens the file in PowerPoint / Keynote / Google Slides. Images inside slides are embedded as picture shapes.
+
+## Canvas and slide count
+
+- Default canvas: `{"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"}`. Use 4:3 (`1920×1440`) only if the user explicitly asks for it.
+- **Slide count by use case** (rough guidance — adjust to the brief):
+  - Pitch deck: **8–12 slides** (cover + problem + solution + market + traction + team + ask + thank-you)
+  - Lightning talk: **5–8 slides**
+  - Research talk / academic: **10–16 slides**
+  - Longer report: **15–25 slides**
+- First slide is the **cover** (sparse — title + subtitle + maybe date / author). Last slide is **thank-you / Q&A**.
+
+## Imagery is REQUIRED for commercial-grade decks
+
+**A deck without imagery is not a commercial product.** Text-only decks are a dev-mode fallback, not the target output. Every real deck (pitch / brand / product / report) has at least one image per substantive content slide. NBP (`generate_image` tool) is what differentiates LongcatDesign from "LLM that writes slide bullets" — use it.
+
+### Per-slide imagery recipe
+
+| Slide role | Image role | bbox pattern | Prompt hint |
+|---|---|---|---|
+| **Cover** | Full-bleed `kind: "background"` | `{x:0, y:0, w:1920, h:1080}` aspect `16:9` | Brand-defining hero shot (product, scene, symbol). No text in image. Cinematic. |
+| **Problem / pain-point** | Full-bleed `background` OR right-60% `image` | `{x:960,y:0,w:960,h:1080}` aspect `1:1` or `3:4` | Scene that evokes the pain: crowded / chaotic / overwhelming / dated. Editorial photojournalism feel. |
+| **Solution / product** | Right-60% `image` (text on left) | `{x:960,y:80,w:880,h:920}` aspect `1:1` | Clean product shot, styled table-top, or concept render showing the solution. |
+| **Traction / metrics** | Abstract graphical `image` center-right | `{x:1080,y:160,w:720,h:720}` aspect `1:1` | Abstract pattern, growth-evoking imagery (ascending lines in organic form, NOT a chart — NBP can't do precise data viz). Or a reinforcing brand scene. |
+| **Team / quote** | Portrait `image` left | `{x:120,y:180,w:600,h:720}` aspect `3:4` | Styled portrait / candid team photo / quote-attribution visual. |
+| **Thank-you / closing** | Full-bleed quiet `background` OR small brand mark | full-bleed at low opacity via palette, OR `{x:760,y:380,w:400,h:320}` | Ambient / atmospheric closing image. Quiet. |
+
+### Style-prefix for deck imagery coherence
+
+**NBP is stateless across calls** — a separate prompt per slide can produce 8 wildly different visual styles and the deck looks incoherent. Prevent this by putting a **consistent style prefix at the start of every `generate_image` prompt** in the same deck, derived from the brief's mood. Examples:
+
+- Investor pitch, warm consumer brand → `"editorial photography, warm natural light, soft grain, muted pastel palette, documentary feel — [slide-specific subject]"`
+- Enterprise SaaS / B2B → `"clean isometric illustration, single-color accent on off-white, architectural, confident — [subject]"`
+- Research / academic → `"conceptual illustration, technical line work, restrained palette, paper-texture background — [subject]"`
+- Premium / luxury → `"high-end editorial still life, moody chiaroscuro, shallow depth of field — [subject]"`
+
+Write the prefix into `composition_notes` of the DesignSpec so the intent is captured, then replay it at the start of each `generate_image` prompt.
+
+### Budget guidance
+
+- Expect 1 image per content slide + 1 cover background ≈ **6-10 NBP calls per deck**.
+- At ~$0.05-0.10 per 1K image and ~$0.15-0.20 per 2K image, a 10-slide deck with 8 images ≈ **$0.80-1.50 in NBP cost** on top of planner + critic. Fine.
+- If the user brief explicitly asks for a "text-only" or "minimal" deck, fall back to the text-only path — but make the user explicitly say that, don't assume it.
+
+## Shape of the DesignSpec.layer_graph for a deck
+
+The top level is a list of `kind: "slide"` nodes. Each slide's `children` are its elements: `kind in {"text","image","background"}`. **Positioning is by pixel `bbox`** (top-left origin, same as posters), so every element needs a bbox. Text uses `font_size_px` in pixels; the PPTX renderer converts to points internally.
+
+Image children in `propose_design_spec` start with `src_path: null` — the planner fills them later by calling `generate_image(layer_id=..., prompt=..., aspect_ratio=...)`. The renderer hydrates `src_path` from `ctx.rendered_layers` before writing the PPTX (same two-step pattern as landing imagery).
+
+```json
+{
+  "brief": "...",
+  "artifact_type": "deck",
+  "canvas": {"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"},
+  "palette": ["#0f172a", "#f8fafc", "#d4a574", "#64748b"],
+  "typography": {"title_font": "NotoSerifSC-Bold", "body_font": "NotoSansSC-Bold"},
+  "mood": ["calm", "warm", "editorial", "investor-ready"],
+  "composition_notes": "Style prefix: editorial photography, warm natural light, soft grain, muted earthy palette, documentary feel.",
+  "layer_graph": [
+    {
+      "layer_id": "slide_01", "name": "cover", "kind": "slide", "z_index": 1,
+      "children": [
+        {"layer_id": "slide_01_bg", "name": "cover_hero", "kind": "background", "z_index": 1,
+         "bbox": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+         "aspect_ratio": "16:9"},
+        {"layer_id": "slide_01_title", "name": "title", "kind": "text", "z_index": 10,
+         "bbox": {"x": 120, "y": 740, "w": 1680, "h": 160},
+         "text": "MilkCloud",
+         "font_family": "NotoSerifSC-Bold", "font_size_px": 120, "align": "left",
+         "effects": {"fill": "#ffffff"}},
+        {"layer_id": "slide_01_tagline", "name": "tagline", "kind": "text", "z_index": 10,
+         "bbox": {"x": 120, "y": 900, "w": 1680, "h": 60},
+         "text": "奶香 · 慢生活 · 好朋友",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 32, "align": "left",
+         "effects": {"fill": "#f1f5f9"}}
+      ]
+    },
+    {
+      "layer_id": "slide_02", "name": "problem", "kind": "slide", "z_index": 2,
+      "children": [
+        {"layer_id": "slide_02_img", "name": "chaos_scene", "kind": "image", "z_index": 5,
+         "bbox": {"x": 960, "y": 0, "w": 960, "h": 1080},
+         "aspect_ratio": "1:1"},
+        {"layer_id": "slide_02_label", "name": "section_label", "kind": "text", "z_index": 10,
+         "bbox": {"x": 120, "y": 120, "w": 760, "h": 48},
+         "text": "01 · THE PROBLEM",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 18, "align": "left",
+         "effects": {"fill": "#d4a574"}},
+        {"layer_id": "slide_02_title", "name": "title", "kind": "text", "z_index": 10,
+         "bbox": {"x": 120, "y": 200, "w": 760, "h": 200},
+         "text": "奶茶店太吵了。",
+         "font_family": "NotoSerifSC-Bold", "font_size_px": 72, "align": "left",
+         "effects": {"fill": "#0f172a"}},
+        {"layer_id": "slide_02_body", "name": "body", "kind": "text", "z_index": 10,
+         "bbox": {"x": 120, "y": 460, "w": 760, "h": 480},
+         "text": "更响的 logo、更花的颜色、更挤的菜单。\n每一家都在争夺注意力。\n\n没有人为「安静地喝一杯奶茶」留出空间。",
+         "font_family": "NotoSansSC-Bold", "font_size_px": 32, "align": "left",
+         "effects": {"fill": "#334155"}}
+      ]
+    }
+  ]
+}
+```
+
+The corresponding `generate_image` calls (happen AFTER `propose_design_spec`, BEFORE `composite`):
+
+```
+generate_image(
+  layer_id="slide_01_bg",
+  prompt="editorial photography, warm natural light, soft grain, muted earthy palette, documentary feel — a single cup of warm milk tea on a wooden table at golden hour, shallow depth of field, serene atmosphere, no text",
+  aspect_ratio="16:9",
+)
+generate_image(
+  layer_id="slide_02_img",
+  prompt="editorial photography, warm natural light, soft grain, muted earthy palette, documentary feel — overhead shot of a crowded bubble tea shop counter chaos, colorful menus overlapping, bright signs, felt overwhelming",
+  aspect_ratio="1:1",
+)
+...
+```
+
+Notice the **consistent style prefix** at the start of each prompt — that's what keeps 8 separate NBP calls looking like one deck.
+
+## Typography ranges (enforce in the spec — critic will penalize out-of-range)
+
+| Role | font_size_px range | Notes |
+|---|---|---|
+| Slide title | 48–96 | Cover title can go up to 120. |
+| Body / bullets | 24–40 | 28–32 sweet spot for readability from the back of a room. |
+| Caption / footer | 14–22 | Slide numbers, footer attribution. |
+| Big number (stat slide) | 140–240 | Paired with a smaller 24–36 caption below. |
+
+Title MUST be visually larger than any body element on the same slide.
+
+## bbox conventions for 1920×1080 slides
+
+- Title strip (content slides): top at `y=80`, height `140–180`, full-width with `x=120, w=1680` (120px side margins).
+- Body zone: `y=280–980` leaves a footer band at `y≥980`.
+- Two-column body: split at `x=960` (left col `x=120,w=820`, right col `x=980,w=820`).
+- Image + caption layout: image bbox + a text bbox immediately beneath (≤ 60px gap).
+
+## Workflow for deck
+
+1. `switch_artifact_type` with `"deck"`.
+2. `propose_design_spec` with a full slide tree (all slides declared up front — palette + typography shared across slides for consistency; image / background children have `src_path: null`; write the style prefix into `composition_notes`).
+3. **`generate_image` for every image + background child declared in step 2**. Use the consistent style prefix from `composition_notes` at the start of each prompt. Iterate slide-by-slide; one call per image layer_id. Do NOT skip this step unless the brief explicitly asks for a "text-only" deck.
+4. **Skip** `render_text_layer` — deck text goes native into the .pptx as `TextFrame`s (that's what makes each slide type-editable in PowerPoint / Keynote).
+5. `composite` → walks the slide tree, emits `deck.pptx` + per-slide PNG previews (`slides/slide_00.png`, …) + grid `preview.png`. The renderer hydrates `src_path` onto image / background children from `rendered_layers` before writing.
+6. `critique` — text-only, grades slide structure / density / typography / arc / imagery fit from the DesignSpec + `composition_notes`.
+7. If critic returns `revise` and you're still within `max_iters`, re-call `propose_design_spec` with fixes (adjust slide count, rewrite titles, tune font_size_px, swap bbox layouts). You don't need to re-call `generate_image` for layers you already generated — the renderer will reuse them. Only call `generate_image` again if you changed a layer_id or the image was fundamentally wrong.
+8. `finalize`.
+
+**Anti-patterns to avoid**:
+- Skipping `generate_image` because the text is already good — that produces a dev-mode wireframe, not a commercial deck.
+- Using `generate_background` for slide backgrounds — that tool has `safe_zones` semantics meant for posters; for deck backgrounds (cover / full-bleed problem slides), use `generate_image` with `aspect_ratio: "16:9"` and declare the child as `kind: "background"` with a full-canvas bbox.
+- One giant image on every slide — varies bbox patterns across slide roles (see the recipe table above) so the deck has visual rhythm, not wallpaper-repetition.
 
 # Available fonts (font_family strings)
 

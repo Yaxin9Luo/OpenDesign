@@ -54,10 +54,12 @@ class PipelineRunner:
         if composition is None:
             raise RuntimeError("planner exited without producing composition artifacts")
 
-        # Landing: the authoritative layer tree is the section-tree on the
-        # DesignSpec (rendered_layers stays empty since landing has no PNG
-        # rasterization). Poster: materialize from rendered_layers blackboard.
-        if spec.artifact_type == ArtifactType.LANDING:
+        # Landing + Deck: the authoritative layer tree is the nested tree on
+        # the DesignSpec (rendered_layers may be empty or hold only raw image
+        # records, not a materialised graph). Poster: materialize from the
+        # rendered_layers blackboard, which is built up by render_text_layer
+        # and generate_background.
+        if spec.artifact_type in (ArtifactType.LANDING, ArtifactType.DECK):
             final_layer_graph = list(spec.layer_graph or [])
         else:
             final_layer_graph = _materialize_layer_graph(ctx.state["rendered_layers"])

@@ -34,7 +34,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/12] imports")
+    print("[1/13] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,7 +47,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/12] tool registry")
+    print("[2/13] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -75,7 +75,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/12] pydantic schema round-trip")
+    print("[3/13] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -118,7 +118,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/12] fonts")
+    print("[4/13] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -138,7 +138,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/12] composite (no API)")
+    print("[5/13] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -239,7 +239,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/12] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/13] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -310,7 +310,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/12] chat session save/load")
+    print("[7/13] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -372,7 +372,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/12] edit_layer (no API)")
+    print("[8/13] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -497,13 +497,13 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/12] apply-edits round-trip (no API)")
+    print("[9/13] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
     src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
     if not src_html.exists():
-        _fail("smoke HTML missing — [5/12] composite step must run first")
+        _fail("smoke HTML missing — [5/13] composite step must run first")
 
     # Simulate a user edit: bump font size + change color on the title.
     # Re-emit with a changed data-font-size-px/data-fill so round-trip should
@@ -574,7 +574,7 @@ def check_apply_edits_roundtrip() -> None:
 
 def check_landing_mode() -> None:
     """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
-    print("[10/12] landing mode (no API)")
+    print("[10/13] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -714,7 +714,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/12] design-system styles (no API)")
+    print("[11/13] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -815,7 +815,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/12] landing with images (no API)")
+    print("[12/13] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -927,6 +927,169 @@ def check_landing_with_images() -> None:
         f"all restored with src_path decoded from data: URI")
 
 
+def check_deck_mode() -> None:
+    """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
+    No API — python-pptx writes a real .pptx that we reopen + verify."""
+    print("[13/13] deck mode (no API)")
+    from pptx import Presentation as _Reopen
+
+    from .config import REPO_ROOT, Settings
+    from .schema import ArtifactType
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_deck"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stub a hero image PNG that one slide embeds, so we exercise the image path.
+    hero_png = layers_dir / "img_slide02_hero.png"
+    Image.new("RGB", (960, 540), (80, 140, 220)).save(hero_png)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-deck")
+
+    if switch_artifact_type({"type": "deck"}, ctx=ctx).status != "ok":
+        _fail("switch_artifact_type(deck)")
+
+    # Pre-stage the image in rendered_layers so _hydrate_deck_image_srcs can
+    # pick it up (mirrors the real two-step generate_image → composite flow).
+    ctx.state["rendered_layers"]["img_slide02_hero"] = {
+        "layer_id": "img_slide02_hero",
+        "name": "hero_image",
+        "kind": "image",
+        "z_index": 5,
+        "bbox": None,
+        "src_path": str(hero_png),
+        "prompt": "",
+        "aspect_ratio": "16:9",
+        "image_size": "960x540",
+        "sha256": "stub",
+    }
+
+    spec = {
+        "brief": "Pitch deck smoke — 3 slides: cover, problem with hero image, outro.",
+        "artifact_type": "deck",
+        "canvas": {"w_px": 1920, "h_px": 1080, "dpi": 96,
+                   "aspect_ratio": "16:9", "color_mode": "RGB"},
+        "palette": ["#0f172a", "#f8fafc", "#38bdf8"],
+        "typography": {"title_font": "NotoSerifSC-Bold",
+                       "body_font": "NotoSansSC-Bold"},
+        "mood": ["clean", "investor-ready"],
+        "composition_notes": "16:9 pitch deck. Title top, body or image below.",
+        "layer_graph": [
+            {
+                "layer_id": "slide_01", "name": "cover", "kind": "slide",
+                "z_index": 1,
+                "children": [
+                    {"layer_id": "slide_01_title", "name": "title",
+                     "kind": "text", "z_index": 10,
+                     "bbox": {"x": 120, "y": 420, "w": 1680, "h": 160},
+                     "text": "MilkCloud",
+                     "font_family": "NotoSerifSC-Bold",
+                     "font_size_px": 96, "align": "left",
+                     "effects": {"fill": "#0f172a"}},
+                    {"layer_id": "slide_01_tagline", "name": "tagline",
+                     "kind": "text", "z_index": 10,
+                     "bbox": {"x": 120, "y": 620, "w": 1680, "h": 80},
+                     "text": "the calmest bubble tea brand",
+                     "font_family": "NotoSansSC-Bold",
+                     "font_size_px": 40, "align": "left",
+                     "effects": {"fill": "#64748b"}},
+                ],
+            },
+            {
+                "layer_id": "slide_02", "name": "problem_with_image",
+                "kind": "slide", "z_index": 2,
+                "children": [
+                    {"layer_id": "slide_02_title", "name": "title",
+                     "kind": "text", "z_index": 10,
+                     "bbox": {"x": 120, "y": 80, "w": 1680, "h": 140},
+                     "text": "The problem",
+                     "font_family": "NotoSerifSC-Bold",
+                     "font_size_px": 72, "align": "left",
+                     "effects": {"fill": "#0f172a"}},
+                    {"layer_id": "img_slide02_hero", "name": "hero_image",
+                     "kind": "image", "z_index": 5,
+                     "bbox": {"x": 120, "y": 260, "w": 1680, "h": 720},
+                     "aspect_ratio": "16:9"},
+                ],
+            },
+            {
+                "layer_id": "slide_03", "name": "thank_you", "kind": "slide",
+                "z_index": 3,
+                "children": [
+                    {"layer_id": "slide_03_title", "name": "title",
+                     "kind": "text", "z_index": 10,
+                     "bbox": {"x": 120, "y": 440, "w": 1680, "h": 200},
+                     "text": "Thank you",
+                     "font_family": "NotoSerifSC-Bold",
+                     "font_size_px": 128, "align": "center",
+                     "effects": {"fill": "#0f172a"}},
+                ],
+            },
+        ],
+    }
+
+    obs = propose_design_spec({"design_spec": spec}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"propose_design_spec(deck): {obs.summary}")
+
+    obs = composite({}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"composite(deck): {obs.summary}")
+
+    comp = ctx.state["composition"]
+    if comp.psd_path is not None or comp.svg_path is not None or comp.html_path is not None:
+        _fail(f"deck should produce ONLY pptx + preview — got "
+              f"psd={comp.psd_path} svg={comp.svg_path} html={comp.html_path}")
+    if not comp.pptx_path or not Path(comp.pptx_path).exists():
+        _fail(f"deck PPTX missing: {comp.pptx_path}")
+    if not comp.preview_path or not Path(comp.preview_path).exists():
+        _fail(f"deck preview missing: {comp.preview_path}")
+
+    # Per-slide PNGs exist.
+    slides_dir = Path(comp.pptx_path).parent / "slides"
+    slide_pngs = sorted(slides_dir.glob("slide_*.png"))
+    if len(slide_pngs) != 3:
+        _fail(f"expected 3 slide PNGs in {slides_dir}, got {len(slide_pngs)}")
+    for p in slide_pngs:
+        if p.stat().st_size == 0:
+            _fail(f"empty slide PNG: {p}")
+
+    # Reopen with python-pptx and check structure.
+    prs = _Reopen(comp.pptx_path)
+    if len(prs.slides) != 3:
+        _fail(f"pptx reopen: expected 3 slides, got {len(prs.slides)}")
+
+    # Slide 1 should contain both "MilkCloud" and the tagline text as native runs.
+    s1_text = " ".join(
+        run.text for shape in prs.slides[0].shapes if shape.has_text_frame
+        for para in shape.text_frame.paragraphs for run in para.runs
+    )
+    if "MilkCloud" not in s1_text:
+        _fail(f"slide 1 text missing 'MilkCloud' — got: {s1_text!r}")
+    if "calmest bubble tea brand" not in s1_text:
+        _fail(f"slide 1 tagline missing — got: {s1_text!r}")
+
+    # Slide 2 should contain one picture shape (the hero image).
+    pic_count = sum(1 for shape in prs.slides[1].shapes if shape.shape_type == 13)  # MSO_SHAPE_TYPE.PICTURE
+    if pic_count != 1:
+        _fail(f"slide 2 expected 1 picture shape, got {pic_count}")
+
+    pptx_size_kb = Path(comp.pptx_path).stat().st_size // 1024
+    preview_size_kb = Path(comp.preview_path).stat().st_size // 1024
+    _ok(f"deck composite: 3 slides → {pptx_size_kb} KB .pptx + "
+        f"3 slide PNGs + {preview_size_kb} KB preview grid")
+    _ok("pptx reopen: slide count + native text runs + picture shape all OK")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -940,9 +1103,11 @@ def main() -> int:
     check_landing_mode()
     check_design_system_styles()
     check_landing_with_images()
+    check_deck_mode()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
-          "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/")
+          "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
+          "out/smoke_deck/")
     return 0
 
 

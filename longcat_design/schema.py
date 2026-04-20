@@ -61,6 +61,7 @@ LayerKind = Literal[
     "group",         # organisational grouping (unused in v1.0)
     "section",       # landing section container (v1.0 #8)
     "image",         # NBP-generated inline image inside a landing section (v1.0 #8.75)
+    "slide",         # deck slide container: children hold text/image elements (v1.0 #7)
 ]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
@@ -202,11 +203,13 @@ class CritiqueResult(BaseModel):
 
 class CompositionArtifacts(BaseModel):
     """Paths are per-artifact-type: poster produces PSD+SVG+HTML+preview;
-    landing (v1.0 #8) produces HTML+preview only (no PSD/SVG); deck (#7)
-    will add PPTX. `None` means "not applicable for this artifact type"."""
+    landing (v1.0 #8) produces HTML+preview only (no PSD/SVG); deck (v1.0 #7)
+    produces PPTX + per-slide PNGs + grid preview. `None` means "not applicable
+    for this artifact type"."""
     psd_path: str | None = None
     svg_path: str | None = None
     html_path: str | None = None        # v1.0 #6 — self-contained, contenteditable
+    pptx_path: str | None = None        # v1.0 #7 — deck native PowerPoint file
     preview_path: str | None = None
     layer_manifest: list[dict[str, Any]] = Field(default_factory=list)
 

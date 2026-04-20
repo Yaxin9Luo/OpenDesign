@@ -1,14 +1,19 @@
 """Critic — produces a structured CritiqueResult via vision (poster) or
-text-only (landing) evaluation.
+text-only (landing / deck) evaluation.
 
-Poster / deck: vision-based, sends a downscaled preview PNG alongside the
-DesignSpec and asks the model to grade against a visual rubric.
+Poster: vision-based, sends a downscaled preview PNG alongside the DesignSpec
+and asks the model to grade against a visual rubric.
 
 Landing (v1.0 #8.5-fix): text-only. The Pillow-rendered preview is a lossy
 proxy for the real browser-rendered HTML, so grading it with vision leads to
 false fails (tofu emojis, missing CSS, etc.). Instead, we send the DesignSpec
 section tree + design_system selection and grade against a content-level
 rubric (`prompts/critic-landing.md`).
+
+Deck (v1.0 #7): text-only for the same reason — the per-slide PNG previews
+are Pillow approximations of what PowerPoint/Keynote will actually render from
+the native TextFrames in the .pptx. The DesignSpec slide tree is the authoritative
+structural record, graded against `prompts/critic-deck.md`.
 
 Falls back to a 'fail' verdict if JSON parsing fails so the pipeline still
 ends cleanly.
@@ -44,6 +49,7 @@ class Critic:
         self.client = Anthropic(**client_kwargs)
         self._poster_prompt: str | None = None
         self._landing_prompt: str | None = None
+        self._deck_prompt: str | None = None
 
     def _system(self, artifact_type: ArtifactType) -> str:
         if artifact_type == ArtifactType.LANDING:
@@ -51,6 +57,11 @@ class Critic:
                 path = self.settings.prompts_dir / "critic-landing.md"
                 self._landing_prompt = path.read_text(encoding="utf-8")
             return self._landing_prompt
+        if artifact_type == ArtifactType.DECK:
+            if self._deck_prompt is None:
+                path = self.settings.prompts_dir / "critic-deck.md"
+                self._deck_prompt = path.read_text(encoding="utf-8")
+            return self._deck_prompt
         if self._poster_prompt is None:
             path = self.settings.prompts_dir / "critic.md"
             self._poster_prompt = path.read_text(encoding="utf-8")
@@ -69,6 +80,15 @@ class Critic:
         # HTML (emojis → tofu, CSS not applied, etc.), so we skip vision.
         if design_spec.artifact_type == ArtifactType.LANDING:
             return self._evaluate_landing(
+                design_spec=design_spec,
+                iteration=iteration,
+                max_iters=max_iters,
+            )
+
+        # Deck: text-only. Per-slide preview.png is a Pillow approximation;
+        # the .pptx is the authoritative artifact (live TextFrames in PowerPoint).
+        if design_spec.artifact_type == ArtifactType.DECK:
+            return self._evaluate_deck(
                 design_spec=design_spec,
                 iteration=iteration,
                 max_iters=max_iters,
@@ -132,6 +152,30 @@ class Critic:
             model=self.settings.critic_model,
             max_tokens=2048,
             system=self._system(ArtifactType.LANDING),
+            messages=[{"role": "user", "content": user_text}],
+        )
+
+        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+        return _parse_critique(text, iteration, max_iters)
+
+    def _evaluate_deck(
+        self,
+        *,
+        design_spec: DesignSpec,
+        iteration: int,
+        max_iters: int,
+    ) -> CritiqueResult:
+        user_text = _build_deck_user_text(design_spec, iteration, max_iters)
+
+        log("critic.request", iter=iteration, max_iters=max_iters,
+            mode="text-deck",
+            slides=sum(1 for n in (design_spec.layer_graph or [])
+                       if getattr(n, "kind", None) == "slide"))
+
+        resp = self.client.messages.create(
+            model=self.settings.critic_model,
+            max_tokens=2048,
+            system=self._system(ArtifactType.DECK),
             messages=[{"role": "user", "content": user_text}],
         )
 
@@ -226,6 +270,60 @@ def _build_landing_user_text(spec: DesignSpec, iteration: int, max_iters: int) -
         "your system prompt. You do NOT have a preview image — base your "
         "critique on the section tree + design_system + copy above, and remember "
         "to skip anything that only a visual image could reveal. "
+        "Output STRICT JSON inside a single ```json ...``` code block matching "
+        "the CritiqueResult schema. Nothing outside the code block."
+    )
+
+
+def _build_deck_user_text(spec: DesignSpec, iteration: int, max_iters: int) -> str:
+    """Text-only prompt for deck mode. Flattens the slide tree into a compact
+    summary: per slide, its title and any bullets / body text, so the critic
+    judges the structural deck without parsing nested JSON."""
+    slides = [n for n in (spec.layer_graph or []) if getattr(n, "kind", None) == "slide"]
+
+    slide_blocks: list[str] = []
+    for idx, s in enumerate(slides):
+        children = getattr(s, "children", None) or []
+        lines: list[str] = []
+        for child in children:
+            kind = getattr(child, "kind", None)
+            if kind == "text":
+                name = getattr(child, "name", "?")
+                size = getattr(child, "font_size_px", "?")
+                text = (getattr(child, "text", "") or "").strip()
+                if len(text) > 200:
+                    text = text[:200] + "…"
+                lines.append(f'    - text `{name}` (size={size}): "{text}"')
+            elif kind == "image":
+                name = getattr(child, "name", "?")
+                prompt = (getattr(child, "prompt", "") or "").strip()[:120]
+                lines.append(f"    - image `{name}`: {prompt or '(no prompt)'}")
+            elif kind == "background":
+                name = getattr(child, "name", "?")
+                prompt = (getattr(child, "prompt", "") or "").strip()[:120]
+                lines.append(f"    - background `{name}`: {prompt or '(no prompt)'}")
+        slide_blocks.append(
+            f"  ### slide {idx + 1} — `{s.name}` (layer_id={s.layer_id})\n"
+            + ("\n".join(lines) if lines else "    (no elements)")
+        )
+
+    return (
+        f"## Iteration {iteration} of {max_iters}\n\n"
+        f"## Brief\n{spec.brief}\n\n"
+        f"## Canvas\nwidth={spec.canvas.get('w_px')}, "
+        f"height={spec.canvas.get('h_px')} "
+        f"(PowerPoint default 1920×1080 = 16:9)\n\n"
+        f"## Palette\n{', '.join(spec.palette) if spec.palette else '(empty)'}\n\n"
+        f"## Mood tags\n{', '.join(spec.mood) if spec.mood else '(empty)'}\n\n"
+        f"## Composition notes\n{spec.composition_notes or '(empty)'}\n\n"
+        f"## Slide tree ({len(slide_blocks)} slides)\n"
+        + ("\n".join(slide_blocks) if slide_blocks else "  (empty)") + "\n\n"
+        "## Full DesignSpec JSON (for reference)\n"
+        f"```json\n{json.dumps(spec.model_dump(mode='json'), ensure_ascii=False, indent=2)}\n```\n\n"
+        "Grade this deck's DesignSpec against the structural rubric in "
+        "your system prompt. You do NOT have a rendered PPTX image — base your "
+        "critique on the slide tree + copy above, and remember to skip anything "
+        "that only the live PowerPoint/Keynote renderer would reveal. "
         "Output STRICT JSON inside a single ```json ...``` code block matching "
         "the CritiqueResult schema. Nothing outside the code block."
     )

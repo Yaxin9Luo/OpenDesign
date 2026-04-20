@@ -4,7 +4,9 @@
 
 The open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) and similar closed SaaS design tools. From the [Longcat](https://github.com/) ecosystem.
 
-> **Current status** (2026-04-18): v1.0 MVP **4 of 11 items shipped** — package rename, `switch_artifact_type` tool, conversational CLI chat shell, session persistence. Next deep work: HTML renderer. Remaining ~15h coding + docs/video to v1.0 tag. See [docs/V1-MVP-PLAN.md](docs/V1-MVP-PLAN.md) for the status table.
+> **Current status** (2026-04-20): v1.0 MVP **9.75 of 11 items shipped** — full **3-artifact coverage** complete (poster + landing + deck), 10 tools wired, smoke 13/13 green. Landing + deck pipelines both ship with **NBP (Gemini 3 Pro Image Preview) imagery** so output is commercial-grade, not wireframe. Remaining to v1.0 tag: README screenshots + demo video + smoke HTML/PPTX extension. See [docs/V1-MVP-PLAN.md](docs/V1-MVP-PLAN.md) for the status table.
+>
+> **North Star (v1.1)**: `paper2any` — drop in a paper / PDF / docx, get a matching poster / landing / deck. See [docs/ROADMAP.md § v1.1](docs/ROADMAP.md#v11--document-ingestion-paper2any--core).
 
 ---
 
@@ -12,11 +14,15 @@ The open-source alternative to [Claude Design](https://www.anthropic.com/news/cl
 
 Three artifact types, generated conversationally from a CLI chat shell:
 
-- **Posters** — production-quality, fully layered. Output: HTML + PSD (named pixel layers) + SVG (real `<text>` vector) + PNG.
-- **Slide decks** — editable PPTX. Output: PPTX (native PowerPoint type frames) + HTML preview.
-- **Landing pages / one-pagers** — self-contained HTML with inline CSS, fonts, and assets. Output: single `.html` file.
+| Artifact | Primary output | Secondary outputs | NBP imagery |
+|---|---|---|---|
+| **Poster** | HTML (contenteditable + edit toolbar) | PSD (named pixel layers) · SVG (real `<text>` vector) · PNG | Full-canvas background |
+| **Slide deck** | PPTX (native PowerPoint TextFrames) | per-slide PNGs · grid preview | 1 image per slide, style-consistent across the deck |
+| **Landing page** | Self-contained HTML with 6 bundled design systems (minimalist / editorial / claymorphism / liquid-glass / glassmorphism / neubrutalism) | PNG screenshot | Inline section imagery (hero + feature icons) |
 
-All text is rendered as separate, named, editable layers — including Chinese. No "your title got rasterized into the background" failure mode.
+All text is a separate, named, editable element — including Chinese. The poster + landing outputs round-trip through a browser edit toolbar: click any text, edit inline, save, and `apply-edits` re-materializes PSD / SVG / HTML from the edited file. Deck edits happen directly in PowerPoint / Keynote because every `TextFrame` is live.
+
+**Commercial-grade by default**: landing pages and decks call [Gemini 3 Pro Image Preview (Nano Banana Pro)](https://ai.google.dev/) for inline imagery with a consistent per-artifact style prefix — so an 8-image deck feels like one cohesive pitch, not 8 stock-photo collages.
 
 ---
 
@@ -41,58 +47,77 @@ All text is rendered as separate, named, editable layers — including Chinese. 
 - **HTML as first-class output**, not just a PPTX/PDF afterthought.
 - **Real vector text for Chinese titles** — not rasterized into background images.
 - **One repo, three artifact types**, done deep. No SaaS sprawl.
+- **Round-trip editable**: poster / landing HTML opens in a browser with a toolbar for live edits, then `apply-edits` round-trips changes back into PSD / SVG / HTML. Deck `.pptx` has native editable TextFrames.
 
 ---
 
 ## Quickstart
 
-### Install
+### Install (uv-managed)
+
+LongcatDesign uses [uv](https://docs.astral.sh/uv/) for environment + dependency management. Install uv once (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
 
 ```bash
 git clone https://github.com/Yaxin9Luo/longcat-design.git
 cd longcat-design
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+uv sync                    # creates .venv, installs deps from uv.lock, editable-installs the package
 cp .env.example .env       # fill in GEMINI_API_KEY + (OPENROUTER_API_KEY OR ANTHROPIC_API_KEY)
 ```
 
-### Smoke test (no API, ~5 sec, 7 checks)
+> **macOS note:** if `uv run` fails with `ModuleNotFoundError: longcat_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).
+
+### Smoke test (no API, ~5 sec, 13 checks)
 
 ```bash
-.venv/bin/python -m longcat_design.smoke
+uv run python -m longcat_design.smoke
 ```
 
-### Chat shell (default — conversational multi-turn, v1.0 #4 ✅)
+### Chat shell (default — conversational multi-turn)
 
 ```bash
-.venv/bin/python -m longcat_design.cli
-> design a 3:4 poster for "国宝回家 公益项目"
-  ✓ poster generated  (5 layers · pass 0.86 · $1.41 · 100s)
-> make the title bigger
-  ✓ poster revised   (planner detects revision vs new-artifact automatically)
-> now a matching landing page for this project
-  (HTML renderer pending v1.0 #6)
-> :history          # conversation log
-> :tokens           # cumulative cost/wall per artifact
-> :export ~/Desktop/guobao
+uv run python -m longcat_design.cli
+> 设计一张 3:4 竖版海报：「国宝回家」公益项目
+  ✓ poster generated  (5 layers · critic pass 0.86 · $1.41 · 100s)
+
+> 现在配一个 landing page，claymorphism 风格，奶茶品牌「茉语」
+  ✓ landing generated (4 sections, 5 NBP images · critic pass 0.94 · $2.20 · 207s)
+
+> 再出一份 10-slide 投资人 pitch deck，每张 slide 配图
+  ✓ deck generated    (10 slides, 10 NBP images · critic pass 0.92 · $3.43 · 384s)
+
+> :history                  # conversation log
+> :tokens                   # cumulative cost/wall per artifact
+> :export ~/Desktop/milk-tea
 > :exit
 ```
 
-Full slash command reference in [docs/WORKFLOWS.md](docs/WORKFLOWS.md#slash-commands). Resume a prior session: `longcat_design.cli chat --resume <session_id>`.
+Full slash command reference in [docs/WORKFLOWS.md](docs/WORKFLOWS.md#slash-commands). Resume a prior session: `uv run python -m longcat_design.cli chat --resume <session_id>`.
 
-### One-shot (legacy, for scripting / CI)
+### One-shot (for scripting / CI)
 
 ```bash
-.venv/bin/python -m longcat_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
+uv run python -m longcat_design.cli run "10 张投资者 pitch deck：奶茶品牌 MilkCloud。封面 · 3 张 problem · 3 张 solution · 2 张 traction · thank-you。1920×1080，每张 slide 都要配图。"
 ```
 
-Outputs land in `out/runs/<run_id>/` (PSD/SVG/preview/layers). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
+Outputs land in `out/runs/<run_id>/` (per-artifact — `poster.pptx` + `slides/` + `preview.png` for deck; `index.html` + `preview.png` for landing; `poster.psd/svg/html` + `layers/` for poster). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
+
+### Round-trip edit (poster + landing)
+
+Every poster + landing HTML comes with an embedded edit toolbar. Open the `.html` in a browser, click any text layer, edit inline (font / size / color / content / drag-to-move), click **Save** → download the edited HTML. Then:
+
+```bash
+uv run python -m longcat_design.cli apply-edits ~/Downloads/poster-edited.html
+# → new run_dir with PSD + SVG + HTML regenerated from the edited version
+#   (parent_run_id tracked in the trajectory for lineage)
+```
+
+Deck edits happen in PowerPoint / Keynote / Google Slides directly — the `.pptx` contains live `TextFrame`s, not rasterized text.
 
 ---
 
 ## Architecture in one breath
 
-A **chat REPL** loop takes each user turn, a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** over 8 tools (declare artifact type, plan design, generate background via Gemini Nano Banana Pro, render text layers via Pillow, composite into PSD/SVG/HTML/PPTX, self-critique, finalize). Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
+A **chat REPL** loop takes each user turn; a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** (no LangGraph / CrewAI) over **10 tools**: `switch_artifact_type` → `propose_design_spec` → `generate_background` / `generate_image` (both via Gemini 3 Pro Image Preview / NBP) → `render_text_layer` → `edit_layer` → `fetch_brand_asset` → `composite` (dispatches on artifact type to PSD+SVG+HTML for poster · HTML+inline-imagery for landing · PPTX+per-slide-PNGs for deck) → `critique` (vision for poster, text-only for landing + deck) → `finalize`. Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
 
 Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -116,9 +141,17 @@ Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Status
 
-**v1.0 MVP in progress** (2026-04-18): 4 of 11 items shipped — package rename, `switch_artifact_type` tool + `ArtifactType` enum, conversational CLI chat shell + `ChatSession` persistence. Remaining v1.0 work: HTML renderer (the biggest remaining lift + primary differentiator), PPTX renderer, `edit_layer` tool, landing-page schema, README polish, demo video, smoke extension.
+**v1.0 MVP — 9.75 of 11 items shipped** (2026-04-20). Full 3-artifact coverage complete; 10 tools wired; smoke 13/13 green. Remaining for v1.0 tag: README screenshots + showcase gallery (#9), demo video (#10), smoke HTML/PPTX regression extension (#11).
 
-Three real dogfood runs validated (100s–300s, $1.4–$3.7 each): 国宝回家 poster, CVPR academic poster, LongcatDesign launch poster.
+**Dogfood runs** (real API, real $):
+
+| Brief | Artifact | Layers / slides | Images | Critic | Cost | Wall |
+|---|---|---|---|---|---|---|
+| 国宝回家 公益项目 | poster (3:4) | 5 | 1 bg | pass 0.86 | $1.41 | 100s |
+| CVPR academic poster | poster (3:4) | 18 | 1 bg | pass 0.86 | $2.49 | 196s |
+| LongcatDesign 发布海报 | poster (3:4) | 5 | 1 bg | 0.78 → 0.82 (2 iter) | $3.74 | 297s |
+| 茉语 奶茶品牌 landing | landing (claymorphism) | 4 sections | 5 (hero + icons) | pass 0.94 | $2.20 | 207s |
+| MilkCloud 投资人 deck | deck (16:9) | 10 slides | 10 (cover bg + 8 content + closing bg) | pass 0.92 | $3.43 | 384s |
 
 **Not yet published to PyPI.** Local development only until v1.0 tag.
 
