@@ -4,20 +4,19 @@ What other projects are doing in our space, and where the real differentiation i
 
 When someone asks "but what about X?" — read the relevant section here first. If they ask about a project not listed, audit it (clone, read code, verify load-bearing claims, write a section).
 
-> **⚠️ POST-PIVOT NOTICE (2026-04-18)**
+> **⚠️ POST-PIVOT + POST-v1.0-#7 NOTICE (2026-04-20)**
 >
-> After the [pivot to LongcatDesign](DECISIONS.md#2026-04-18--pivot-rebrand-as-longcatdesign-reposition-as-open-source-claude-design-alternative), our product positioning shifted from "training-data pipeline" to "open-source Claude Design alternative." The existing **Paper2Any** and **Claude Design** sections below were written under the old framing — parts of their "why this doesn't kill our positioning" / "same lane?" analyses are now stale.
+> After the [pivot to LongcatDesign](DECISIONS.md) (2026-04-18) and the v1.0 #7 deck shipping (2026-04-20), the audits below have partially aged out. The **factual audits** (architecture, editability mechanism, output formats) remain accurate; the **"why this doesn't kill our positioning"** sections were written under the old "trajectory-as-product" framing and the "deck renderer pending" framing — both stale now.
 >
-> **What's still accurate** in both sections:
-> - The factual audit (their architecture, editability mechanism, output formats)
-> - The "what they have over us" and "what we have over them" feature matrices
-> - The "what we should steal" recommendations (python-pptx inspiration still drives our v1.0 PPTX renderer)
+> **Updated as of 2026-04-20**:
 >
-> **What's now stale** and needs revision after v1.0 ships:
-> - The "Why this doesn't kill our positioning" section in each entry — needs to be rewritten around "open-source + terminal-first + open-format" differentiation rather than "trajectory-as-product"
-> - The "Verdict — same lane?" lines — Paper2Any is now partially in our lane (both compete on editable-artifact OSS); Claude Design remains adjacent (closed SaaS vs our open-source)
+> - LongcatDesign now ships full **3-artifact coverage**: poster (PSD + SVG + HTML) + landing (HTML with 6 bundled design systems) + deck (native PPTX with TextFrames). See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) status line.
+> - Our deck renderer (`tools/pptx_renderer.py`, v1.0 #7) now uses the **same `python-pptx` native-TextFrame approach** as Paper2Any's renderer — that was the explicit "what we should steal" in the audit below. Paper2Any's PPTX approach is now our PPTX approach.
+> - Our current differentiation vs Paper2Any: we're **multi-artifact + agentic** (poster + landing + deck from one CLI + conversational iteration), they're **single-artifact + pipelined** (poster-from-paper via a 7-agent LangGraph DAG). We also have round-trip HTML editing (Path A) which they don't.
+> - Our current differentiation vs Claude Design: **open-source + terminal-first + open output formats**, not tied to any subscription. The shipped v1.0 proves the thesis works.
+> - **v1.1 paper2any** (our North Star, not to be confused with the unrelated Paper2Any project): drop in a paper / PDF / docx → generate matching poster / landing / deck. See [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core). Once v1.1 ships, we'll directly compete with Paper2Any's "paper in, poster out" use case, with a wider output surface (landing + deck too) and round-trip editability.
 >
-> This notice will be removed when the sections get their full rewrite (scheduled after v1.0 launch — see [ROADMAP.md](ROADMAP.md) v1.0 deferred items).
+> The sections below are kept as historical audits — read them for the factual audits and the "what they have over us" tables, not for positioning. The "Verdict — same lane?" lines are now: Paper2Any is partially in our lane (both OSS, both target editable-artifact-from-paper); Claude Design remains adjacent (closed SaaS vs our open-source).
 
 ---
 

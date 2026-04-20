@@ -1,12 +1,18 @@
-# Design-Agent — Knowledge Base
+# LongcatDesign — Knowledge Base
 
-This directory is the **single source of truth** for what Design-Agent is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
+This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
+
+> **Status (2026-04-20)**: v1.0 MVP **9.75 of 11 items shipped**. Full 3-artifact coverage complete (poster + landing + deck). 10 tools wired, smoke 13/13 green. Remaining to v1.0 tag: README screenshots / demo video / smoke HTML+PPTX regression extension. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for the status table.
+>
+> **v1.1 North Star**: `paper2any` — drop in a paper / PDF / docx, get a matching poster / landing / deck. See [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core).
 
 ---
 
 ## What LongcatDesign is in 30 seconds
 
-An **open-source, terminal-first conversational design agent**. Describe what you want (poster / slide deck / landing page); LongcatDesign builds and iterates with you via a CLI chat shell, exporting to **HTML (first-class) + PPTX + editable PSD/SVG**.
+An **open-source, terminal-first conversational design agent**. Describe what you want (poster / slide deck / landing page); LongcatDesign builds and iterates with you via a CLI chat shell, exporting to **HTML (first-class, contenteditable + apply-edits round-trip) + PPTX (native PowerPoint TextFrames) + editable PSD/SVG**.
+
+Commercial-grade by default: landing pages and decks call **Gemini 3 Pro Image Preview (NBP)** for inline imagery with per-artifact style prefixes, so output is "investor-ready," not wireframe.
 
 Positioned as the open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) — terminal-first instead of browser-only, open formats instead of Canva-locked, model-agnostic instead of tied to one subscription.
 
@@ -37,23 +43,24 @@ Positioned as the open-source alternative to [Claude Design](https://www.anthrop
 
 | File | Purpose | When to read |
 |---|---|---|
-| [VISION.md](VISION.md) | Product pitch (LongcatDesign as OSS Claude Design alt); differentiation | First read; any time scope is being debated |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, files, data flow, the 7 tools, two LLM backends | Before touching code |
-| [V1-MVP-PLAN.md](V1-MVP-PLAN.md) | Concrete shipping plan for v1.0 MVP launch (work breakdown + estimates) | Before starting implementation |
+| [VISION.md](VISION.md) | Product pitch (LongcatDesign as OSS Claude Design alt); paper2any North Star; differentiation | First read; any time scope is being debated |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, files, data flow, the 10 tools, composite dispatch per artifact type, two LLM backends | Before touching code |
+| [V1-MVP-PLAN.md](V1-MVP-PLAN.md) | Concrete shipping plan for v1.0 MVP launch (work breakdown + estimates + per-item status) | Before starting implementation |
 | [DATA-CONTRACT.md](DATA-CONTRACT.md) | Session-state / trajectory schema (internal detail post-pivot) | Before touching `schema.py` |
-| [WORKFLOWS.md](WORKFLOWS.md) | Run pipeline, edit artifacts, smoke test, extending tools | Day-to-day reference |
-| [DECISIONS.md](DECISIONS.md) | Design decisions log (the pivot, no LangGraph, OpenRouter, etc.) | Before reopening a settled question |
-| [ROADMAP.md](ROADMAP.md) | v1.0 MVP + v1.1+ planned versions | Planning next session of work |
-| [GOTCHAS.md](GOTCHAS.md) | Runtime quirks + fixes (dotenv, Gemini PNG/JPEG, OpenRouter base_url, Figma SVG) | Any time something behaves unexpectedly |
-| [COMPETITORS.md](COMPETITORS.md) | Audited related projects (Paper2Any, Claude Design); differentiation analysis | When asked "but what about X?" / planning a feature already shipped elsewhere |
+| [WORKFLOWS.md](WORKFLOWS.md) | Run pipeline, edit artifacts, smoke test, extending tools, per-artifact-type workflows | Day-to-day reference |
+| [DECISIONS.md](DECISIONS.md) | Design decisions log (pivot, no LangGraph, OpenRouter, deck schema, critic branches, etc.) | Before reopening a settled question |
+| [ROADMAP.md](ROADMAP.md) | v1.0 MVP + v1.1 paper2any (North Star) + v1.x planned versions | Planning next session of work |
+| [GOTCHAS.md](GOTCHAS.md) | Runtime quirks + fixes (dotenv, Gemini PNG/JPEG, OpenRouter base_url, macOS UF_HIDDEN .pth, planner max_tokens, PPTX CJK fonts) | Any time something behaves unexpectedly |
+| [COMPETITORS.md](COMPETITORS.md) | Audited related projects (Paper2Any, Claude Design, Lovart); differentiation analysis | When asked "but what about X?" / planning a feature already shipped elsewhere |
 
 ---
 
 ## Living artifacts (outside this KB but always relevant)
 
-- **The plan file**: [`~/.claude/plans/v0-b-psd-svg-type-vast-sonnet.md`](~/.claude/plans/v0-b-psd-svg-type-vast-sonnet.md) — the original v0 implementation plan, kept as a snapshot for reference. The KB supersedes it.
 - **The reference article**: [`design_agent_blog.pdf`](../design_agent_blog.pdf) at the repo root — Claude Opus 4.7 + Lovart 国宝回家 case. The motivating example and the gap we're closing.
-- **Sample trajectories**: `out/trajectories/<run_id>.json` — every successful run dumps one. These are the actual training data.
+- **Sample trajectories**: `out/trajectories/<run_id>.json` — every successful run dumps one. Internal session-state record; schema in [DATA-CONTRACT.md](DATA-CONTRACT.md).
+- **Sample artifacts**: `out/runs/<run_id>/` — per run: `poster.{psd,svg,html}` + `preview.png` (poster) · `index.html` + `preview.png` (landing) · `deck.pptx` + `slides/*.png` + `preview.png` (deck).
+- **Chat sessions**: `sessions/<session_id>.json` — multi-turn conversations wrapping N trajectories.
 
 ---
 

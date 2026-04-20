@@ -4,6 +4,37 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-20 — Planner `max_tokens=4096` silently truncates large DesignSpec JSON → 30-turn spin without finalize
+
+**Symptom**: Dogfooding a 10-slide deck (or 30+ layer poster, long landing) causes the runner to exit with `RuntimeError: planner exited without proposing a DesignSpec` after exactly `max_planner_turns` (30) planner.turn events. Logs show `propose_design_spec` never appearing in `tool.call` events even though the planner clearly intends to call it. Same brief at smaller complexity (3 slides) works instantly.
+
+**Root cause**: `longcat_design/planner.py` previously capped `client.messages.create(..., max_tokens=4096, ...)`. A full deck DesignSpec with 10 slides × ~5 text/image children × bbox+text+font metadata easily exceeds 4096 output tokens. Anthropic truncates the assistant output at the cap; the `tool_use` block is emitted without its argument JSON being complete; the SDK silently produces an assistant message with no `tool_use` items. The planner then sees `stop_reason != "end_turn"` + empty tool_uses → does NOT break → loops back into the next turn with the (still-empty) tool-result message history → repeats until `max_planner_turns` → runner errors.
+
+**Fix**: Bumped `max_tokens` to `16384` (Opus supports up to 32K output tokens). Also added `log("tool.call", tool=...)` + `log("tool.result", tool=..., status=..., summary=...)` events inside `_invoke` so future debugging doesn't require trajectory introspection.
+
+**Detection**:
+- stderr shows `planner.turn` climbing to 30 without any matching `tool.call` / `tool.result` log lines.
+- Runner raises `"planner exited without proposing a DesignSpec"`.
+- Wall time spent ≈ 30× per-turn API round-trip (~7 min for an Opus-driven 30-turn spin).
+
+**Related**: If you hit this in the future (e.g. a 30-slide academic deck or a huge landing), bump `max_tokens` further — Opus supports 32K output tokens, `max_tokens=32000` is safe.
+
+---
+
+## 2026-04-20 — PPTX delegates CJK font rendering to the consuming app (by design)
+
+**Symptom**: User opens a `deck.pptx` in PowerPoint on a fresh Windows machine and Chinese titles render as boxes (tofu).
+
+**Root cause**: By design, `pptx_renderer.py` does NOT embed fonts into the `.pptx` — it writes `run.font.name = "NotoSerifSC-Bold"` and delegates rendering to the consumer's font engine. This mirrors [Paper2Any's approach](COMPETITORS.md) and avoids two problems: (a) embedding ~40 MB of Noto SC into every deck, (b) font-licensing review (OFL is redistributable but the in-pptx embedding semantics differ from bundled OTF). Consumer apps (PowerPoint, Keynote, Google Slides) all ship system CJK fonts on modern macOS / Windows; on Linux a `sudo apt install fonts-noto-cjk` is typically required.
+
+**Fix (user side)**: Install Noto Sans SC + Noto Serif SC (OFL, free) from Google Fonts. On macOS + Windows 10+ the system ships PingFang / Microsoft YaHei which PowerPoint maps to `NotoSansSC-Bold` via font-fallback rules automatically.
+
+**Fix (future v1.x)**: Add an `EMBED_FONTS=1` env var that turns on font embedding (requires `python-pptx` packaging internals + OFL license review). Tracked in ROADMAP.md v1.x.
+
+**Detection**: User reports "all Chinese shows as boxes." First-line check: ask what OS + whether Noto SC is installed. Reproduction on your machine is unlikely if you dev on macOS with system CJK fonts installed.
+
+---
+
 ## 2026-04-19 — Landing critic judges Pillow preview.png, not the real HTML → false "fail" verdicts
 
 **Symptom**: Good landing HTML gets scored `fail / 0.18 / 8 blocker issues` by critic. Issues list looks like "dark empty canvas, tofu emojis, cards overlap, hero 60px not 180px" — all things the real browser-rendered HTML doesn't have. Real instance: first milk-tea landing dogfood `20260419-192002-bfcf00b0` produced a polished claymorphism landing with 180px hero + correct emojis + section layout, but critic called it unshippable.

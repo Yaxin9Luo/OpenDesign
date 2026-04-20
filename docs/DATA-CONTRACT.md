@@ -64,11 +64,11 @@ class TrajectoryRef(BaseModel):
     artifact_type: ArtifactType
     created_at: datetime
     trajectory_path: str                       # absolute path to <run_id>.json
-    preview_path: str
-    psd_path: str | None
-    svg_path: str | None
-    html_path: str | None                      # reserved for v1.0 #6
-    pptx_path: str | None                      # reserved for v1.0 #7
+    preview_path: str | None                   # POSTER + LANDING: flat; DECK: grid thumb
+    psd_path: str | None                       # POSTER only
+    svg_path: str | None                       # POSTER only
+    html_path: str | None                      # POSTER (poster.html) + LANDING (index.html)
+    pptx_path: str | None                      # DECK only (v1.0 #7)
     n_layers: int
     verdict: Literal["pass","revise","fail"] | None
     score: float | None
@@ -84,9 +84,14 @@ class TrajectoryRef(BaseModel):
 
 ```python
 class ArtifactType(str, Enum):
-    POSTER = "poster"       # absolutely-positioned layers over text-free background
-    DECK = "deck"           # N slides, PPTX-native editability (renderer pending v1.0 #7)
-    LANDING = "landing"     # self-contained HTML one-pager, flow layout (renderer pending v1.0 #6)
+    POSTER = "poster"       # absolutely-positioned layers over text-free NBP background
+                            # → PSD + SVG + HTML + preview.png
+    DECK = "deck"           # N slides, PPTX-native editability
+                            # → deck.pptx (live TextFrames) + slides/*.png + grid preview.png
+                            # (v1.0 #7 — shipped 2026-04-20)
+    LANDING = "landing"     # self-contained HTML one-pager, flow layout, 6 bundled design systems
+                            # → index.html + preview.png
+                            # (v1.0 #8 — shipped 2026-04-19; v1.0 #8.5 design systems; v1.0 #8.75 imagery)
 ```
 
 Drives renderer selection in `composite`, fills fallback default when `propose_design_spec` omits `artifact_type`. Set by `switch_artifact_type` tool; read from `ctx.state["artifact_type"]`.
@@ -96,19 +101,30 @@ Drives renderer selection in `composite`, fills fallback default when `propose_d
 ```python
 class DesignSpec(BaseModel):
     brief: str                                 # echoed from input for searchability
-    artifact_type: ArtifactType = POSTER       # NEW in v1.0 #3; default=POSTER
+    artifact_type: ArtifactType = POSTER       # v1.0 #3; default=POSTER
     canvas: dict                               # {w_px, h_px, dpi, aspect_ratio, color_mode}
     palette: list[str]                         # hex colors, ordered by importance
     typography: dict                           # {title_font, subtitle_font, stamp_font, ...}
     mood: list[str]                            # ["oriental epic", "dignified", ...]
-    composition_notes: str                     # planner's free-form layout rationale (1-3 sentences)
-    layer_graph: list[LayerNode]               # SKELETON of planned layers; src_path/prompt unfilled
+    composition_notes: str                     # planner's free-form layout rationale
+                                               # (for DECK: carries the style-prefix for coherent NBP imagery)
+    layer_graph: list[LayerNode]               # per-artifact-type structure:
+                                               #   POSTER  → flat list of text/background layers (plan)
+                                               #   LANDING → nested: section[] → children (text/image)
+                                               #   DECK    → nested: slide[]   → children (text/image/background)
     references: list[str]                      # optional: URIs/hex inspiration
+    design_system: DesignSystem | None = None  # LANDING only — picks 1 of 6 bundled styles (v1.0 #8.5)
+
+class DesignSystem(BaseModel):
+    style: Literal["minimalist","editorial","neubrutalism",
+                   "glassmorphism","claymorphism","liquid-glass"] = "minimalist"
+    accent_color: str | None = None            # overrides --ld-accent CSS token
+    font_pairing: str | None = None
 ```
 
-The skeleton `layer_graph` here describes the *plan* — the planner thinks "I'll put a title here, a subtitle there, a stamp top-right." The actual `src_path` for each layer is filled in by later tool calls (`generate_background`, `render_text_layer`). The post-execution version of `layer_graph` lives at the trajectory root level.
+The skeleton `layer_graph` here describes the *plan*. For POSTER the actual `src_path` for each layer is filled in by later tool calls (`generate_background`, `render_text_layer`). For LANDING + DECK the planner declares image / background children with `src_path: null`, separately calls `generate_image`, and a hydration helper (`_hydrate_landing_image_srcs` / `_hydrate_deck_image_srcs` in composite.py) copies `src_path` from `rendered_layers` onto matching children before renderer writes.
 
-**Why two `layer_graph` slots (one in DesignSpec, one at root)?** The DesignSpec one is the *plan* (what the planner intended). The root one is the *result* (what actually got rendered, possibly after critique revisions). Comparing them is itself a useful signal — see DPO lane below.
+**Why two `layer_graph` slots (one in DesignSpec, one at root)?** The DesignSpec one is the *plan* (what the planner intended). The root one is the *result* (what actually got rendered, possibly after critique revisions). For POSTER the root version is materialised from `rendered_layers` blackboard. For LANDING + DECK the root version is copied directly from `spec.layer_graph` — the nested section/slide tree IS the authoritative structural record. Comparing them is a useful SFT signal — see DPO lane below.
 
 ---
 
@@ -117,10 +133,19 @@ The skeleton `layer_graph` here describes the *plan* — the planner thinks "I'l
 ```python
 class LayerNode(BaseModel):
     layer_id: str                              # uuid-suffixed, stable across rerenders
-    name: str                                  # semantic: "title" | "subtitle" | "stamp" | ...
-    kind: Literal["background", "text", "brand_asset", "group"]
+    name: str                                  # semantic: "title" | "hero" | "slide_01" | ...
+    kind: Literal[
+        "background",    # POSTER full-canvas raster or DECK slide bg
+        "text",          # text run (rasterized for POSTER, native for LANDING + DECK)
+        "brand_asset",   # v1 stub
+        "group",         # (unused in v1.0)
+        "section",       # LANDING section container (v1.0 #8) — children = text/image
+        "image",         # inline NBP image inside a LANDING section or DECK slide (v1.0 #8.75 + #7)
+        "slide",         # DECK slide container (v1.0 #7) — children = text/image/background
+    ]
     z_index: int                               # render order (0 = bottom)
-    bbox: SafeZone                             # top-left origin, pixel units, on canvas
+    bbox: SafeZone | None                      # POSTER + DECK: pixel coords required
+                                               # LANDING (kind=section/text): None (flow layout)
 
     # text-only fields
     text: str | None
@@ -129,17 +154,22 @@ class LayerNode(BaseModel):
     align: Literal["left", "center", "right"] | None
     effects: TextEffect | None                 # {stroke, shadow, fill}
 
-    # background-only fields
+    # image / background-only fields
     prompt: str | None                         # the literal NBP prompt sent (for image-gen SFT)
-    aspect_ratio: str | None                   # "3:4", "16:9", ...
+    aspect_ratio: str | None                   # "3:4", "16:9", "1:1", ...
     image_size: str | None                     # "1K" | "2K"
 
     # any
-    src_path: str | None                       # filled by tool execution
-    children: list["LayerNode"]                # for groups (currently unused in v0; v0.2+)
+    src_path: str | None                       # filled by tool execution (rasterizer or hydration)
+    children: list["LayerNode"]                # nested: section.children (landing), slide.children (deck)
 ```
 
-Polymorphism by `kind` is intentional — keeps the schema flat and SFT-friendly. A future model trained on `(design_spec → layer_graph)` learns to emit one of N kind values per layer.
+Polymorphism by `kind` is intentional — keeps the schema flat and SFT-friendly. A future model trained on `(design_spec → layer_graph)` learns to emit one of N kind values per layer and to pick the right nesting pattern per artifact type.
+
+**Nesting patterns by artifact type**:
+- **POSTER**: flat list of layers (background + texts) — no children
+- **LANDING**: `section` nodes at top level, each with `children: [text..., image...]`
+- **DECK**: `slide` nodes at top level, each with `children: [background?, text..., image...]`
 
 ---
 
@@ -199,16 +229,17 @@ class CritiqueResult(BaseModel):
 
 class CritiqueIssue(BaseModel):
     severity: Literal["blocker", "major", "minor"]
-    layer_id: str | None                       # null = whole-poster issue
+    layer_id: str | None                       # null = whole-artifact issue
     category: Literal["typography", "composition", "brand",
-                      "legibility", "cultural", "artifact"]
+                      "legibility", "cultural", "artifact",
+                      "copy", "content"]        # v1.0 #8.5-fix adds copy/content for LANDING + DECK
     description: str
-    suggested_fix: str                         # actionable, references render_text_layer args
+    suggested_fix: str                         # actionable, references concrete fields/values
 ```
 
 `pass` requires `score ≥ 0.75` AND zero blockers. `revise` only allowed while `iteration < max_iters`; otherwise forced to `fail`. The runner (`config.max_critique_iters = 2`) caps the loop to prevent infinite revision.
 
-`suggested_fix` must be achievable by re-calling `render_text_layer` with different args (different bbox, font_size, color, alignment). The critic prompt forbids "regenerate background" suggestions unless a blocker requires it.
+`suggested_fix` must be achievable by re-calling a tool the planner has (POSTER: `edit_layer` or `render_text_layer` with different args, or full `propose_design_spec` re-issue; LANDING: re-issue `propose_design_spec` with section-tree edits; DECK: re-issue `propose_design_spec` with slide-tree edits). Each critic rubric forbids fixes outside its tool vocabulary.
 
 ---
 
@@ -216,13 +247,15 @@ class CritiqueIssue(BaseModel):
 
 ```python
 class CompositionArtifacts(BaseModel):
-    psd_path: str                              # multi-layer Photoshop file
-    svg_path: str                              # self-contained SVG with embedded fonts
-    preview_path: str                          # flat PNG for critic / sharing
-    layer_manifest: list[dict]                 # [{layer_id, name, png_path, bbox, kind}]
+    psd_path: str | None = None                # POSTER only (multi-layer Photoshop, named pixel layers)
+    svg_path: str | None = None                # POSTER only (self-contained SVG + embedded fonts)
+    html_path: str | None = None               # POSTER (poster.html) + LANDING (index.html)
+    pptx_path: str | None = None               # DECK only (native PowerPoint TextFrames) — v1.0 #7
+    preview_path: str | None = None            # flat PNG (POSTER + LANDING) or grid thumb (DECK)
+    layer_manifest: list[dict] = []            # simplified mirror of layer_graph
 ```
 
-The `layer_manifest` is intentionally a simplified mirror of the `layer_graph` — useful for downstream tools that don't want to parse the full polymorphic schema (e.g., a Figma plugin that just needs name/bbox/png to recreate layers).
+All paths are `Optional` because each artifact type produces only a subset. `layer_manifest` is a simplified mirror of the `layer_graph` — useful for downstream tools that don't want to parse the full polymorphic schema (e.g., a Figma plugin that just needs name/bbox/png to recreate layers, or `apply-edits` reading just the layer shape to verify a round-trip).
 
 ---
 
@@ -388,3 +421,5 @@ Don't break old trajectories. The dataset is the asset.
 | 2026-04-17 | Initial trajectory schema (`metadata.version = "v0"`). | — |
 | 2026-04-18 | `DesignSpec.artifact_type: ArtifactType` added (default=POSTER). `AgentTraceStep.type = "artifact_switch"` added to union. | Backward-compat: old trajectories load with artifact_type defaulting to `poster`. Version unchanged (`v0`). |
 | 2026-04-18 | New sidecar schema: `ChatSession` / `ChatMessage` / `TrajectoryRef` (in `session.py`) with `_schema_version = "v1.0-chat"`. Lives at `sessions/<id>.json`. | Independent of Trajectory schema — the pair evolve separately. |
+| 2026-04-19 | `LayerKind += "section"` (v1.0 #8, landing) and `"image"` (v1.0 #8.75, inline NBP imagery). `LayerNode.bbox` relaxed to `Optional` (landing flow-layout). `CompositionArtifacts.html_path` added (v1.0 #6). All `CompositionArtifacts` paths made Optional. `DesignSpec.design_system: DesignSystem \| None` added (landing-only, v1.0 #8.5). `IssueCategory += "copy", "content"` (v1.0 #8.5-fix). | Backward-compat: old poster trajectories load cleanly; landing is additive. Version unchanged. |
+| 2026-04-20 | `LayerKind += "slide"` (v1.0 #7, deck). `CompositionArtifacts.pptx_path` added. `TrajectoryRef.pptx_path` previously reserved, now populated for DECK runs. | Backward-compat: additive. Old trajectories without `pptx_path` default to None. Version unchanged. |
