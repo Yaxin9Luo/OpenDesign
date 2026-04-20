@@ -28,14 +28,22 @@ class PipelineRunner:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def run(self, brief: str) -> tuple[Trajectory, Path]:
+    def run(self, brief: str,
+            attachments: list[Path] | None = None) -> tuple[Trajectory, Path]:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
         traj_dir = self.settings.out_dir / "trajectories"
         ensure_dirs(run_dir, layers_dir, traj_dir)
 
-        log("run.start", run_id=run_id, brief_chars=len(brief))
+        # v1.1: inject an "Attached files" prologue into the brief so the
+        # planner knows to call `ingest_document` FIRST. We don't change the
+        # planner signature — attachments travel as part of the brief text.
+        attachments = list(attachments or [])
+        effective_brief = _apply_attachment_prologue(brief, attachments)
+
+        log("run.start", run_id=run_id, brief_chars=len(effective_brief),
+            attachments=len(attachments))
         wall_start = time.monotonic()
 
         ctx = ToolContext(
@@ -45,7 +53,7 @@ class PipelineRunner:
 
         system_prompt = (self.settings.prompts_dir / "planner.md").read_text(encoding="utf-8")
         planner = PlannerLoop(self.settings, system_prompt)
-        trace = planner.run(brief, ctx)
+        trace = planner.run(effective_brief, ctx)
 
         spec = ctx.state.get("design_spec")
         composition = ctx.state.get("composition")
@@ -71,7 +79,7 @@ class PipelineRunner:
         traj = Trajectory(
             run_id=run_id,
             created_at=datetime.now(),
-            brief=brief,
+            brief=effective_brief,
             design_spec=spec,
             layer_graph=final_layer_graph,
             agent_trace=trace,
@@ -88,7 +96,13 @@ class PipelineRunner:
                 "max_critique_iters": self.settings.max_critique_iters,
                 "max_planner_turns": self.settings.max_planner_turns,
                 "finalize_notes": ctx.state.get("finalize_notes", ""),
-                "version": "v0",
+                "attachments": [str(p) for p in attachments],
+                # v1 (training-data capture) — record thinking config so
+                # downstream loaders can filter trajectories with CoT.
+                "planner_thinking_budget": self.settings.planner_thinking_budget,
+                "critic_thinking_budget": self.settings.critic_thinking_budget,
+                "interleaved_thinking": self.settings.enable_interleaved_thinking,
+                "version": "v1",
             },
         )
 
@@ -136,3 +150,29 @@ def _estimate_cost(input_tokens: int, output_tokens: int, *, n_critiques: int) -
     nbp_per_image_2k = 0.15
     planner_cost = (input_tokens / 1e6) * opus_in_per_mtok + (output_tokens / 1e6) * opus_out_per_mtok
     return round(planner_cost + nbp_per_image_2k + 0.05 * max(n_critiques, 0), 4)
+
+
+def _apply_attachment_prologue(brief: str, attachments: list[Path]) -> str:
+    """Prefix the brief with an 'Attached files:' block when v1.1 attachments
+    are present, instructing the planner to call `ingest_document` first.
+
+    The planner prompt (prompts/planner.md § "Ingestion workflow") teaches
+    the model to treat this prefix as a signal.
+    """
+    if not attachments:
+        return brief
+    lines = ["Attached files:"]
+    for p in attachments:
+        try:
+            size = p.stat().st_size if p.exists() else 0
+        except OSError:
+            size = 0
+        kb = size // 1024
+        lines.append(f"  - {p} ({kb} KB)")
+    lines.append(
+        "\nCALL `ingest_document` FIRST with these file_paths, THEN write "
+        "`propose_design_spec` using the returned manifest (title, sections, "
+        "figure layer_ids). Ingested figures are pre-registered in "
+        "rendered_layers — reference them by layer_id in your layer_graph."
+    )
+    return "\n".join(lines) + "\n\n---\n\n" + brief

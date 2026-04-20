@@ -338,6 +338,39 @@ Critique-driven preference pairs. Currently rare (only emitted when a critique i
 - **Lower the critic threshold** to force more revise verdicts (set `score ≥ 0.85` for pass).
 - **Use the rerender command** (when v0.1 lands — see [ROADMAP.md](ROADMAP.md)) — manual edits become preference pairs.
 
+### Lane 6 — Extended-thinking CoT (v1)
+
+```
+for step in trajectory.agent_trace if step.type == "reasoning":
+    input:  messages up to step.step_idx - 1      # prior turns
+    output: step.thinking_blocks[].thinking       # Claude's internal CoT
+```
+
+Two independent CoT streams per trajectory:
+
+- `actor="planner"` — Claude's reasoning **before each tool decision**, captured via the `interleaved-thinking-2025-05-14` beta so thinking appears between tool calls, not only at turn start.
+- `actor="critic"` — reasoning behind each `CritiqueResult.verdict` / issue list.
+
+Each `ThinkingBlockRecord` carries:
+- `thinking`: plaintext CoT (empty when `is_redacted=True`).
+- `signature`: Anthropic-issued opaque verification token — required for offline replay; never interpret client-side.
+- `is_redacted`: `True` when Anthropic encrypted the block (e.g. safety-sensitive reasoning). Record is kept for accounting even though text is unavailable.
+
+Companion per-step telemetry captured on the same `AgentTraceStep`: `stop_reason`, `cache_read_input_tokens`, `cache_creation_input_tokens`. These support cost/efficiency reward shaping in RL post-training.
+
+**Enable/disable** via env:
+- `PLANNER_THINKING_BUDGET` (default 10000; set `0` to disable)
+- `CRITIC_THINKING_BUDGET` (default 10000)
+- `ENABLE_INTERLEAVED_THINKING` (default `1`; set `0` to fall back to standard thinking only at turn start)
+
+**Filtering trajectories with CoT**:
+```python
+# v1 trajectories expose thinking config in metadata
+t["metadata"].get("planner_thinking_budget", 0) > 0  # has planner CoT
+t["metadata"].get("critic_thinking_budget", 0) > 0   # has critic CoT
+t["metadata"].get("interleaved_thinking")            # CoT interleaved with tool calls
+```
+
 ---
 
 ## Real distribution (current trajectory examples)
@@ -423,3 +456,4 @@ Don't break old trajectories. The dataset is the asset.
 | 2026-04-18 | New sidecar schema: `ChatSession` / `ChatMessage` / `TrajectoryRef` (in `session.py`) with `_schema_version = "v1.0-chat"`. Lives at `sessions/<id>.json`. | Independent of Trajectory schema — the pair evolve separately. |
 | 2026-04-19 | `LayerKind += "section"` (v1.0 #8, landing) and `"image"` (v1.0 #8.75, inline NBP imagery). `LayerNode.bbox` relaxed to `Optional` (landing flow-layout). `CompositionArtifacts.html_path` added (v1.0 #6). All `CompositionArtifacts` paths made Optional. `DesignSpec.design_system: DesignSystem \| None` added (landing-only, v1.0 #8.5). `IssueCategory += "copy", "content"` (v1.0 #8.5-fix). | Backward-compat: old poster trajectories load cleanly; landing is additive. Version unchanged. |
 | 2026-04-20 | `LayerKind += "slide"` (v1.0 #7, deck). `CompositionArtifacts.pptx_path` added. `TrajectoryRef.pptx_path` previously reserved, now populated for DECK runs. | Backward-compat: additive. Old trajectories without `pptx_path` default to None. Version unchanged. |
+| 2026-04-20 | **v0 → v1** (training-data capture). New `ThinkingBlockRecord` model. `AgentTraceStep` gains optional `thinking_blocks`, `stop_reason`, `cache_read_input_tokens`, `cache_creation_input_tokens`. `StepType += "reasoning"` for planner + critic extended-thinking blocks captured via `interleaved-thinking-2025-05-14` beta. `metadata` gains `planner_thinking_budget`, `critic_thinking_budget`, `interleaved_thinking`. **Bump: `version` v0→v1.** | Backward-compat: all new `AgentTraceStep` fields optional with default `None`; old v0 trajectories load unchanged. Branch on `metadata["version"]` in downstream loaders when thinking-field presence matters. |

@@ -20,7 +20,8 @@ from pydantic import ValidationError
 
 from .schema import (
     AgentTraceStep, CompositionArtifacts, CritiqueResult, DesignSpec,
-    LayerNode, SafeZone, TextEffect, ToolObservation, Trajectory,
+    LayerNode, SafeZone, TextEffect, ThinkingBlockRecord, ToolObservation,
+    Trajectory,
 )
 
 
@@ -34,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/13] imports")
+    print("[1/16] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -47,13 +48,14 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/13] tool registry")
+    print("[2/16] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
                 "generate_background", "generate_image",
                 "render_text_layer", "edit_layer",
-                "fetch_brand_asset", "composite", "critique", "finalize"}
+                "fetch_brand_asset", "composite", "critique", "finalize",
+                "ingest_document"}
     schema_names = {s["name"] for s in TOOL_SCHEMAS}
     handler_names = set(TOOL_HANDLERS.keys())
     missing = expected - (schema_names & handler_names)
@@ -75,7 +77,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/13] pydantic schema round-trip")
+    print("[3/16] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -118,7 +120,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/13] fonts")
+    print("[4/16] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -138,7 +140,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/13] composite (no API)")
+    print("[5/16] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -239,7 +241,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/13] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/16] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -310,7 +312,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/13] chat session save/load")
+    print("[7/16] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -372,7 +374,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/13] edit_layer (no API)")
+    print("[8/16] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -497,13 +499,13 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/13] apply-edits round-trip (no API)")
+    print("[9/16] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
     src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
     if not src_html.exists():
-        _fail("smoke HTML missing — [5/13] composite step must run first")
+        _fail("smoke HTML missing — [5/16] composite step must run first")
 
     # Simulate a user edit: bump font size + change color on the title.
     # Re-emit with a changed data-font-size-px/data-fill so round-trip should
@@ -574,7 +576,7 @@ def check_apply_edits_roundtrip() -> None:
 
 def check_landing_mode() -> None:
     """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
-    print("[10/13] landing mode (no API)")
+    print("[10/16] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -714,7 +716,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/13] design-system styles (no API)")
+    print("[11/16] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -815,7 +817,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/13] landing with images (no API)")
+    print("[12/16] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -930,7 +932,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/13] deck mode (no API)")
+    print("[13/16] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1090,6 +1092,214 @@ def check_deck_mode() -> None:
     _ok("pptx reopen: slide count + native text runs + picture shape all OK")
 
 
+def check_reasoning_step_roundtrip() -> None:
+    """v1 training-data schema: reasoning step + ThinkingBlockRecord survive roundtrip.
+
+    Covers three subcases:
+      1. Plain thinking block (thinking + signature non-empty, is_redacted=False)
+      2. Redacted thinking block (thinking empty, signature carries opaque data)
+      3. The new AgentTraceStep fields (thinking_blocks, stop_reason,
+         cache_read_input_tokens, cache_creation_input_tokens)
+    The existing pydantic-roundtrip check (#3) would catch basic missing-field
+    bugs; this one specifically exercises the CoT capture path with the exact
+    shape the planner will emit at runtime.
+    """
+    print("[14/16] reasoning step + ThinkingBlockRecord roundtrip")
+    plain = ThinkingBlockRecord(
+        thinking="I need to first declare the artifact type, then propose a spec.",
+        signature="sig_abc123_opaque_anthropic_signature",
+        is_redacted=False,
+    )
+    redacted = ThinkingBlockRecord(
+        thinking="",
+        signature="enc_encrypted_payload_opaque_bytes",
+        is_redacted=True,
+    )
+    step = AgentTraceStep(
+        step_idx=42,
+        timestamp=datetime.now(),
+        actor="planner",
+        type="reasoning",
+        thinking_blocks=[plain, redacted],
+        stop_reason="tool_use",
+        cache_read_input_tokens=1234,
+        cache_creation_input_tokens=567,
+        model="claude-opus-4-7",
+    )
+    critic_step = AgentTraceStep(
+        step_idx=43,
+        timestamp=datetime.now(),
+        actor="critic",
+        type="reasoning",
+        thinking_blocks=[ThinkingBlockRecord(
+            thinking="The title contrast is fine; the stamp is too small.",
+            signature="sig_critic_789",
+        )],
+        model="claude-opus-4-7",
+    )
+    traj = Trajectory(
+        run_id="smoke_reasoning",
+        created_at=datetime.now(),
+        brief="smoke",
+        design_spec=DesignSpec(
+            brief="smoke",
+            canvas={"w_px": 100, "h_px": 100, "dpi": 72,
+                    "aspect_ratio": "1:1", "color_mode": "RGB"},
+        ),
+        layer_graph=[],
+        agent_trace=[step, critic_step],
+        composition=CompositionArtifacts(layer_manifest=[]),
+        metadata={
+            "version": "v1",
+            "planner_thinking_budget": 10000,
+            "critic_thinking_budget": 10000,
+            "interleaved_thinking": True,
+        },
+    )
+    dumped = traj.model_dump(mode="json")
+    serialized = json.dumps(dumped, ensure_ascii=False)
+    try:
+        reloaded = Trajectory.model_validate(json.loads(serialized))
+    except ValidationError as e:
+        _fail(f"reasoning trajectory roundtrip: {e.errors()[:3]}")
+
+    reasoning_steps = [s for s in reloaded.agent_trace if s.type == "reasoning"]
+    if len(reasoning_steps) != 2:
+        _fail(f"expected 2 reasoning steps after roundtrip, got {len(reasoning_steps)}")
+    planner_step = next(s for s in reasoning_steps if s.actor == "planner")
+    if not planner_step.thinking_blocks or len(planner_step.thinking_blocks) != 2:
+        _fail("planner reasoning step lost thinking_blocks")
+    if planner_step.thinking_blocks[0].thinking != plain.thinking:
+        _fail("thinking text corrupted in roundtrip")
+    if planner_step.thinking_blocks[0].signature != plain.signature:
+        _fail("thinking signature corrupted in roundtrip")
+    if not planner_step.thinking_blocks[1].is_redacted:
+        _fail("redacted thinking flag not preserved")
+    if planner_step.stop_reason != "tool_use":
+        _fail(f"stop_reason lost: {planner_step.stop_reason}")
+    if planner_step.cache_read_input_tokens != 1234:
+        _fail(f"cache_read tokens lost: {planner_step.cache_read_input_tokens}")
+    if reloaded.metadata.get("version") != "v1":
+        _fail(f"metadata.version != v1, got {reloaded.metadata.get('version')}")
+
+    # Backward compat: an old v0 trajectory without these fields still loads.
+    legacy_step = AgentTraceStep(
+        step_idx=1, timestamp=datetime.now(),
+        actor="user", type="input", text="brief",
+    )
+    _ = legacy_step.model_dump(mode="json")
+    assert legacy_step.thinking_blocks is None
+    assert legacy_step.stop_reason is None
+
+    _ok(f"reasoning step + 2 thinking blocks + cache tokens roundtrip ({len(serialized)} bytes)")
+
+
+def check_ingest_document_markdown() -> None:
+    """Markdown ingestion: seed a stub .md with a relative image ref, verify
+    ingest_document registers the image in rendered_layers + returns the raw
+    text. No API — markdown path doesn't call Anthropic."""
+    print("[15/16] ingest_document markdown (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.ingest_document import ingest_document
+
+    out_dir = REPO_ROOT / "out" / "smoke_ingest_md"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stage a stub MD with an embedded image reference (relative path).
+    src_dir = out_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    img_path = src_dir / "diagram.png"
+    Image.new("RGB", (640, 360), (90, 130, 200)).save(img_path)
+    md_path = src_dir / "notes.md"
+    md_path.write_text(
+        "# My project notes\n\n"
+        "## Overview\nA few thoughts below.\n\n"
+        "![System diagram](diagram.png)\n\n"
+        "## Plans\n- Ship v1\n- Iterate\n"
+        "\n![Missing](./nowhere.png)\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-ingest-md")
+
+    obs = ingest_document({"file_paths": [str(md_path)]}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"ingest_document(markdown): {obs.summary}")
+
+    ingested = ctx.state.get("ingested") or []
+    if len(ingested) != 1 or ingested[0]["type"] != "markdown":
+        _fail(f"ingested manifest missing markdown entry: {ingested}")
+    registered = ingested[0]["registered_layer_ids"]
+    skipped = ingested[0]["skipped_images"]
+    if len(registered) != 1:
+        _fail(f"expected 1 image layer registered from MD, got {registered}")
+    if len(skipped) != 1:
+        _fail(f"expected 1 skipped bad ref, got {skipped}")
+
+    layer_id = registered[0]
+    rec = ctx.state["rendered_layers"].get(layer_id)
+    if not rec or not rec.get("src_path") or not Path(rec["src_path"]).exists():
+        _fail(f"markdown-registered image not hydrated: {rec}")
+    _ok(f"markdown ingested: {ingested[0]['n_chars']} chars, "
+        f"1 image layer ({layer_id}), 1 bad ref skipped")
+
+
+def check_ingest_document_image() -> None:
+    """Standalone image ingestion: seed a PNG, verify ingest_document copies
+    into layers_dir + registers a passthrough layer with correct shape."""
+    print("[16/16] ingest_document image (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.ingest_document import ingest_document
+
+    out_dir = REPO_ROOT / "out" / "smoke_ingest_image"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    src_dir = out_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    img_path = src_dir / "logo.png"
+    Image.new("RGB", (512, 512), (240, 80, 60)).save(img_path)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-ingest-image")
+
+    obs = ingest_document({"file_paths": [str(img_path)]}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"ingest_document(image): {obs.summary}")
+
+    ingested = ctx.state.get("ingested") or []
+    if len(ingested) != 1 or ingested[0]["type"] != "image":
+        _fail(f"ingested manifest missing image entry: {ingested}")
+    if (ingested[0]["width"], ingested[0]["height"]) != (512, 512):
+        _fail(f"image dims not captured: {ingested[0]}")
+
+    registered = ingested[0]["registered_layer_ids"]
+    if len(registered) != 1:
+        _fail(f"expected 1 image layer, got {registered}")
+    layer_id = registered[0]
+    rec = ctx.state["rendered_layers"].get(layer_id)
+    if rec["kind"] != "image":
+        _fail(f"image layer kind != image: {rec['kind']}")
+    if rec.get("source") != "ingested":
+        _fail(f"image source tag wrong: {rec.get('source')}")
+    if not Path(rec["src_path"]).exists():
+        _fail(f"copied image path missing: {rec['src_path']}")
+    _ok(f"image ingested: {layer_id}, 512×512, source=ingested, "
+        f"sha256[:8]={rec['sha256'][:8]}")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -1104,10 +1314,13 @@ def main() -> int:
     check_design_system_styles()
     check_landing_with_images()
     check_deck_mode()
+    check_reasoning_step_roundtrip()
+    check_ingest_document_markdown()
+    check_ingest_document_image()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
-          "out/smoke_deck/")
+          "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/")
     return 0
 
 

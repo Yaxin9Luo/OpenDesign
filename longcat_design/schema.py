@@ -53,6 +53,9 @@ StepType = Literal[
     "input", "thought", "tool_call", "tool_result",
     "design_spec", "critique", "finalize",
     "artifact_switch",  # new v1.0: emitted when switch_artifact_type is called
+    "reasoning",        # v1 (training-data capture): one or more extended-thinking
+                        # blocks returned by Claude. Distinct from "thought" which is
+                        # the planner's free-form text block between tool calls.
 ]
 LayerKind = Literal[
     "background",    # full-canvas raster (poster/deck only)
@@ -162,6 +165,23 @@ class ToolObservation(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
 
 
+class ThinkingBlockRecord(BaseModel):
+    """One extended-thinking block captured from Claude's response (v1).
+
+    Anthropic returns two sub-types: `thinking` (plain CoT text) and
+    `redacted_thinking` (encrypted — text is unavailable but the block
+    MUST still round-trip back verbatim via `signature` or the next
+    tool_use turn 400s). Both are preserved here.
+
+    Captured for training-data lanes (mid-training / SFT / RL). The
+    `signature` field is opaque to us and only meaningful to Anthropic's
+    verification; record it as-is for offline replay.
+    """
+    thinking: str = ""              # empty when is_redacted=True
+    signature: str = ""              # Anthropic-issued; opaque
+    is_redacted: bool = False
+
+
 class AgentTraceStep(BaseModel):
     step_idx: int
     timestamp: datetime
@@ -176,6 +196,12 @@ class AgentTraceStep(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     model: str | None = None
+
+    # v1 (training-data capture) — all optional, backward-compatible
+    thinking_blocks: list[ThinkingBlockRecord] | None = None
+    stop_reason: str | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
 
 
 class CritiqueIssue(BaseModel):

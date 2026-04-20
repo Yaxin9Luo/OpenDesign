@@ -41,7 +41,7 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     critic = Critic(ctx.settings)
     iteration = prior + 1
     try:
-        result = critic.evaluate(
+        result, thinking_records = critic.evaluate(
             preview_path=Path(preview_path),
             design_spec=spec,
             layer_manifest=composition.layer_manifest if composition else [],
@@ -52,6 +52,11 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         return obs_error(f"critic call failed: {e}")
 
     ctx.state["critique_results"].append(result)
+    # Stash extended-thinking blocks (if any) so PlannerLoop can append them
+    # as actor="critic" type="reasoning" steps in the agent_trace. Uses a
+    # single-use slot — planner pops it after the `critique` tool result.
+    if thinking_records:
+        ctx.state["_pending_critic_thinking"] = thinking_records
     artifact_path = ctx.run_dir / f"critique_{iteration}.json"
     atomic_write_json(artifact_path, result.model_dump(mode="json"))
     log("critique.done", iter=iteration, verdict=result.verdict, score=result.score,

@@ -6,6 +6,31 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-20 — Enable Claude extended thinking on Planner + Critic via `interleaved-thinking-2025-05-14` beta; trajectory schema v0 → v1
+
+**Decision**: Turn on Anthropic extended thinking for both `PlannerLoop` and `Critic`, with the `interleaved-thinking-2025-05-14` beta header so thinking blocks may also appear *between* tool calls. Capture every `thinking` / `redacted_thinking` content block into a new `AgentTraceStep(type="reasoning")` with the original `signature`. Default `budget_tokens=10000` per call, env-overridable via `PLANNER_THINKING_BUDGET` / `CRITIC_THINKING_BUDGET` / `ENABLE_INTERLEAVED_THINKING`. Also record `stop_reason` + `cache_read_input_tokens` + `cache_creation_input_tokens` per turn. Trajectory `metadata.version` bumps `v0` → `v1`; all new fields are optional for backward compat.
+
+**Alternatives considered**:
+1. **Standard thinking only** (no interleaved beta). Rejected: standard thinking emits blocks only at the start of each `messages.create` turn, so once a tool is called the model's *per-tool-decision* reasoning is invisible. Interleaved is the mode that produces high-quality tool-use CoT SFT/RL data — the whole point of this capture.
+2. **Thinking on Planner only, not Critic**. Rejected: Critic's `rationale` field is short and under-reasoned; without CoT we can't train a reward model that distinguishes "correct verdict, good justification" from "correct verdict, lucky guess." Cost per run is bounded (1-2 critic calls max via `max_critique_iters=2`).
+3. **Defer thinking capture until we're sure we'll train on it** (just store raw responses). Rejected: the marginal cost of wiring extended thinking now is small (~100 LOC total); deferring means every trajectory collected before the cutover is CoT-less. Collect data in the richest shape available.
+4. **Put thinking in a sidecar file** instead of inline in trajectory JSON. Rejected (for now): trajectory size blows up ~2-4× but stays in the low-100s-KB range; single-file simplicity for SFT loaders outweighs the size. Revisit if trajectories exceed ~500 KB.
+
+**Rationale**: Addresses the single biggest gap in the training-data pipeline per [DATA-CONTRACT.md § Lane 6](DATA-CONTRACT.md). The existing `type="thought"` steps are polished text between tool calls ("*Now I'll generate all 10 images in parallel.*"), not reasoning — can't ground a CoT SFT on them. With interleaved thinking, every tool choice is preceded by an actual reasoning block that the model was free to make arbitrarily long.
+
+**Schema evolution**: Per [DATA-CONTRACT.md schema evolution policy](DATA-CONTRACT.md), old v0 trajectories continue to load since all new `AgentTraceStep` fields default to `None`. Smoke check `[14/14] reasoning step + ThinkingBlockRecord roundtrip` covers the new fields including redacted blocks. Trajectory size grows but remains JSON-queryable; no external data store needed.
+
+**Guardrails**:
+- `messages.append({"role":"assistant","content":resp.content})` in planner.py **must not** be rewritten by hand — the SDK's raw content block list carries opaque `signature` fields that Anthropic verifies on next turn. Replay breaks silently otherwise. Comment added in planner.py docstring + at call site.
+- `max_tokens` assertion added in planner.py: must strictly exceed `budget_tokens`, else `messages.create` 400s.
+- `budget_tokens=0` keeps the feature fully off (dev / cheap runs); no prompt changes required.
+
+**Revisit when**: (a) OpenRouter stops passing the interleaved beta header through to Anthropic (trigger: a real run 400s with the beta enabled — fallback to `ENABLE_INTERLEAVED_THINKING=0`); (b) trajectories routinely exceed ~500 KB (spin out thinking to `out/runs/<run_id>/thinking.jsonl` sidecar); (c) we need thinking on Gemini NBP — would require a separate capture path since NBP doesn't expose CoT blocks; (d) Anthropic deprecates `interleaved-thinking-2025-05-14` — migrate to the successor beta header with the same capture pattern.
+
+**Branch**: `feat/training-data-capture` — umbrella for subsequent training-data-related PRs (NBP metadata / DPO pairs / edit lineage / raw-response sidecar). Does not merge into main until a few related commits are stacked, to avoid churning reviewers.
+
+---
+
 ## 2026-04-20 — Deck uses `kind="slide"` in existing LayerNode tree (no separate `DeckStructure` model); critic is text-only
 
 **Decision**: v1.0 #7's PPTX renderer reuses the existing `LayerNode` tree with a new `kind="slide"` literal — top-level slide nodes, each with `children[]` holding positioned `text` / `image` / `background` elements via pixel `bbox`. No parallel `DeckStructure` pydantic model. The critic for deck mode is **text-only** (mirrors landing) — grades the slide tree / density / arc from the DesignSpec without sending any vision input.

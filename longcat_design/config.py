@@ -40,6 +40,15 @@ class Settings:
     planner_model: str
     critic_model: str
     image_model: str = "gemini-3-pro-image-preview"
+    # v1.1 paper2any: Sonnet-class model used by ingest_document for
+    # PDF structure extraction + figure bbox location. Much faster than
+    # Opus for large PDFs (~3-5× shorter wall time) and plenty capable
+    # for "extract title / sections / figures" — not a reasoning task.
+    # Override via INGEST_MODEL env var.
+    ingest_model: str = "anthropic/claude-sonnet-4-6"
+    # Explicit HTTP timeout (seconds) for ingest Anthropic calls so a
+    # stalled request fails fast instead of hanging 20+ minutes.
+    ingest_http_timeout: float = 600.0  # 10 minutes
 
     repo_root: Path = REPO_ROOT
     fonts_dir: Path = REPO_ROOT / "assets" / "fonts"
@@ -49,6 +58,15 @@ class Settings:
     max_critique_iters: int = 2
     max_planner_turns: int = 30
     critic_preview_max_edge: int = 1024
+
+    # v1 (training-data capture) — Claude extended thinking
+    #   budget=0 → thinking disabled (dev / cheap runs).
+    #   interleaved flag sends the `interleaved-thinking-2025-05-14` beta header
+    #   so Claude may emit thinking blocks *between* tool calls, not only at the
+    #   start of each turn. Required for high-quality tool-use CoT lanes.
+    planner_thinking_budget: int = 10000
+    critic_thinking_budget: int = 10000
+    enable_interleaved_thinking: bool = True
 
     fonts: dict[str, str] = field(default_factory=lambda: {
         "NotoSansSC-Bold": "NotoSansSC-Bold.otf",
@@ -90,6 +108,20 @@ def load_settings() -> Settings:
 
     planner_model = os.getenv("PLANNER_MODEL", "").strip() or default_model
     critic_model = os.getenv("CRITIC_MODEL", "").strip() or default_model
+    # v1.1: default ingest to Sonnet (fast + cheap for "read this PDF").
+    # Respects OpenRouter vs stock naming convention via default_model prefix.
+    if or_key:
+        ingest_default = "anthropic/claude-sonnet-4-6"
+    else:
+        ingest_default = "claude-sonnet-4-6"
+    ingest_model = os.getenv("INGEST_MODEL", "").strip() or ingest_default
+
+    planner_budget = _parse_int_env("PLANNER_THINKING_BUDGET", 10000)
+    critic_budget = _parse_int_env("CRITIC_THINKING_BUDGET", 10000)
+    interleaved = os.getenv("ENABLE_INTERLEAVED_THINKING", "1").strip() not in (
+        "0", "false", "False", "no", "",
+    )
+    ingest_timeout = float(_parse_int_env("INGEST_HTTP_TIMEOUT", 600))
 
     return Settings(
         anthropic_api_key=api_key,
@@ -97,4 +129,19 @@ def load_settings() -> Settings:
         gemini_api_key=gemini,
         planner_model=planner_model,
         critic_model=critic_model,
+        ingest_model=ingest_model,
+        ingest_http_timeout=ingest_timeout,
+        planner_thinking_budget=planner_budget,
+        critic_thinking_budget=critic_budget,
+        enable_interleaved_thinking=interleaved,
     )
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
