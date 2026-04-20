@@ -22,6 +22,12 @@ We think the right UX + open-source distribution + open output formats wins a re
 
 LongcatDesign is the terminal-first, open-source answer to "I want what Claude Design does, but I want to own the stack and the output."
 
+## North Star: paper2any
+
+The end-state product form is **paper2any**: user drops in a paper / PDF / docx / markdown / image bundle → LongcatDesign generates the matching poster, landing page, or slide deck → user iterates via the in-HTML edit toolbar and the `apply-edits` round-trip. One ingest, three artifact types, all editable after the fact.
+
+v1.0 ships the single-brief story ("describe what you want"). **v1.1 closes the loop** with a `ingest_document` tool and `--from-file` / `:attach` entry points — see [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core). Everything in v1.0 (round-trip editable layers, 6 design systems, NBP inline imagery) is pre-work for the paper2any moment.
+
 ## What LongcatDesign does (v1 MVP scope)
 
 Three artifact types, produced from conversational briefs in a CLI chat shell:

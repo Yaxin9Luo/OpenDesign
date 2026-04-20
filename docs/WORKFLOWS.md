@@ -6,10 +6,11 @@ Day-to-day recipes. For *why* the system is shaped the way it is, see [VISION.md
 
 ## Setup (one-time)
 
+Environment is managed by [uv](https://docs.astral.sh/uv/). Install uv once, then:
+
 ```bash
 cd /Users/yaxinluo/Desktop/Projects/Design-Agent
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+uv sync                    # reads pyproject.toml + uv.lock → .venv with pinned deps
 cp .env.example .env
 # edit .env to fill in:
 #   GEMINI_API_KEY (required)
@@ -17,6 +18,8 @@ cp .env.example .env
 #     OPENROUTER_API_KEY  (preferred — pay-as-you-go, single key, both Claude + cost reporting)
 #     ANTHROPIC_API_KEY   (stock — needs balance topped up)
 ```
+
+Day-to-day commands are prefixed with `uv run` (auto-syncs deps and uses the project venv). You can still `source .venv/bin/activate` if you prefer the old workflow — uv just manages the venv, it does not replace it.
 
 If both LLM keys are set, **OpenRouter wins**. To force stock Anthropic, comment out `OPENROUTER_API_KEY`. See [GOTCHAS.md](GOTCHAS.md) if env vars don't load (shell-exported empty values can mask `.env`).
 
@@ -27,7 +30,7 @@ If both LLM keys are set, **OpenRouter wins**. To force stock Anthropic, comment
 Use this whenever you change tools, schema, fonts, or composite logic:
 
 ```bash
-.venv/bin/python -m longcat_design.smoke
+uv run python -m longcat_design.smoke
 ```
 
 Verifies 7 steps: imports (incl. chat + session modules), tool registry shape (8 tools + `switch_artifact_type` first), `Trajectory` Pydantic round-trip, font loading, real composite call against a stub background, SVG vector text + embedded fonts, **ChatSession save/load round-trip**.
@@ -41,9 +44,9 @@ Outputs go to `out/smoke/`. Inspect `poster.psd` (should have 3 named layers: `b
 ### Chat shell (v1.0 default — conversational multi-turn)
 
 ```bash
-.venv/bin/python -m longcat_design.cli
+uv run python -m longcat_design.cli
 # or equivalently:
-.venv/bin/python -m longcat_design.cli chat
+uv run python -m longcat_design.cli chat
 ```
 
 Launches a REPL. Type a brief, agent generates, iterate. Every turn auto-saves to `sessions/<session_id>.json`. See [§slash commands](#slash-commands) below.
@@ -51,23 +54,23 @@ Launches a REPL. Type a brief, agent generates, iterate. Every turn auto-saves t
 Resume a prior session:
 
 ```bash
-.venv/bin/python -m longcat_design.cli chat --resume session_20260418-214348_ea6c0de9
+uv run python -m longcat_design.cli chat --resume session_20260418-214348_ea6c0de9
 ```
 
 ### One-shot (legacy, for scripting / CI / single-brief work)
 
 ```bash
-.venv/bin/python -m longcat_design.cli run "<your brief>"
+uv run python -m longcat_design.cli run "<your brief>"
 ```
 
 Examples:
 
 ```bash
 # Minimal — replicates the 国宝回家 reference case
-.venv/bin/python -m longcat_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
+uv run python -m longcat_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
 
 # Academic poster (text-heavy)
-.venv/bin/python -m longcat_design.cli run "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
+uv run python -m longcat_design.cli run "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
 ```
 
 Both modes produce artifacts in `out/runs/<run_id>/` (PSD/SVG/preview/layers) and trajectories in `out/trajectories/<run_id>.json`. Chat mode ADDITIONALLY wraps trajectories under `sessions/<session_id>.json`.
@@ -138,7 +141,7 @@ The browser is the reference renderer for our SVG output. Every `<text>` element
 ### Inspect PSD layer tree
 
 ```bash
-.venv/bin/python -c "
+uv run python -c "
 from psd_tools import PSDImage
 p = PSDImage.open('out/runs/<run_id>/poster.psd')
 def walk(n, d=0):
@@ -161,7 +164,7 @@ Should return one line per text layer.
 ### Read the trajectory
 
 ```bash
-.venv/bin/python -c "
+uv run python -c "
 import json
 t = json.load(open('out/trajectories/<run_id>.json'))
 print(f'brief: {t[\"brief\"]}')
@@ -225,7 +228,7 @@ If you must use Figma:
 When v0.1 ships, this command will let you change text in `trajectory.json` and regenerate just the affected layer:
 
 ```bash
-.venv/bin/python -m design_agent.edit <run_id> --layer title --text "国宝回家·壹"
+uv run python -m design_agent.edit <run_id> --layer title --text "国宝回家·壹"
 # regenerates only the title layer, re-subsets fonts, recomposites PSD/SVG/preview
 ```
 
@@ -278,7 +281,7 @@ Set env vars:
 ```bash
 export PLANNER_MODEL="anthropic/claude-haiku-4-5"   # cheaper, see if planning still holds
 export CRITIC_MODEL="anthropic/claude-sonnet-4-6"
-.venv/bin/python -m design_agent.cli "..."
+uv run python -m design_agent.cli "..."
 ```
 
 Both planner and critic still go through the same Anthropic SDK + tool-use protocol regardless of model.
@@ -296,7 +299,7 @@ Edit [`prompts/critic.md`](../prompts/critic.md), tighten the pass threshold (e.
 ls out/trajectories/*.json | wc -l
 
 # Total cost spent so far (sum of estimates)
-.venv/bin/python -c "
+uv run python -c "
 import json, glob
 total = sum(json.load(open(p))['metadata']['estimated_cost_usd']
             for p in glob.glob('out/trajectories/*.json'))
@@ -304,7 +307,7 @@ print(f'\${total:.2f} across {len(glob.glob(\"out/trajectories/*.json\"))} runs'
 "
 
 # Find runs where critic gave any blocker
-.venv/bin/python -c "
+uv run python -c "
 import json, glob
 for p in glob.glob('out/trajectories/*.json'):
     t = json.load(open(p))
@@ -314,7 +317,7 @@ for p in glob.glob('out/trajectories/*.json'):
 "
 
 # Average wall time per layer count
-.venv/bin/python -c "
+uv run python -c "
 import json, glob
 data = [(len(json.load(open(p))['layer_graph']), json.load(open(p))['metadata']['wall_time_s'])
         for p in glob.glob('out/trajectories/*.json')]

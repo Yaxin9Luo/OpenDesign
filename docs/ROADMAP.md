@@ -58,15 +58,33 @@ Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install
 
 ---
 
-## v1.1 — Multi-image insets
+## v1.1 — Document Ingestion (paper2any) ★ CORE
 
-**Why**: Current biggest depth gap. Academic posters and landing-page hero sections need *figures* (architecture diagrams, photos, charts). v0 only has one full-canvas background per artifact.
+**North Star.** Today a brief is a single text line. The ideal LongcatDesign: user drops in a paper / PDF / docx / markdown / image bundle → we generate the matching poster, landing page, or slide deck → user iterates through the in-HTML edit toolbar and `apply-edits` round-trip. This is the **paper2poster / paper2page / paper2deck** surface. Not a side feature — *this is the product's end state*. v1.0 ships the single-brief story; v1.1 closes the loop.
 
-**Scope** (~50 lines):
-- New tool `generate_image_inset(layer_id, prompt, bbox, aspect_ratio, image_size)` — like `generate_background` but at sub-canvas bbox.
-- New tool `import_local_image(layer_id, path, bbox)` — designer hands the agent a chart/photo; tool registers as image layer.
-- Composite + renderers handle `kind: "image"` non-full-canvas layers (PSD / SVG / HTML).
-- `planner.md` gains inset guidance: "for text-heavy or figure-required artifacts, use `generate_image_inset` for focal charts/diagrams rather than baking into background."
+The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through ingestion: every extracted section, figure, and heading lands as a named `LayerNode`, so the user can reorder / retype / recolor after generation exactly like a single-brief artifact. Ingestion adds an input surface, it does NOT break downstream edits.
+
+**Scope** (~6-8 h):
+
+- **New tool** `ingest_document(file_paths: list[str])` — accepts PDF / DOCX / MD / TXT / images. Returns structured `{title, authors, abstract, sections[], figures[], tables[], key_quotes[]}`. Implementation uses Claude's native PDF input blocks (Anthropic SDK already supports this — no local `pypdf` / `pymupdf` dependency). DOCX via `python-docx`; MD/TXT pass-through.
+- **New tool** `passthrough_image(layer_id, source_path, aspect_ratio)` — copies a user-supplied figure (paper diagram, logo, photo) into `layers/` as a `kind: "image"` layer. NOT NBP-generated. Lives alongside `generate_image` (v1.0 #8.75) so the planner can mix original figures + synthesized hero imagery freely.
+- **Planner prompt, new "ingestion-mode workflow" section** — when brief references a file, call `ingest_document` FIRST, then map the returned tree onto the artifact schema:
+  - `paper.pdf` → 3:4 academic poster (title + authors + 4 sections + figures + QR)
+  - `paper.pdf` + "landing" → marketing landing (abstract as hero, method/results as sections, figures inlined)
+  - `paper.pdf` + "deck" → slide deck (one section per slide, figures captioned)
+- **CLI entry**: `longcat-design run --from-file paper.pdf "poster for CVPR"` and REPL slash `:attach <path>` that binds a file to the next brief.
+- **Round-trip smoke**: `paper.pdf → landing.html → user edits title + reorders sections → apply-edits → new run preserves original figures + user edits`. Gates merge.
+
+**Risk**: Claude's PDF vision has a per-call page cap. Long papers (50+ pages) may need a multi-call "summarize each section" fallback. Time-box exploration: if single-call handles 30-page papers cleanly, ship it; longer-paper handling pushes to v1.1.5.
+
+**Demo targets** for the README / launch video:
+- `LLaMA-3.pdf` → claymorphism landing (abstract as hero, method + results as pastel cards, every figure as `passthrough_image`)
+- Same PDF → 3:4 academic poster (baseline parity with paper2poster prior art)
+- Same PDF → 10-slide editable PPTX deck (once v1.0 #7 ships)
+
+**Why v1.1 and not v1.0**: v1.0's bar is "one-brief to 3 artifacts, round-trip editable, production-grade." Document ingestion is the next leap and the "this is the actual product" moment — it deserves its own launch beat, not a crammed-in v1.0 item.
+
+**Note on the old v1.1 "Multi-image insets" scope**: the landing-page portion already shipped as v1.0 #8.75 (`generate_image` tool). Poster / deck inset generation folds into v1.2.
 
 ---
 
