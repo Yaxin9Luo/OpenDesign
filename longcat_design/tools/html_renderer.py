@@ -71,6 +71,9 @@ def write_html(
             body_parts.append(_text_html(L, ctx))
         elif kind == "brand_asset":
             body_parts.append(_asset_html(L))
+        elif kind == "image" and L.get("src_path"):
+            # v1.1 paper2any: ingested PDF figures / user-passthrough images
+            body_parts.append(_image_html(L))
         else:
             body_parts.append(
                 f'  <!-- skipped layer kind={kind!r} id={L.get("layer_id", "?")} -->'
@@ -262,6 +265,29 @@ def _asset_html(L: dict[str, Any]) -> str:
         f'width:{int(bbox.get("w", 0))}px; '
         f'height:{int(bbox.get("h", 0))}px;">'
         f'<img src="{src}" alt=""></div>'
+    )
+
+
+def _image_html(L: dict[str, Any]) -> str:
+    """Poster-mode `<img>` layer for v1.1 ingested figures + passthrough images.
+    Native-sized PNG resized to bbox dimensions via CSS width/height on img."""
+    src = _inline_image(L["src_path"])
+    bbox = L.get("bbox") or {}
+    caption = L.get("caption") or ""
+    return (
+        f'  <div class="layer image" '
+        f'data-layer-id="{_attr(L.get("layer_id", ""))}" '
+        f'data-kind="image" '
+        f'data-z-index="{int(L.get("z_index", 0))}" '
+        f'data-layer-name="{_attr(L.get("name", ""))}" '
+        f'data-source="{_attr(L.get("source", ""))}" '
+        f'data-caption="{_attr(caption)}" '
+        f'style="left:{int(bbox.get("x", 0))}px; '
+        f'top:{int(bbox.get("y", 0))}px; '
+        f'width:{int(bbox.get("w", 0))}px; '
+        f'height:{int(bbox.get("h", 0))}px;">'
+        f'<img src="{src}" alt="{_attr(L.get("name", ""))}" '
+        f'style="width:100%;height:100%;object-fit:contain;display:block;"></div>'
     )
 
 

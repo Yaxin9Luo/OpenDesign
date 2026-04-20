@@ -51,7 +51,17 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     canvas = spec.canvas
     cw, ch = int(canvas["w_px"]), int(canvas["h_px"])
 
+    # v1.1 paper2any: ingested PDF figures are registered in rendered_layers
+    # with bbox=None (they were authored for flow-layout landing/deck use).
+    # The planner places them on the poster by giving each a bbox in
+    # spec.layer_graph. Hydrate that bbox onto the rendered_layer record
+    # before composite walks it. Pattern mirrors _hydrate_landing_image_srcs.
+    _hydrate_poster_layer_bboxes(rendered, spec)
+
     sorted_layers = sorted(rendered.values(), key=lambda L: int(L.get("z_index", 0)))
+    # Drop any image/background layers that still have no bbox — the planner
+    # declared them in spec but didn't place them, OR they're stale records.
+    sorted_layers = [L for L in sorted_layers if L.get("bbox")]
 
     psd_path = ctx.run_dir / "poster.psd"
     svg_path = ctx.run_dir / "poster.svg"
@@ -281,6 +291,45 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
     )
 
 
+def _hydrate_poster_layer_bboxes(rendered: dict[str, dict[str, Any]],
+                                 spec: Any) -> None:
+    """Copy bbox from spec.layer_graph onto rendered_layers records that
+    lack one — poster-specific companion to the landing/deck hydration.
+
+    Ingested PDF figures (v1.1 paper2any) register with bbox=None since they
+    have no intrinsic placement — the planner chooses where to put each
+    figure on the poster canvas by giving it a bbox inside its
+    `propose_design_spec` call. Without this hydration, the poster PSD/SVG
+    writers crash on `None["x"]`.
+
+    The spec is authoritative for placement; rendered_layers is authoritative
+    for content. We merge by layer_id.
+    """
+    for node in (spec.layer_graph or []):
+        nb = getattr(node, "bbox", None)
+        if nb is None:
+            continue
+        lid = getattr(node, "layer_id", None)
+        if lid is None or lid not in rendered:
+            continue
+        rec = rendered[lid]
+        if rec.get("bbox"):
+            continue
+        try:
+            bbox_dict = {"x": int(nb.x), "y": int(nb.y),
+                         "w": int(nb.w), "h": int(nb.h)}
+            if nb.purpose is not None:
+                bbox_dict["purpose"] = nb.purpose
+        except AttributeError:
+            continue
+        rec["bbox"] = bbox_dict
+        # Promote z_index from spec if rendered record didn't have one.
+        if "z_index" in rec and rec["z_index"] == 0:
+            spec_z = getattr(node, "z_index", None)
+            if spec_z is not None:
+                rec["z_index"] = int(spec_z)
+
+
 def _hydrate_deck_image_srcs(slides: list[Any], ctx: ToolContext) -> None:
     """Copy src_path from rendered_layers onto each slide's image/background
     children. Mirrors `_hydrate_landing_image_srcs` — see that docstring.
@@ -471,7 +520,25 @@ def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,
                 "layer_id": L["layer_id"], "name": L["name"], "kind": "background",
                 "png_path": L["src_path"], "bbox": {"x": 0, "y": 0, "w": cw, "h": ch},
             })
+        elif L["kind"] == "image":
+            # v1.1 paper2any: ingested figures + user-passthrough images are
+            # native-sized PNGs (not full-canvas). Resize to bbox and place.
+            if png.mode != "RGBA":
+                png = png.convert("RGBA")
+            if png.size != (bw, bh):
+                png = png.resize((bw, bh), Image.LANCZOS)
+            psd.create_pixel_layer(
+                png, name=L["name"], top=by, left=bx,
+                opacity=255, blend_mode=BlendMode.NORMAL,
+                compression=Compression.RLE,
+            )
+            manifest.append({
+                "layer_id": L["layer_id"], "name": L["name"], "kind": "image",
+                "png_path": L["src_path"], "bbox": {"x": bx, "y": by, "w": bw, "h": bh},
+            })
         else:
+            # text layer — render_text_layer produces a full-canvas transparent
+            # RGBA with glyphs inside bbox, so we crop by bbox then place.
             if png.mode != "RGBA":
                 png = png.convert("RGBA")
             crop = png.crop((bx, by, bx + bw, by + bh))
@@ -495,6 +562,7 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
                out_path: Path, ctx: ToolContext) -> None:
     text_layers = [L for L in layers if L["kind"] == "text" and L.get("text")]
     bg_layers = [L for L in layers if L["kind"] == "background"]
+    image_layers = [L for L in layers if L["kind"] == "image"]
 
     fonts_used: dict[str, set[str]] = {}
     for L in text_layers:
@@ -517,6 +585,18 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
         dwg.add(dwg.image(
             href=f"data:image/png;base64,{b64}",
             insert=(0, 0), size=(cw, ch),
+        ))
+
+    # v1.1 paper2any: emit ingested/passthrough images as <image> elements
+    # positioned by bbox, ordered by z_index so they layer correctly with text.
+    for L in sorted(image_layers, key=lambda x: int(x.get("z_index", 0))):
+        bbox = L["bbox"]
+        bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+        with open(L["src_path"], "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        dwg.add(dwg.image(
+            href=f"data:image/png;base64,{b64}",
+            insert=(bx, by), size=(bw, bh),
         ))
 
     for L in text_layers:
@@ -557,11 +637,23 @@ def _write_preview(layers: list[dict[str, Any]], cw: int, ch: int, out_path: Pat
         png = Image.open(L["src_path"])
         if png.mode != "RGBA":
             png = png.convert("RGBA")
-        if L["kind"] == "background":
+        kind = L["kind"]
+        if kind == "background":
             if png.size != (cw, ch):
                 png = png.resize((cw, ch), Image.LANCZOS)
             base = Image.alpha_composite(base, png)
+        elif kind == "image":
+            # v1.1 paper2any: native-sized PNG placed at bbox with resize.
+            bbox = L["bbox"]
+            bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+            if png.size != (bw, bh):
+                png = png.resize((bw, bh), Image.LANCZOS)
+            full = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            full.paste(png, (bx, by))
+            base = Image.alpha_composite(base, full)
         else:
+            # text layer: already full-canvas transparent RGBA with glyphs
+            # positioned inside bbox.
             if png.size != (cw, ch):
                 full = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
                 full.paste(png, (0, 0))

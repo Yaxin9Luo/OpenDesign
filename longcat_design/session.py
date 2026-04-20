@@ -65,6 +65,9 @@ class ChatSession(BaseModel):
     current_artifact_type: ArtifactType = ArtifactType.POSTER
     message_history: list[ChatMessage] = Field(default_factory=list)
     trajectories: list[TrajectoryRef] = Field(default_factory=list)
+    # v1.1 paper2any: files queued via `:attach <path>` that will be
+    # consumed + cleared on the NEXT non-slash turn's brief.
+    pending_attachments: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     # ---- ergonomic helpers -------------------------------------------------

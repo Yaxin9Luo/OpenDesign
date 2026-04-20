@@ -134,13 +134,30 @@ def _handle_brief(brief: str, state: dict) -> None:
     # planner can tell "revise existing" from "make new artifact."
     contextual_brief = _build_contextual_brief(brief, session)
 
+    # v1.1: consume any pending_attachments (queued via :attach) for THIS turn.
+    attachments: list[Path] = []
+    for fp_str in session.pending_attachments:
+        p = Path(fp_str).expanduser()
+        if not p.is_absolute():
+            p = p.resolve()
+        if p.exists() and p.is_file():
+            attachments.append(p)
+        else:
+            print(f"  warning: pending attachment not found, skipping: {fp_str}")
+    # Clear queue — attachments are one-shot per turn.
+    session.pending_attachments = []
+
     session.append_user(brief)
 
-    print(f"\n  [generating — {settings.planner_model}, may take 1-5 min]\n")
+    print(f"\n  [generating — {settings.planner_model}, may take 1-5 min"
+          + (f", ingesting {len(attachments)} file(s)" if attachments else "")
+          + "]\n")
     start = datetime.now()
 
     try:
-        traj, traj_path = PipelineRunner(settings).run(contextual_brief)
+        traj, traj_path = PipelineRunner(settings).run(
+            contextual_brief, attachments=attachments or None,
+        )
     except Exception as e:
         print(f"  generation failed: {e}", file=sys.stderr)
         session.append_system(f"[error] {e}")
@@ -260,6 +277,8 @@ def _dispatch_slash(line: str, state: dict) -> bool:
         "tokens":  _cmd_tokens,
         "cost":    _cmd_tokens,
         "edit":    _cmd_edit,
+        "attach":  _cmd_attach,
+        "detach":  _cmd_detach,
         "export":  _cmd_export,
         "exit":    _cmd_exit,
         "quit":    _cmd_exit,
@@ -286,6 +305,8 @@ def _cmd_help(arg: str, state: dict) -> bool:
           :history              show message history
           :tokens / :cost       cumulative tokens + cost for this session
           :edit                 (stub) explains why natural-language edits are preferred
+          :attach <path>        queue a PDF / MD / image for the NEXT turn (v1.1 paper2any)
+          :detach               clear queued attachments
           :export [path]        copy artifacts + session to path (default: ~/Desktop/<id>)
           :exit / :quit / :q    exit (auto-saves)
 
@@ -417,6 +438,55 @@ def _cmd_edit(arg: str, state: dict) -> bool:
             move the stamp to the top-left corner
             darker palette, keep the mood but more dramatic contrast
     """).strip())
+    return True
+
+
+def _cmd_attach(arg: str, state: dict) -> bool:
+    """Queue a file for the next non-slash turn (v1.1 paper2any).
+
+    Planner sees an injected prologue "Attached files: [...]" and calls
+    `ingest_document` first; the extracted structure / figures drive the
+    DesignSpec. Attachments are cleared after the next turn runs.
+    """
+    session: ChatSession = state["session"]
+    if not arg:
+        if session.pending_attachments:
+            print("  queued for next turn:")
+            for p in session.pending_attachments:
+                print(f"    - {p}")
+        else:
+            print("  no attachments queued. :attach <path> to queue one.")
+        return True
+
+    fp = Path(arg).expanduser()
+    if not fp.is_absolute():
+        fp = fp.resolve()
+    if not fp.exists() or not fp.is_file():
+        print(f"  not found: {fp}")
+        return True
+    ext = fp.suffix.lower()
+    supported = {".pdf", ".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".webp"}
+    if ext not in supported:
+        print(f"  unsupported type {ext!r}. Supported: {', '.join(sorted(supported))}")
+        return True
+
+    session.pending_attachments.append(str(fp))
+    size_kb = fp.stat().st_size // 1024
+    print(f"  ✓ queued: {fp.name} ({size_kb} KB). "
+          f"Will be ingested on the next non-slash turn.")
+    save_session(session, state["sessions_dir"])
+    return True
+
+
+def _cmd_detach(arg: str, state: dict) -> bool:
+    session: ChatSession = state["session"]
+    if not session.pending_attachments:
+        print("  no attachments queued.")
+        return True
+    n = len(session.pending_attachments)
+    session.pending_attachments = []
+    save_session(session, state["sessions_dir"])
+    print(f"  cleared {n} queued attachment(s).")
     return True
 
 

@@ -14,6 +14,7 @@ from .fetch_brand_asset import fetch_brand_asset
 from .finalize import finalize
 from .generate_background import generate_background
 from .generate_image import generate_image
+from .ingest_document import ingest_document
 from .propose_design_spec import propose_design_spec
 from .render_text_layer import render_text_layer
 from .switch_artifact_type import switch_artifact_type
@@ -48,6 +49,41 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["type"],
+        },
+    },
+    {
+        "name": "ingest_document",
+        "description": (
+            "Read user-provided source files (PDF papers, markdown notes, or "
+            "image files) and extract a structured manifest the planner can map "
+            "to a DesignSpec. Call this FIRST when the brief prologue mentions "
+            "'Attached files:' — BEFORE propose_design_spec — so the returned "
+            "title / sections / figures drive the spec you write next. PDF "
+            "figures are extracted (via pymupdf page-render + Claude vision "
+            "bbox location) and PRE-REGISTERED in rendered_layers with stable "
+            "layer_ids — reference them as image children in your DesignSpec "
+            "with kind: \"image\" and the composite step hydrates src_path "
+            "automatically. Standalone .png/.jpg files get a passthrough "
+            "layer_id. Markdown ingestion returns raw text + any resolved "
+            "relative image refs. Returns ToolObservation; artifacts are the "
+            "extracted / copied image PNG paths."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Absolute or ~-prefixed paths to ingest. Supported "
+                        "extensions: .pdf (academic papers / reports, "
+                        "Anthropic native document vision), .md/.markdown/.txt "
+                        "(markdown or plain text, embedded image refs copied), "
+                        ".png/.jpg/.jpeg/.webp (single-image passthrough)."
+                    ),
+                },
+            },
+            "required": ["file_paths"],
         },
     },
     {
@@ -396,6 +432,7 @@ TOOL_SCHEMAS: list[dict] = [
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "switch_artifact_type": switch_artifact_type,
+    "ingest_document": ingest_document,
     "propose_design_spec": propose_design_spec,
     "generate_background": generate_background,
     "generate_image": generate_image,

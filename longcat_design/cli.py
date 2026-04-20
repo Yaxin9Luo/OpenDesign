@@ -54,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
         "brief",
         help="Design brief, e.g. '国宝回家 公益项目主视觉海报，竖版 3:4'",
     )
+    run_p.add_argument(
+        "--from-file",
+        metavar="PATH",
+        action="append",
+        default=[],
+        help=("Attach a source document to this brief (PDF / Markdown / "
+              "image). Repeatable. Planner will call `ingest_document` "
+              "on these files FIRST, then use the extracted structure "
+              "(title / sections / figures) to drive the DesignSpec."),
+    )
 
     # apply-edits (round-trip edited HTML)
     ae_p = subparsers.add_parser(
@@ -81,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_chat(resume_id=resume_id)
 
     if args.subcommand == "run":
-        return _run_oneshot(args.brief)
+        return _run_oneshot(args.brief, getattr(args, "from_file", []) or [])
 
     if args.subcommand == "apply-edits":
         return _run_apply_edits(args.html, args.out_dir)
@@ -90,18 +100,34 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
-def _run_oneshot(brief: str) -> int:
-    """Legacy one-shot mode — single brief → single Trajectory on disk."""
+def _run_oneshot(brief: str, from_file: list[str]) -> int:
+    """One-shot mode — single brief (+ optional attachments) → single Trajectory."""
+    # v1.1: resolve --from-file attachments into Path objects and validate early.
+    attachments: list[Path] = []
+    for fp_str in from_file:
+        p = Path(fp_str).expanduser().resolve()
+        if not p.exists():
+            print(f"  error: attachment not found: {p}", file=sys.stderr)
+            return 2
+        if not p.is_file():
+            print(f"  error: attachment not a file: {p}", file=sys.stderr)
+            return 2
+        attachments.append(p)
+
     settings = load_settings()
     runner = PipelineRunner(settings)
-    traj, traj_path = runner.run(brief)
+    traj, traj_path = runner.run(brief, attachments=attachments)
 
     print()
+    if attachments:
+        print(f"  Ingested:   {', '.join(str(p.name) for p in attachments)}")
     print(f"  Trajectory: {traj_path}")
     print(f"  PSD:        {traj.composition.psd_path}")
     print(f"  SVG:        {traj.composition.svg_path}")
     if traj.composition.html_path:
         print(f"  HTML:       {traj.composition.html_path}")
+    if traj.composition.pptx_path:
+        print(f"  PPTX:       {traj.composition.pptx_path}")
     print(f"  Preview:    {traj.composition.preview_path}")
     print(f"  Layers:     {len(traj.layer_graph)}  "
           f"|  Critiques: {len(traj.critique_loop)}  "
