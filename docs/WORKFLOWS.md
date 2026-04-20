@@ -263,6 +263,80 @@ print(f'metadata: {t[\"metadata\"]}')
 
 ---
 
+## Ingesting a paper (v1.1 paper2any — partial ship)
+
+Drop a source document into any run — planner calls `ingest_document` first, extracts structure + passthrough figures, then maps to the target artifact type.
+
+### CLI — one-shot
+
+```bash
+uv run python -m longcat_design.cli run \
+  --from-file ~/papers/longcat-next.pdf \
+  "基于附件的论文，设计一张 3:4 学术海报。包含：标题 + 作者 + abstract + method + results + 2-3 张原论文图表直接 passthrough。学术会议风格。"
+
+# repeatable — attach multiple files
+uv run python -m longcat_design.cli run \
+  --from-file paper.pdf --from-file brand-logo.png \
+  "landing page for this paper, claymorphism style, use the attached logo in the hero"
+```
+
+### Chat REPL
+
+```
+> :attach ~/papers/paper.pdf
+  ✓ queued: paper.pdf (17 MB). Will be ingested on the next non-slash turn.
+> :attach ~/photos/team.jpg
+  ✓ queued: team.jpg (2 MB). Will be ingested on the next non-slash turn.
+> 10-slide pitch deck from this paper, team photo on the thank-you slide
+```
+
+Attachments are cleared automatically after the next non-slash turn; use `:detach` to abort.
+
+### Supported inputs
+
+| Extension | Handling | Notes |
+|---|---|---|
+| `.pdf` | Anthropic native `document` content block (Sonnet 4.6 default) → manifest; pymupdf renders + crops figures | ≤ 80 pages, ≤ 24 MB per file. Larger → split or wait for v1.1.5 chunking. |
+| `.md` / `.markdown` / `.txt` | Raw text passthrough + `![alt](./image.png)` refs resolved + copied into `ctx.layers_dir` | Relative paths only; URLs / data: are skipped |
+| `.png` / `.jpg` / `.jpeg` / `.webp` | `shutil.copy2` into `ctx.layers_dir` + register as passthrough layer | Single-image bundle (logo, brand shot, reference photo) |
+
+### What the planner sees
+
+After `ingest_document` returns, the tool result summary + `ctx.state["ingested"]` contain:
+
+```json
+{
+  "file": "/abs/path/paper.pdf",
+  "type": "pdf",
+  "manifest": {
+    "title": "LongCat-Next: Lexicalizing Modalities as Discrete Tokens",
+    "authors": ["Meituan LongCat Team"],
+    "abstract": "…",
+    "sections": [{"idx": 1, "heading": "Introduction", "summary": "…", "key_points": […]}, …],
+    "figures": [{"idx": 1, "caption": "…", "page": 3, "layer_id": "ingest_fig_01"}, …],
+    "tables": […], "key_quotes": […]
+  },
+  "registered_layer_ids": ["ingest_fig_01", "ingest_fig_02", …]
+}
+```
+
+The figure `layer_id`s are **already registered** in `rendered_layers` with `kind: "image"` + `src_path` → the planner references them directly in `propose_design_spec.layer_graph` as image children with a poster-specific `bbox`. No separate `passthrough_image` call needed.
+
+### Tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `INGEST_MODEL` | `anthropic/claude-sonnet-4-6` (OpenRouter) / `claude-sonnet-4-6` (stock) | Override the structure-extraction + bbox-locator model (e.g. Opus for higher fidelity on visually complex papers) |
+| `INGEST_HTTP_TIMEOUT` | `600` (10 min) | Hard timeout per ingest Anthropic call — prevents silent hangs on big PDFs |
+
+### Known quirks (dogfood surfaced)
+
+- Big PDFs (17 MB+) on OpenRouter sometimes fail with SSL EOF after 2-3 min. Retry usually works; v1.1.5 will add explicit retry handling in the planner loop.
+- Claude occasionally emits `"figures": null` instead of `[]` for figure-light papers — coerced to empty list in `ingest_document._ingest_pdf`.
+- OpenRouter → Anthropic geo-403 ("model not available in your region") can hit mid-run when VPN routes shift. Switch planner model to Sonnet (`export PLANNER_MODEL=anthropic/claude-sonnet-4-6`) if the Opus route is blocked.
+
+---
+
 ## Editing artifacts
 
 ### Path A — in-browser edit toolbar + `apply-edits` (POSTER + LANDING) ✅

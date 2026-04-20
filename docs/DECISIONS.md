@@ -6,6 +6,29 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-20 — v1.1 paper2any: polymorphic `ingest_document` + Sonnet default + pymupdf figure cropping
+
+**Decision**: Ship v1.1 document ingestion as a **single polymorphic tool** (`ingest_document(file_paths: list[str])`) dispatching by file extension — not a family of sibling tools (`ingest_pdf` / `ingest_markdown` / `passthrough_image`). Use **Sonnet 4.6 by default** (via `settings.ingest_model`) for the PDF structure-extraction + bbox-locator calls, not Opus. Crop figures with **pymupdf** locally and passthrough the original pixels — do NOT re-generate paper figures via NBP. Register ingested figures in `ctx.state["rendered_layers"]` with stable `ingest_fig_NN` / `ingest_img_<sha8>` layer_ids so the planner can reference them as image children in `propose_design_spec.layer_graph` with NO `src_path` — composite hydrates automatically (same pattern as generate_image for landing/deck).
+
+**Alternatives considered**:
+1. **Three sibling tools**: `ingest_pdf`, `ingest_markdown`, `passthrough_image`. Rejected: planner prompt vocab would triple; all three share the same success envelope (produce layer_ids + return manifest summary); the extension dispatch is a 10-LOC switch inside one tool. One tool, one mental model.
+2. **Opus for structure extraction** (same as planner). Rejected: dogfood on a 43-page / 17 MB Longcat-Next paper showed Opus taking 28 min and timing out on OpenRouter. Sonnet 4.6 completes the same task in ~5 min at ~1/5 the cost with no degradation — "extract title/sections/figures from a PDF" is not a reasoning task.
+3. **Re-generate paper figures via NBP** for "stylistic consistency." Rejected: defeats the whole point of paper2poster for academic use. A research figure is a specific artifact (benchmark chart, architecture diagram); restylizing it via NBP breaks fidelity. Users who want stylized hero imagery call `generate_image` for NEW visuals the paper doesn't provide.
+4. **No figure extraction** — let Claude describe figures and call `generate_image` with the description. Simplest, but same fidelity loss as #3. Passthrough is the academic-poster killer feature.
+5. **pdf2image / pypdfium2 instead of pymupdf**. Rejected for now: pymupdf is mature, MIT-equivalent for runtime use (Artifex AGPL dual-licensed, but runtime-library consumers are fine), no system deps (vs pdf2image needing poppler). Revisit if we need to hard-ship under pure BSD/MIT — pypdfium2 has same API shape.
+
+**Rationale**: The polymorphic tool keeps the planner prompt tight (one tool description, one decision point — "do I have attached files?"). Sonnet for ingest is a 3-5× speedup + 5× cost saving vs Opus with no quality hit on extraction. pymupdf passthrough preserves research fidelity for the CVPR-style academic poster use case the paper2any North Star calls out. Hydration pattern is now a three-peat (landing + deck + poster all use it); refactoring into a shared helper is future hygiene, not a blocker.
+
+**Coupled decision — poster image layer support**: The poster composite path previously assumed every non-background layer was a `render_text_layer`-output (full-canvas transparent RGBA with glyphs cropped at bbox). Ingested image layers (native-sized PNG, `kind="image"`) broke that assumption. Added `_hydrate_poster_layer_bboxes` (copies bbox from spec.layer_graph onto rendered_layers records that lack one — ingested figures register with bbox=None) + new `elif kind == "image"` branches in `_write_psd` / `_write_svg` / `_write_preview` / `html_renderer.write_html` that resize the native-sized PNG to bbox dimensions. Symmetric to the landing+deck `<figure>` / picture-shape image paths.
+
+**Resilience choices captured during dogfood**: `manifest["figures"]` coerced from `None` → `[]` (Sonnet sometimes emits null for figure-light papers — setdefault is a no-op when key is present-with-None). Bbox-locator failures per-page fall back to full-page passthrough for that figure instead of killing the run. 10-min HTTP timeout on the ingest Anthropic client (env-overridable via `INGEST_HTTP_TIMEOUT`) — big PDFs shouldn't hang 20+ min silently.
+
+**Revisit when**: (a) `.docx` + `.pptx` ingestion required → adds `python-docx` dep, likely second dispatch path for Office XML (v1.2); (b) multi-paper fusion requested (currently `file_paths` accepts multiple but planner treats them as independent attachments) — would need a new `consolidate_documents` tool; (c) Sonnet 4.6 bbox quality drops on visually dense pages → switch to Opus via `INGEST_MODEL=anthropic/claude-opus-4.7`; (d) figure extraction quality issues → evaluate pypdfium2 / pdfplumber as pymupdf alternatives; (e) `paper2any.reuse_ingest` ships → ingest_document gains a "load from previous run_dir" fast path to skip re-ingestion on retries.
+
+**Branch / commit**: `dc93960` on `main` (FF-merged from `feat/training-data-capture`). 11 tools, smoke 16/16, real-paper paper2poster dogfood completed on 43-page Longcat-Next paper with 25 passthrough figures into a 20-layer 1536×2048 poster.
+
+---
+
 ## 2026-04-20 — Enable Claude extended thinking on Planner + Critic via `interleaved-thinking-2025-05-14` beta; trajectory schema v0 → v1
 
 **Decision**: Turn on Anthropic extended thinking for both `PlannerLoop` and `Critic`, with the `interleaved-thinking-2025-05-14` beta header so thinking blocks may also appear *between* tool calls. Capture every `thinking` / `redacted_thinking` content block into a new `AgentTraceStep(type="reasoning")` with the original `signature`. Default `budget_tokens=10000` per call, env-overridable via `PLANNER_THINKING_BUDGET` / `CRITIC_THINKING_BUDGET` / `ENABLE_INTERLEAVED_THINKING`. Also record `stop_reason` + `cache_read_input_tokens` + `cache_creation_input_tokens` per turn. Trajectory `metadata.version` bumps `v0` → `v1`; all new fields are optional for backward compat.

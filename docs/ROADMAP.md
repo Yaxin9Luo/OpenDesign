@@ -58,7 +58,17 @@ Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install
 
 ---
 
-## v1.1 — Document Ingestion (paper2any) ★ CORE
+## v1.1 — Document Ingestion (paper2any) ★ CORE · partial ship 2026-04-20
+
+**Partial ship** (`dc93960`, 2026-04-20): `ingest_document` tool lands with PDF + MD + image dispatch; `--from-file` / `:attach` entry wired; poster-mode image layer support patched in. Sonnet-default ingest model + 10-min HTTP timeout + graceful bbox-locator fallback. Dogfood on real 43-page / 17 MB Longcat-Next paper: 25 figures cropped via pymupdf + Claude vision, 20-layer poster composited end-to-end (PSD / SVG / HTML / preview). Smoke **16/16** green.
+
+**Still pending v1.1 tag**:
+- Poster critique-revise loop hardening (planner sometimes mis-calls `ingest_document` on critic JSON → error is harmless but noisy; needs prompt clarification).
+- `.docx` / `.pptx` ingestion (requires `python-docx`).
+- Multi-paper fusion + reuse-ingested-figures across runs (would save $2 + 5 min per retry).
+- Full paper → landing + deck dogfood (only paper → poster verified so far).
+
+---
 
 **North Star.** Today a brief is a single text line. The ideal LongcatDesign: user drops in a paper / PDF / docx / markdown / image bundle → we generate the matching poster, landing page, or slide deck → user iterates through the in-HTML edit toolbar and `apply-edits` round-trip. This is the **paper2poster / paper2page / paper2deck** surface. Not a side feature — *this is the product's end state*. v1.0 ships the single-brief story; v1.1 closes the loop.
 

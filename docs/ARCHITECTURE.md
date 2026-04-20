@@ -2,7 +2,7 @@
 
 ## One-paragraph overview
 
-A `ChatREPL` (in [`longcat_design/chat.py`](../longcat_design/chat.py)) manages the outer conversation loop; each non-slash user message invokes a `PipelineRunner` (in [`longcat_design/runner.py`](../longcat_design/runner.py)) which bootstraps a per-run directory and a `ToolContext`, then hands control to a `PlannerLoop` (in [`longcat_design/planner.py`](../longcat_design/planner.py)) driving Claude Opus 4.7 through a handwritten tool-use loop (no LangGraph / CrewAI). The planner calls **10 tools** — `switch_artifact_type` → `propose_design_spec` → (`generate_background` | `generate_image`)× → `render_text_layer` × N (poster only) → `edit_layer` (critic-revise loops) → `fetch_brand_asset` (v1 stub) → `composite` → `critique` → `finalize`. The `composite` tool dispatches on `spec.artifact_type`: **POSTER** → PSD + SVG + HTML + preview.png; **LANDING** → single HTML + preview.png with 6 bundled design systems + inline NBP imagery; **DECK** → `deck.pptx` (native TextFrames) + per-slide PNG thumbs + grid preview.png. Every assistant turn and every tool result is appended to a structured `agent_trace`. When the planner calls `finalize`, the runner serializes the `Trajectory` (brief + spec + layer_graph + trace + critique loop + composition artifacts + metadata) to `out/trajectories/<run_id>.json`; the chat loop appends a lightweight `TrajectoryRef` to the `ChatSession` and persists that to `sessions/<id>.json`. For poster + landing, a standalone `apply-edits` CLI round-trips user-edited HTML back into a new run (PSD / SVG / HTML regenerated from the edited HTML's `data-*` attrs). For deck, editability lives directly in PowerPoint / Keynote because TextFrames are live.
+A `ChatREPL` (in [`longcat_design/chat.py`](../longcat_design/chat.py)) manages the outer conversation loop; each non-slash user message invokes a `PipelineRunner` (in [`longcat_design/runner.py`](../longcat_design/runner.py)) which bootstraps a per-run directory and a `ToolContext`, then hands control to a `PlannerLoop` (in [`longcat_design/planner.py`](../longcat_design/planner.py)) driving Claude Opus 4.7 through a handwritten tool-use loop (no LangGraph / CrewAI). When the brief is prefixed with an `Attached files:` block (from CLI `--from-file` or chat `:attach`), the planner calls `ingest_document` **first** to extract a PDF / MD / image's structure + passthrough figures. Then the full pipeline runs: `switch_artifact_type` → `propose_design_spec` → (`generate_background` | `generate_image`)× → `render_text_layer` × N (poster only) → `edit_layer` (critic-revise loops) → `fetch_brand_asset` (v1 stub) → `composite` → `critique` → `finalize`. **11 tools wired** as of 2026-04-20 (v1.1 `ingest_document` added). The `composite` tool dispatches on `spec.artifact_type`: **POSTER** → PSD + SVG + HTML + preview.png; **LANDING** → single HTML + preview.png with 6 bundled design systems + inline NBP imagery; **DECK** → `deck.pptx` (native TextFrames) + per-slide PNG thumbs + grid preview.png. Every assistant turn and every tool result is appended to a structured `agent_trace`. When the planner calls `finalize`, the runner serializes the `Trajectory` (brief + spec + layer_graph + trace + critique loop + composition artifacts + metadata) to `out/trajectories/<run_id>.json`; the chat loop appends a lightweight `TrajectoryRef` to the `ChatSession` and persists that to `sessions/<id>.json`. For poster + landing, a standalone `apply-edits` CLI round-trips user-edited HTML back into a new run (PSD / SVG / HTML regenerated from the edited HTML's `data-*` attrs). For deck, editability lives directly in PowerPoint / Keynote because TextFrames are live.
 
 ## Top-level data flow
 
@@ -31,9 +31,13 @@ A `ChatREPL` (in [`longcat_design/chat.py`](../longcat_design/chat.py)) manages 
                │ tool_use blocks
                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  TOOLS  (action space — 10 tools, all in longcat_design/tools/)               │
+│  TOOLS  (action space — 11 tools, all in longcat_design/tools/)               │
 │                                                                              │
 │  switch_artifact_type → poster/deck/landing declaration → ctx.state           │
+│  ingest_document      → v1.1 paper2any: PDF (Anthropic native document) /    │
+│                         MD / image → structured manifest + crops figures via  │
+│                         pymupdf + Claude-vision bbox location; registers     │
+│                         passthrough layers in rendered_layers for planner    │
 │  propose_design_spec  → validate planner JSON → ctx.state["design_spec"]      │
 │  generate_background  → Gemini 3 Pro Image (NBP) → full-canvas text-free PNG  │
 │  generate_image       → NBP inline image (landing + deck); no safe_zones      │
@@ -171,8 +175,8 @@ Design-Agent/                      # directory name preserved from v0 for stabil
 │   ├── apply_edits.py             # HTML → new run round-trip (poster + landing) — v1.0 #6.5
 │   ├── smoke.py                   # `python -m longcat_design.smoke` (13/13 no-API checks)
 │   │
-│   ├── tools/                     # the action space (10 tools)
-│   │   ├── __init__.py            # TOOL_SCHEMAS + TOOL_HANDLERS registry (10 tools)
+│   ├── tools/                     # the action space (11 tools)
+│   │   ├── __init__.py            # TOOL_SCHEMAS + TOOL_HANDLERS registry (11 tools)
 │   │   ├── _contract.py           # ToolContext + obs_ok/obs_error helpers
 │   │   ├── _font_embed.py         # shared WOFF2 subset + base64 @font-face (SVG + HTML)
 │   │   ├── _deck_preview.py       # Pillow grid compositor for deck main preview
@@ -229,11 +233,11 @@ The chat REPL (`chat.py`) sits above `PipelineRunner`:
 4. `_trajectory_to_ref(traj)` creates a `TrajectoryRef`. Appends to `session.trajectories`. Appends user + assistant `ChatMessage` to `session.message_history`. Saves session JSON.
 5. `_display_turn_result()` prints artifact paths + session totals.
 
-The chat layer does NOT touch tool internals or the planner loop — it just wraps per-turn execution. `PipelineRunner`, `PlannerLoop`, `Critic`, and the 10 tools are unchanged by chat mode.
+The chat layer does NOT touch tool internals or the planner loop — it just wraps per-turn execution. `PipelineRunner`, `PlannerLoop`, `Critic`, and the 11 tools are unchanged by chat mode.
 
 Legacy one-shot `longcat-design run "<brief>"` bypasses `chat.py` entirely and invokes `PipelineRunner.run()` directly. Backward compat with the v0 CLI behavior, minus the outer ChatSession.
 
-## The 10 tools (action space)
+## The 11 tools (action space)
 
 Every tool follows the same signature: `fn(args: dict, *, ctx: ToolContext) -> ToolObservation`. The `ToolObservation` is a Pydantic model with fields `{status, summary, next_actions, artifacts}` — see [DATA-CONTRACT.md](DATA-CONTRACT.md). Tools never raise to the planner; they always return an observation. Exceptions caught in `planner._invoke` become `status: "error"` observations.
 
@@ -304,7 +308,7 @@ If `verdict: "revise"` and iter < max, the planner is expected to adjust layers 
 | # | Check | What it proves |
 |---|---|---|
 | 1 | imports | all modules import (incl. chat, session, edit_layer) |
-| 2 | tool registry | 10 tools with valid JSON Schema; `switch_artifact_type` first |
+| 2 | tool registry | 11 tools with valid JSON Schema; `switch_artifact_type` first |
 | 3 | pydantic roundtrip | `Trajectory` + nested models serialize/deserialize losslessly |
 | 4 | fonts | both Noto fonts load as real OTF |
 | 5 | composite (poster) | PSD + SVG + HTML + preview.png from stub bg + 2 text layers |

@@ -4,6 +4,60 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-20 — Big PDFs via OpenRouter → Anthropic: 20+ min silent hangs or SSL EOF mid-stream
+
+**Symptom**: `ingest_document` on a >15 MB / >30 page PDF via OpenRouter either (a) hangs 20-28 min before timing out with `anthropic.APIConnectionError: Connection error`, or (b) completes after 4-5 min but the connection drops with `httpcore.ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING]` partway through the response stream.
+
+**Root cause**: OpenRouter proxies the 17 MB base64-encoded `document` content block to Anthropic; the HTTP connection stays open for the full Claude processing time (extended thinking + PDF reading can take 3-10 min on a 43-page paper). Some intermediate hop (Cloudflare / OpenRouter LB / Anthropic frontend) drops long-lived connections. Opus is ~3-5× slower than Sonnet for the same "read this PDF" task, compounding the timeout risk.
+
+**Fix** (partially mitigated):
+- `ingest_document` now uses **Sonnet 4.6 by default** via `settings.ingest_model`, cutting wall time from ~28 min (Opus) to ~5 min (Sonnet). Override via `INGEST_MODEL=anthropic/claude-opus-4.7` for complex visual papers.
+- Explicit 10-min HTTP timeout on the ingest client (`settings.ingest_http_timeout`) — fails fast with a clear error instead of silent 20-min hang. Override via `INGEST_HTTP_TIMEOUT=<seconds>`.
+- `max_retries=1` on the ingest client so a transient SSL blip doesn't trigger multiple $2 retries.
+
+**Full fix pending v1.1.5**: streaming ingest response parsing (tolerates mid-stream blips), auto-chunking for >50-page PDFs.
+
+**Detection**:
+- stderr shows `ingest.pdf.structure.request` with no matching `ingest.pdf.structure.response` for 5+ minutes.
+- Traceback ends in `anthropic.APIConnectionError` or `httpcore.ConnectError [SSL: UNEXPECTED_EOF_WHILE_READING]`.
+- Retrying the same run on the same paper often works on the second attempt.
+
+**Workaround if persistent**: `export ANTHROPIC_API_KEY=<stock key>` + unset `OPENROUTER_API_KEY` to bypass OpenRouter's intermediary entirely. Or split the PDF via `pdftk paper.pdf cat 1-30 output first-half.pdf` and ingest halves separately.
+
+---
+
+## 2026-04-20 — Anthropic returns `{"figures": null}` instead of `[]` for figure-light papers → `list(None)` crash
+
+**Symptom**: `ingest_document` returns `tool.exception: 'NoneType' object is not iterable` AFTER a successful `ingest.pdf.structure.response` log (indicating the Anthropic call completed). The 258-second Sonnet call wasn't wasted — the crash happens in manifest post-processing.
+
+**Root cause**: Claude can emit JSON like `{"figures": null, "sections": [...]}` when a paper has no visual figures (rare for academic papers, more common for marketing one-pagers). `manifest.setdefault("figures", [])` is a **no-op when the key is already present with a `None` value** — it doesn't replace None with the default. Downstream `list(manifest["figures"])` then hits `TypeError: 'NoneType' object is not iterable`.
+
+**Fix** (v1.1 `dc93960`): replaced `setdefault` with an explicit coercion loop:
+
+```python
+for list_key in ("sections", "figures", "tables", "authors", "key_quotes"):
+    if not isinstance(manifest.get(list_key), list):
+        manifest[list_key] = []
+```
+
+**Detection**: `tool.exception` with `'NoneType' object is not iterable` or `'NoneType' object is not subscriptable` logged *after* a successful `ingest.pdf.structure.response`.
+
+---
+
+## 2026-04-20 — Ingested image layers have `bbox: None` → poster composite `NoneType is not subscriptable` in `_write_psd`
+
+**Symptom**: `ingest_document` succeeds, `propose_design_spec` succeeds, `composite` fails with `PSD write failed: 'NoneType' object is not subscriptable`. Planner keeps retrying `propose_design_spec → composite` and loops until 30-turn cap.
+
+**Root cause**: `ingest_document` registers figures in `ctx.state["rendered_layers"]` with `bbox: None` because ingestion has no intrinsic placement — the planner decides where to put each figure on the poster canvas via `spec.layer_graph`. But the poster composite path reads from `rendered_layers` (not `spec.layer_graph`) and does `bbox["x"]` on every layer.
+
+**Fix** (v1.1 `dc93960`): new `_hydrate_poster_layer_bboxes(rendered, spec)` helper in `composite.py` — companion to `_hydrate_landing_image_srcs` / `_hydrate_deck_image_srcs`. Copies bbox from `spec.layer_graph` onto `rendered_layers` records that lack one, matching by `layer_id`. Called in the poster composite path before `sorted_layers` is built.
+
+**Coupled poster fix**: `_write_psd`, `_write_svg`, `_write_preview`, and `html_renderer.write_html` previously handled only `kind in (background, text, brand_asset)` — `kind == "image"` was silently skipped with a comment. New branches resize the native-sized ingested PNG to bbox dimensions and place at `(bbox.x, bbox.y)`. Poster SVG now emits `<image>` with base64 href; poster HTML emits `<div class="layer image">` + `<img>`.
+
+**Detection**: `composite` returns `PSD write failed: 'NoneType' object is not subscriptable` AND the planner's preceding `propose_design_spec` included `kind: "image"` children with `layer_id` starting with `ingest_fig_` or `ingest_img_`.
+
+---
+
 ## 2026-04-20 — Planner `max_tokens=4096` silently truncates large DesignSpec JSON → 30-turn spin without finalize
 
 **Symptom**: Dogfooding a 10-slide deck (or 30+ layer poster, long landing) causes the runner to exit with `RuntimeError: planner exited without proposing a DesignSpec` after exactly `max_planner_turns` (30) planner.turn events. Logs show `propose_design_spec` never appearing in `tool.call` events even though the planner clearly intends to call it. Same brief at smaller complexity (3 slides) works instantly.

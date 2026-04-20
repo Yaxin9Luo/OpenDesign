@@ -4,9 +4,9 @@
 
 The open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) and similar closed SaaS design tools. From the [Longcat](https://github.com/) ecosystem.
 
-> **Current status** (2026-04-20): v1.0 MVP **9.75 of 11 items shipped** — full **3-artifact coverage** complete (poster + landing + deck), 10 tools wired, smoke 13/13 green. Landing + deck pipelines both ship with **NBP (Gemini 3 Pro Image Preview) imagery** so output is commercial-grade, not wireframe. Remaining to v1.0 tag: README screenshots + demo video + smoke HTML/PPTX extension. See [docs/V1-MVP-PLAN.md](docs/V1-MVP-PLAN.md) for the status table.
+> **Current status** (2026-04-20): v1.0 MVP **9.75 of 11 items shipped** — full **3-artifact coverage** complete (poster + landing + deck), **11 tools wired** (v1.1 `ingest_document` just added), smoke **16/16 green**. Landing + deck pipelines ship with **NBP (Gemini 3 Pro Image Preview) imagery** so output is commercial-grade, not wireframe. v1.0 launch blockers: README screenshots + demo video + smoke HTML/PPTX extension.
 >
-> **North Star (v1.1)**: `paper2any` — drop in a paper / PDF / docx, get a matching poster / landing / deck. See [docs/ROADMAP.md § v1.1](docs/ROADMAP.md#v11--document-ingestion-paper2any--core).
+> **v1.1 paper2any — partial ship (2026-04-20)**: `ingest_document` tool live; CLI `--from-file` + chat `:attach` entry wired; poster-mode image layers + bbox hydration patches; Sonnet-default ingest model + 10-min timeout guardrails. Verified: 43-page / 17 MB Longcat-Next paper ingests cleanly on Sonnet (~5 min, 25 figures cropped via pymupdf + Claude vision). Full paper → poster/landing/deck pipeline in active dogfood. See [docs/ROADMAP.md § v1.1](docs/ROADMAP.md#v11--document-ingestion-paper2any--core).
 
 ---
 
@@ -66,7 +66,7 @@ cp .env.example .env       # fill in GEMINI_API_KEY + (OPENROUTER_API_KEY OR ANT
 
 > **macOS note:** if `uv run` fails with `ModuleNotFoundError: longcat_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
-### Smoke test (no API, ~5 sec, 13 checks)
+### Smoke test (no API, ~5 sec, 16 checks)
 
 ```bash
 uv run python -m longcat_design.smoke
@@ -101,6 +101,27 @@ uv run python -m longcat_design.cli run "10 张投资者 pitch deck：奶茶品�
 
 Outputs land in `out/runs/<run_id>/` (per-artifact — `poster.pptx` + `slides/` + `preview.png` for deck; `index.html` + `preview.png` for landing; `poster.psd/svg/html` + `layers/` for poster). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
 
+### Paper → poster / landing / deck (v1.1 paper2any, partial ship)
+
+Drop a paper / markdown / image into any run — planner calls `ingest_document` first, passes real figures through from the PDF:
+
+```bash
+# One-shot CLI
+uv run python -m longcat_design.cli run \
+  --from-file ~/papers/longcat-next.pdf \
+  "基于附件的 Longcat-Next 论文，设计一张 3:4 学术海报。包含：标题 + 作者 + abstract 核心观点 + method/results + 2-3 张原论文图表直接 passthrough。学术会议风格。"
+# (optional — repeat --from-file for logo / brand kit / reference shots)
+
+# Or in chat
+uv run python -m longcat_design.cli
+> :attach ~/papers/longcat-next.pdf
+  ✓ queued: longcat-next.pdf (17 MB). Will be ingested on the next non-slash turn.
+> 生成一张 claymorphism 风格的 landing，把 abstract 当 hero，method 和 results 当特性卡
+  [generating — anthropic/claude-opus-4.7, may take 1-5 min, ingesting 1 file(s)]
+```
+
+Supported inputs: **PDF** (via Anthropic native document block + pymupdf figure cropping), **Markdown / TXT** (with embedded `![](image.png)` refs resolved), **PNG / JPG** (single-image passthrough). `.docx` + multi-paper fusion are v1.2+. Details in [docs/WORKFLOWS.md § Ingesting a paper](docs/WORKFLOWS.md#ingesting-a-paper) once published.
+
 ### Round-trip edit (poster + landing)
 
 Every poster + landing HTML comes with an embedded edit toolbar. Open the `.html` in a browser, click any text layer, edit inline (font / size / color / content / drag-to-move), click **Save** → download the edited HTML. Then:
@@ -117,7 +138,7 @@ Deck edits happen in PowerPoint / Keynote / Google Slides directly — the `.ppt
 
 ## Architecture in one breath
 
-A **chat REPL** loop takes each user turn; a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** (no LangGraph / CrewAI) over **10 tools**: `switch_artifact_type` → `propose_design_spec` → `generate_background` / `generate_image` (both via Gemini 3 Pro Image Preview / NBP) → `render_text_layer` → `edit_layer` → `fetch_brand_asset` → `composite` (dispatches on artifact type to PSD+SVG+HTML for poster · HTML+inline-imagery for landing · PPTX+per-slide-PNGs for deck) → `critique` (vision for poster, text-only for landing + deck) → `finalize`. Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
+A **chat REPL** loop takes each user turn; a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** (no LangGraph / CrewAI) over **11 tools**: `switch_artifact_type` → `ingest_document` (optional — paper2any) → `propose_design_spec` → `generate_background` / `generate_image` (both via Gemini 3 Pro Image Preview / NBP) → `render_text_layer` → `edit_layer` → `fetch_brand_asset` → `composite` (dispatches on artifact type to PSD+SVG+HTML for poster · HTML+inline-imagery for landing · PPTX+per-slide-PNGs for deck) → `critique` (vision for poster, text-only for landing + deck) → `finalize`. Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
 
 Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

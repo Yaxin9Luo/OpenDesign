@@ -45,6 +45,8 @@ Numbered in recommended execution order. Each item is one focused working sessio
 
 **Effort done**: ~24.5 h (items 1-6.5 + 7 + 8 + 8.5 + 8.5-fix + 8.75 — full 3-artifact coverage + landing track commercialization-ready). **Remaining**: ~1 h coding (item 11 PPTX/HTML smoke polish — #7 already ships a 13/13 deck smoke check) + ~4 h docs/video (items 9, 10). **9.75 / 11 shipped** as of 2026-04-20.
 
+**Post-v1.0 progress**: v1.1 paper2any partially shipped on 2026-04-20 (commit `dc93960`) — `ingest_document` tool + `--from-file` / `:attach` entry + poster-mode image layer support + Sonnet-default ingest model. 11 tools wired, smoke **16/16** green. Verified on real 43-page / 17 MB Longcat-Next paper (ingest 5 min, 25 figures passthrough). Full paper → 3-artifact pipeline in active dogfood. See [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core) for remaining scope.
+
 ---
 
 ## Detailed dependencies (cross-item)
