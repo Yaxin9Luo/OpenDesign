@@ -58,15 +58,71 @@ Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install
 
 ---
 
-## v1.1 — Document Ingestion (paper2any) ★ CORE · partial ship 2026-04-20
+## v1.1 — paper2any foundation ✅ SHIPPED 2026-04-20 (commit `dc93960`)
 
-**Partial ship** (`dc93960`, 2026-04-20): `ingest_document` tool lands with PDF + MD + image dispatch; `--from-file` / `:attach` entry wired; poster-mode image layer support patched in. Sonnet-default ingest model + 10-min HTTP timeout + graceful bbox-locator fallback. Dogfood on real 43-page / 17 MB Longcat-Next paper: 25 figures cropped via pymupdf + Claude vision, 20-layer poster composited end-to-end (PSD / SVG / HTML / preview). Smoke **16/16** green.
+- `ingest_document(file_paths: list[str])` tool: dispatches on `.pdf` / `.md,.txt` / `.png,.jpg,.jpeg,.webp`.
+- CLI `--from-file <path>` and chat `:attach <path>` entry points.
+- Poster-mode `kind="image"` layer + bbox hydration so ingested PNGs composite into PSD / SVG / HTML.
+- Sonnet-4.6-default ingest model + 10-min HTTP timeout + graceful bbox-locator fallback.
+- 43-page / 17 MB Longcat-Next paper verified end-to-end.
 
-**Still pending v1.1 tag**:
-- Poster critique-revise loop hardening (planner sometimes mis-calls `ingest_document` on critic JSON → error is harmless but noisy; needs prompt clarification).
-- `.docx` / `.pptx` ingestion (requires `python-docx`).
-- Multi-paper fusion + reuse-ingested-figures across runs (would save $2 + 5 min per retry).
-- Full paper → landing + deck dogfood (only paper → poster verified so far).
+## v1.2 — paper2any production ★ ✅ SHIPPED 2026-04-21
+
+Four commits over one work session closed the remaining gaps between "ingest runs" and "output worth shipping":
+
+### v1.2.0 — pymupdf-native figure extraction + Qwen-VL-Max ingest (commit `ce50f2a`)
+
+- **Dropped the Claude-Sonnet vision locator.** It produced half-page screenshots, clipped diagrams, and hallucinated "figures" on text-only pages. Replaced with pymupdf native:
+  - `doc.extract_image(xref)` for embedded rasters → native-resolution PNGs (e.g. Fig. 1 histograms 1890×1211 instead of the old pipeline's text-contaminated 1454×820).
+  - `page.get_drawings()` + proximity clustering + 300 dpi render for vector diagrams.
+  - Zero LLM guessing for localization.
+- **Default ingest_model = `qwen/qwen-vl-max`** via OpenRouter (~5× cheaper than Sonnet 4.6 for "read paper + match captions"). VLM only handles structure extraction + per-figure caption matching + fake-figure filtering (logos / page headers / equation renders).
+- New `longcat_design/util/vlm.py` dispatches between Anthropic SDK (Claude path) and OpenAI SDK (Qwen path) by model id. Planner / critic stay 100 % on Anthropic SDK so tool_use protocol is untouched.
+- `runner._materialize_layer_graph` skips layers with `bbox=None` so planner-unplaced ingest candidates don't crash trajectory serialization.
+
+### v1.2.1 — `kind="table"` layer + native table rendering (commit `da664a5`)
+
+- **New LayerKind `"table"`** with structured `rows / headers / caption / col_highlight_rule` fields on `LayerNode`. Ingest registers one `ingest_table_NN` layer per VLM-validated data table.
+- **Renderers**:
+  - **Deck** → native `slide.shapes.add_table(…)` — live editable PPTX table with column-width autoscale, font-size autoscale, winner-cell bolding.
+  - **Landing** → real `<table>` with header styling + zebra rows + `.ld-table-winner` class.
+  - **Poster / PSD / SVG** → PIL-drawn PNG via `util/table_png.render_table_png` with deep-green winner text (bundled Noto SC is bold-only so color carries the highlight).
+- Extraction: `util/pdf.extract_table_candidates` uses `page.find_tables()` for localization only (cell splits unreliable); VLM reads the bbox image + pymupdf's raw-cell guess and returns clean rows + `col_highlight_rule: ["", "max", "max", "min", …]`.
+- Refinements: `dedup_tables_against_figures` (drop candidates ≥ 70 % contained in vector-figure bboxes), CJK-capable PIL font loader, multi-row-header flattening prompt ("Parent / Child" pattern).
+
+### v1.2.2 — poster visual-density rules (commit `a08bbb9`)
+
+Fixed the "1 figure + 3 columns of body text = research-paper PDF printed as PNG" anti-pattern.
+
+- **Ingest tool_result summary** now lists top-20 figure candidates ranked by `(has_caption, is_vector, min_side_px, -page)` with `(page, size, strategy, caption)` per figure. Tables listed alongside with shape + caption. Planner can pick deliberately instead of referencing `fig_01` and moving on.
+- **Planner prompt** gains "Poster workflow (paper2poster) — visual-density rules" section: figure-count floor (≥4 when ≥5 available), figure diversity (system diagram + qualitative + quantitative), min 600 px shorter side per figure, text density caps (≤30 words per body layer, ≤8 words per title).
+- **Critic rubric** rebalanced to add `visual_density` criterion (weight 0.20). Penalties: −0.40 if ≤1 figure placed despite ≥3 available (blocker), −0.25 if <3 placed when ≥5 available, −0.15 if registered table missing, −0.20 if image-area below 45 % of canvas, −0.15 if table height < 400 px.
+
+### v1.2.3 — composite aspect-preserve (commit `349c899`)
+
+When the planner still under-specs a bbox, the composite layer now degrades gracefully instead of squishing:
+
+- **Images**: contain-fit / letterbox via `_aspect_fit_contain` — matches HTML `object-fit: contain` behavior across PSD / SVG / preview paths. SVG gains `preserveAspectRatio="xMidYMid meet"`.
+- **Tables**: re-rendered at the planner's exact bbox dims during composite (`render_table_png(width_px=bw, max_height_px=bh, …)`), so font autoscale + row-truncation fires at the actual size. A 14-row table in a 900×110 strip used to LANCZOS-squish to 13 px per row; now the PNG is regenerated at bbox and rows drop until the remaining fit at legible font.
+- New `composite.bbox_aspect_warning` diagnostic log fires when bbox aspect ≥ 2× source aspect (for planner-prompt tuning data).
+
+### v1.2 end-to-end verification (longcat-next-2026.pdf, 43 pages, 17 MB)
+
+| artifact | v4 baseline | v7 with all v1.2.x fixes |
+|---|---|---|
+| **poster** | 1 figure, critique 0.62, ~12 % image area | 5 figs + 1 table, critique 0.86, ~58 % image area |
+| **landing** | — | 1 table + 3 section figures, critique pass 0.92 |
+| **deck** | — | 12 slides, 15×12 editable PPTX table with 8 bolded winner cells, pass 0.88 |
+
+Smoke **16/16** green. Tool count unchanged at 11.
+
+### Remaining paper2any gaps (parked for v1.3+)
+
+- `.docx` / `.pptx` ingestion (needs `python-docx` / `python-pptx` readers).
+- Multi-paper fusion (cross-paper figure reuse + ingest cache).
+- Figure↔text cross-reference in poster body ("as shown in Fig. 2" auto-inserted).
+- Poster title/subtitle overlap bug (text-layer layout, unrelated to ingest).
+- Scanned-PDF OCR fallback (currently raises `ScannedPdfError`).
 
 ---
 
@@ -98,7 +154,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.2 — Landing-page refinement: interactive HTML
+## v1.3 — Landing-page refinement: interactive HTML
 
 **Why**: v1.0 HTML output is static. Real landing pages want CTAs, nav sections, scroll anchors — interactive primitives.
 
@@ -110,7 +166,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.3 — Real PSD type layer
+## v1.4 — Real PSD type layer
 
 **Why**: Designer UX improvement. v1.0 PSD has named pixel layers (designer can move/resize/reorder but can't double-click to edit text). Real PSD type layers close the gap.
 
@@ -123,7 +179,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.4 — Brand Kit ingestion
+## v1.5 — Brand Kit ingestion
 
 **Why**: Claude Design's big UX win is "upload your brand PDF, every artifact respects your palette/typography/imagery." We need parity for teams with existing brand guidelines.
 
@@ -136,7 +192,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.5 — Skills (reusable design templates)
+## v1.6 — Skills (reusable design templates)
 
 **Why**: After successful runs, the (brief → trajectory) pair is a template. Lovart calls these "Skills" and they're a strong retention feature.
 
@@ -147,7 +203,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.6 — Layout balancer (post-processor)
+## v1.7 — Layout balancer (post-processor)
 
 **Why**: Inspired by Paper2Any's `balancer_agent`. Claude sometimes produces layouts with subtle overlaps or spacing issues. A deterministic post-processor pass catches the obvious ones.
 
@@ -155,7 +211,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.7 — Local model support
+## v1.8 — Local model support
 
 **Why**: Full self-hosting story. Some teams can't send API requests to external providers.
 

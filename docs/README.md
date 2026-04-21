@@ -2,9 +2,15 @@
 
 This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
 
-> **Status (2026-04-20)**: v1.0 MVP **9.75 of 11 items shipped**. Full 3-artifact coverage complete (poster + landing + deck). 10 tools wired, smoke 13/13 green. Remaining to v1.0 tag: README screenshots / demo video / smoke HTML+PPTX regression extension. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for the status table.
+> **Status (2026-04-21)**: **v1.2 paper2any shipped**. Full 3-artifact coverage (poster + landing + deck) × full paper → artifact pipeline. 11 tools wired, smoke 16/16 green.
 >
-> **v1.1 North Star**: `paper2any` — drop in a paper / PDF / docx, get a matching poster / landing / deck. See [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core).
+> **v1.2 milestones shipped this cycle**:
+> - [ce50f2a](https://github.com/Yaxin9Luo/OpenDesign/commit/ce50f2a) — pymupdf-native figure extraction + Qwen-VL-Max ingest (replaces Claude-Sonnet vision locator).
+> - [da664a5](https://github.com/Yaxin9Luo/OpenDesign/commit/da664a5) — `kind="table"` LayerKind → native PPTX `add_table` / HTML `<table>` / PIL-drawn PNG with bold-winner column highlights.
+> - [a08bbb9](https://github.com/Yaxin9Luo/OpenDesign/commit/a08bbb9) — poster visual-density rules in planner + critic prompts (≥4 figures for paper posters; text-wall layouts flagged as blocker).
+> - [349c899](https://github.com/Yaxin9Luo/OpenDesign/commit/349c899) — composite aspect-preserve (contain-fit for images, re-render-at-bbox for tables).
+>
+> End-to-end verification on the 43-page Longcat-Next paper: poster critique **0.62 → 0.86**, landing **pass 0.92**, deck **pass 0.88** with 8 bold-winner cells on a 15×12 editable PPTX table. See [ROADMAP.md § Shipped](ROADMAP.md#shipped).
 
 ---
 
@@ -44,12 +50,12 @@ Positioned as the open-source alternative to [Claude Design](https://www.anthrop
 | File | Purpose | When to read |
 |---|---|---|
 | [VISION.md](VISION.md) | Product pitch (LongcatDesign as OSS Claude Design alt); paper2any North Star; differentiation | First read; any time scope is being debated |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, files, data flow, the 10 tools, composite dispatch per artifact type, two LLM backends | Before touching code |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, files, data flow, the 11 tools, composite dispatch per artifact type, dual-SDK LLM routing (Anthropic + OpenAI for Qwen) | Before touching code |
 | [V1-MVP-PLAN.md](V1-MVP-PLAN.md) | Concrete shipping plan for v1.0 MVP launch (work breakdown + estimates + per-item status) | Before starting implementation |
 | [DATA-CONTRACT.md](DATA-CONTRACT.md) | Session-state / trajectory schema (internal detail post-pivot) | Before touching `schema.py` |
 | [WORKFLOWS.md](WORKFLOWS.md) | Run pipeline, edit artifacts, smoke test, extending tools, per-artifact-type workflows | Day-to-day reference |
 | [DECISIONS.md](DECISIONS.md) | Design decisions log (pivot, no LangGraph, OpenRouter, deck schema, critic branches, etc.) | Before reopening a settled question |
-| [ROADMAP.md](ROADMAP.md) | v1.0 MVP + v1.1 paper2any (North Star) + v1.x planned versions | Planning next session of work |
+| [ROADMAP.md](ROADMAP.md) | v1.0 MVP + v1.1 / v1.2 paper2any (shipped) + v1.3+ planned versions | Planning next session of work |
 | [GOTCHAS.md](GOTCHAS.md) | Runtime quirks + fixes (dotenv, Gemini PNG/JPEG, OpenRouter base_url, macOS UF_HIDDEN .pth, planner max_tokens, PPTX CJK fonts) | Any time something behaves unexpectedly |
 | [COMPETITORS.md](COMPETITORS.md) | Audited related projects (Paper2Any, Claude Design, Lovart); differentiation analysis | When asked "but what about X?" / planning a feature already shipped elsewhere |
 

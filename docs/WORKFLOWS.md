@@ -263,9 +263,9 @@ print(f'metadata: {t[\"metadata\"]}')
 
 ---
 
-## Ingesting a paper (v1.1 paper2any — partial ship)
+## Paper → poster / landing / deck (v1.2 paper2any, shipped)
 
-Drop a source document into any run — planner calls `ingest_document` first, extracts structure + passthrough figures, then maps to the target artifact type.
+Drop a source document into any run — planner calls `ingest_document` first, extracts structure + native-resolution figures + structured tables, then maps to the target artifact type.
 
 ### CLI — one-shot
 
@@ -296,13 +296,13 @@ Attachments are cleared automatically after the next non-slash turn; use `:detac
 
 | Extension | Handling | Notes |
 |---|---|---|
-| `.pdf` | Anthropic native `document` content block (Sonnet 4.6 default) → manifest; pymupdf renders + crops figures | ≤ 80 pages, ≤ 24 MB per file. Larger → split or wait for v1.1.5 chunking. |
+| `.pdf` | pymupdf native: `doc.extract_image(xref)` for embedded rasters at author-uploaded resolution; `get_drawings()` clustered + rendered at 300 dpi for vector diagrams; `find_tables()` for table localization. Qwen-VL-Max (via `util/vlm.py`) only for structure extraction + caption matching + fake-figure filtering + table cell parsing. | ≤ 80 pages, ≤ 24 MB per file. Larger → split or wait for v1.3+ chunking. Scanned PDFs raise `ScannedPdfError` (no OCR in v1.2). |
 | `.md` / `.markdown` / `.txt` | Raw text passthrough + `![alt](./image.png)` refs resolved + copied into `ctx.layers_dir` | Relative paths only; URLs / data: are skipped |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | `shutil.copy2` into `ctx.layers_dir` + register as passthrough layer | Single-image bundle (logo, brand shot, reference photo) |
 
 ### What the planner sees
 
-After `ingest_document` returns, the tool result summary + `ctx.state["ingested"]` contain:
+The ingest tool_result summary includes a **ranked top-20 figure catalog** (with `page`, `width×height`, `extract-strategy`, `caption` per figure) plus any registered tables with shape + caption. This is what drives the planner's figure picks on paper posters — see the v1.2 poster visual-density rules in [`prompts/planner.md`](../prompts/planner.md) (figure-count floor ≥ 4, diversity rules, image-area ≥ 45 %). `ctx.state["ingested"]` carries the full structured manifest:
 
 ```json
 {
@@ -313,14 +313,36 @@ After `ingest_document` returns, the tool result summary + `ctx.state["ingested"
     "authors": ["Meituan LongCat Team"],
     "abstract": "…",
     "sections": [{"idx": 1, "heading": "Introduction", "summary": "…", "key_points": […]}, …],
-    "figures": [{"idx": 1, "caption": "…", "page": 3, "layer_id": "ingest_fig_01"}, …],
-    "tables": […], "key_quotes": […]
+    "figures": [{"caption": "…", "page": 3, "description": "…"}, …],
+    "tables": [{"caption": "…", "page": 16}, …],
+    "key_quotes": […]
   },
-  "registered_layer_ids": ["ingest_fig_01", "ingest_fig_02", …]
+  "registered_layer_ids": ["ingest_fig_01", …, "ingest_table_01", "ingest_table_02"],
+  "registered_figure_ids": ["ingest_fig_01", "ingest_fig_02", …],
+  "registered_table_ids": ["ingest_table_01", "ingest_table_02"]
 }
 ```
 
-The figure `layer_id`s are **already registered** in `rendered_layers` with `kind: "image"` + `src_path` → the planner references them directly in `propose_design_spec.layer_graph` as image children with a poster-specific `bbox`. No separate `passthrough_image` call needed.
+- **Figures** (`ingest_fig_NN`, kind="image") register with native-resolution PNG at `src_path` + `caption` from VLM caption matching. Reference them in `propose_design_spec.layer_graph` as `{"layer_id": "ingest_fig_03", "kind": "image", "bbox": {…}}` — composite hydrates.
+- **Tables** (`ingest_table_NN`, kind="table") register with structured `rows`, `headers`, `col_highlight_rule` (`"max"` / `"min"` / `""` per column → renderers bold the winning row per column). Reference as `{"layer_id": "ingest_table_01", "kind": "table", "bbox": {…}}`; the planner MAY override `rows` / `headers` / `col_highlight_rule` to subset a wide table down to slide-friendly dims.
+
+### What the renderers do with them
+
+| Artifact | Figures (`kind="image"`) | Tables (`kind="table"`) |
+|---|---|---|
+| **Poster** | Native-res PNG, contain-fit into bbox via `_aspect_fit_contain`, SVG uses `preserveAspectRatio="xMidYMid meet"` | PIL-drawn PNG re-rendered at bbox dims at composite time (font autoscale, row truncation if `bh` too tight); deep-green winner text (bundled Noto is bold-only so color carries the highlight) |
+| **Landing** | Inline `<img>` inside `<figure>` with data-URI base64 embed | Real `<table class="ld-table">` with `<thead>`, zebra `<tbody>`, `.ld-table-winner` bolded via CSS `font-weight: 700` |
+| **Deck** | Native-res PNG as PPTX picture shape | Native `slide.shapes.add_table` — live editable in PowerPoint / Keynote. Column widths scale with cell content length, font size autoscale (11-18 pt by row count), bold-winner cells |
+
+### Sample costs (43-page / 17 MB Longcat-Next paper, Qwen-VL-Max default)
+
+| Run | Wall time | Cost | Critique |
+|---|---|---|---|
+| paper → poster | ~8-11 min | $6-12 | revise 0.86 (3 issues) |
+| paper → landing | ~5.7 min | $3.20 | pass 0.92 (4 issues) |
+| paper → deck | ~7.8-9.6 min | $4.17-6.63 | pass 0.88 (4 issues) |
+
+Landing is fastest + cheapest because flow layout needs no preview rasterization; deck is moderate because of per-slide PNG previews + critic. Poster is most expensive + most-revised because the visual-density critique is strictest (20 % weight) and the layout has more placement DOF.
 
 ### Tuning
 

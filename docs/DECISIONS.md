@@ -6,6 +6,88 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-21 — v1.2.1 composite aspect-preserve for image + table layers (commit `349c899`)
+
+**Decision**: Treat the planner's `bbox.w / bbox.h` ratio as a *desired placement*, not a *forced output aspect*. In `composite.py`, image layers contain-fit (letterbox-style) via new `_aspect_fit_contain(src_size, dst_size) -> (nw, nh, off_x, off_y)` across `_write_preview` + `_write_psd` + `_write_svg` (SVG uses the native `preserveAspectRatio="xMidYMid meet"` attribute). Table layers **re-render at the planner's exact bbox dims at composite time** — call `render_table_png(rows=…, headers=…, width_px=bw, max_height_px=bh, col_highlight_rule=…)` instead of resizing the pre-baked PNG. A new `composite.bbox_aspect_warning` log fires when bbox aspect deviates ≥ 2× from source aspect, for planner-prompt tuning data.
+
+**Alternatives considered**:
+1. **Force planner to always pick correct bboxes** via prompt. Rejected: prompt rules are advisory; planners drift. The composite layer is the deterministic backstop.
+2. **Cover-fit (crop overflow)** instead of contain-fit for images. Rejected: crops lose figure content (benchmarks / architecture diagrams have no disposable edges). Letterbox preserves content; the only cost is a transparent margin that the z-stack happily ignores.
+3. **Auto-expand bbox** when aspect mismatch detected. Rejected: would overlap other layers — not worth the placement-correctness complexity for this gain.
+4. **Pre-bake table PNG at source aspect + letterbox like images**. Rejected: table text doesn't scale — letterboxing a wide source table into a square bbox means the rendered text is still wide + short + unreadable. Re-rendering at bbox dims lets `render_table_png`'s row-count autoscale kick in at the real size (font shrinks, rows truncate gracefully when `max_height_px` is tight).
+
+**Rationale**: v1.2 planner rules pushed paper posters from 1-figure to 5-figure layouts — but early runs still produced a 900×110 strip for a 14-row benchmark table (LANCZOS-squished to 13 px per row). Aspect-preserve is the layer-agnostic fix: images degrade gracefully to letterbox, tables degrade gracefully via font autoscale + row truncation. Verified against v6 baseline (table 1376×190 squished) vs v7 (table 680×360 re-rendered, all 14 rows readable, 8 winner cells still bolded).
+
+**Revisit when**: (a) we see frequent `bbox_aspect_warning` events for a specific figure category → tune planner prompt to allocate better; (b) we add a real vector-native PSD text layer (v1.4) → SVG-style native aspect on PSD too.
+
+---
+
+## 2026-04-21 — v1.2 poster visual-density rules: ≥ 4 figures or it's not a poster (commit `a08bbb9`)
+
+**Decision**: Encode the "visual-first, not text-first" definition of an academic poster directly into both the planner prompt (prescriptive) and the critic prompt (enforcement). Planner hard rules: figure-count floor (≥ 4 placed when ≥ 5 available; ≥ 6 when ≥ 10), figure diversity (1 system diagram + 1-2 qualitative + 1-2 quantitative), image-area target ≥ 45 % of canvas, min 600 px short side per figure, text density caps (≤ 30 words / body layer, ≤ 8 words / title, ≤ 6 words / section heading). Critic rubric rebalanced: added `visual_density` criterion at weight 0.20, with explicit per-violation penalties (−0.40 if ≤ 1 figure placed despite ≥ 3 available = **blocker**; −0.25 if < 3 placed when ≥ 5; −0.15 if registered table missing; −0.20 if image-area < 45 %; −0.15 if table height < 400 px; −0.10 if figure short-side < 300 px; −0.10 if body text > 180 words total).
+
+**Alternatives considered**:
+1. **Just update the critic, not the planner.** Rejected: produces "revise" loops that never actually converge because the planner doesn't know what to change. Both ends need the contract.
+2. **Generic "prefer visuals" guidance.** Rejected: generic rules don't change behavior. Hard numeric floors are measurable; planners and critics can check them exactly.
+3. **Ship only the ingest-summary enrichment** (the per-figure catalog) and let the planner figure out density itself. Rejected: dogfood showed the planner picks `fig_01` and moves on even when shown a 20-figure ranked list. The density rule is necessary in addition to visibility.
+4. **Unlimited figure catalog in ingest summary.** Rejected: 43-figure papers pushed the planner's output budget over `max_tokens` before it could emit `propose_design_spec`. Capped at top 20 ranked by `(has_caption, is_vector, min_side_px, -page)`.
+
+**Rationale**: Pre-rule baseline was 1 figure + 3 columns of body text on the poster — a research-paper's page 1 printed as PNG, not a conference artifact. Post-rules: 4-5 figures + 1 table, critique 0.62 → 0.86, image-area 12 % → 58 %. The critic rubric carries the same weights; violations now show up as concrete deduction lines in the issues array so the planner's next revision knows exactly what to fix.
+
+**Revisit when**: (a) non-paper posters start hitting the visual-density penalty (brief doesn't mention a paper → `visual_density = 1.0` default, but if we grow other paper-like briefs we'll need the detection to widen); (b) density floor feels too aggressive for short papers (< 5 figures available) — already have conditional on `n_figures_available ≥ 5`.
+
+---
+
+## 2026-04-21 — v1.2 `kind="table"` LayerKind with native PPTX / HTML / PIL renderers (commit `da664a5`)
+
+**Decision**: Treat paper tables as **structured data with native renderers**, not cropped images. New `LayerKind "table"` with `rows: list[list[str]]`, `headers: list[str]`, `caption: str`, `col_highlight_rule: list[str]` (per-column `"max"` / `"min"` / `""`) fields on `LayerNode`. Ingest uses pymupdf `page.find_tables()` for **localization only** (cell splits are unreliable on paper layouts — drops headers into single cells, misclassifies figure panels), then sends each candidate region's cropped PNG + pymupdf's raw-cell guess to Qwen-VL-Max, which returns clean structured data or `is_table: false` (reject). Renderers: deck → native `slide.shapes.add_table(…)` with column-width + font-size autoscale + bold-winner cells; landing → real `<table>` with `.ld-table-winner` class; poster / PSD / SVG → PIL-drawn PNG via `util/table_png.render_table_png` with deep-green winner text (the bundled NotoSansSC is bold-only so color carries the highlight instead of font weight).
+
+**Alternatives considered**:
+1. **Crop tables as images like figures** (the pre-v1.2 default). Rejected: tables have text, and text in cropped images is tiny and unreadable at deck / poster scale. Every dogfood run confirmed: "the histograms look great, but the benchmark numbers are a gray smudge".
+2. **Trust pymupdf `find_tables().extract()` for cell content.** Rejected: on the test paper it misclassified a figure collage (p. 14) as a 3×5 table and jammed a 12-column header ("MMMU MathVista OCRBench…") into a single cell on p. 16. VLM-validated parsing gives clean data + rejection for non-tables.
+3. **Second LLM call just for layout validation**, re-parse cells ourselves. Rejected: more code, more chances to drift from source truth. A single VLM call that does both "is this a real table?" and "if yes, here's the clean parse" is simpler and the VLM is already in the hot path for figure caption matching.
+4. **Render poster tables with a real bold font loaded separately.** Rejected for v1.2: bundled project fonts are `NotoSansSC-Bold.otf` + `NotoSerifSC-Bold.otf` — no regular weight. Adding a regular Noto SC would add ~8 MB to the repo; deep-green color on winner cells reads as distinctly as bold without the asset cost.
+
+**Rationale**: Tables are the single most-crop-hostile content in papers. Rendering them as structured primitives unlocks three wins simultaneously: (a) deck tables are **editable** in PowerPoint — the user can swap a metric or update a number without re-running the pipeline; (b) landing tables scale with viewport width via CSS; (c) poster tables carry all 14 rows at legible resolution because the PIL renderer picks row height from bbox. Winner highlighting (`col_highlight_rule`) is cheap VLM output (~80 extra tokens per table) but high narrative leverage — it draws the eye to exactly the point the paper is making.
+
+**Revisit when**: (a) papers with > 2-row-header tables start failing — prompt already asks the VLM to flatten to "Parent / Child" strings; if that degrades, add post-processing; (b) scanned PDFs with image-embedded tables appear — the VLM parse path already handles this but we'd need to relax `find_tables()` localization; (c) we add a regular Noto SC weight — switch poster renderer to bold-winner-by-weight instead of green-by-color.
+
+---
+
+## 2026-04-21 — v1.2 Qwen-VL-Max via OpenRouter as default ingest model; dual-SDK dispatcher (commit `ce50f2a`)
+
+**Decision**: Default `ingest_model` = `qwen/qwen-vl-max` (via OpenRouter) instead of `anthropic/claude-sonnet-4-6`. Introduce `longcat_design/util/vlm.py` as a neutral dispatcher with `vlm_call_json(...)` that routes by model id: `anthropic/` / `claude-` → Anthropic SDK; `qwen/` → OpenAI SDK against OpenRouter's OpenAI-compat `/api/v1`. Ingest is the **only** surface that uses the OpenAI SDK — planner and critic stay 100 % Anthropic SDK to preserve tool_use protocol compatibility (the OpenAI-compat endpoint's tool_use shape is different enough to break them). Override via `INGEST_MODEL` env var; stock-Anthropic mode falls back to `claude-sonnet-4-7`.
+
+**Alternatives considered**:
+1. **Stay on Claude Sonnet 4.6 for ingest.** Rejected: Sonnet 4.6's vision grounding was unreliable enough to motivate the whole pymupdf refactor — but even post-refactor, its "read this paper" performance is slower and ~5× more expensive than Qwen-VL-Max for the same non-reasoning workload (structure extraction + caption matching + table parsing).
+2. **Bump to Claude Sonnet 4.7.** Better grounding than 4.6, but still the ~5× cost gap vs Qwen for this workload. Kept 4.7 as the stock-Anthropic fallback when `OPENROUTER_API_KEY` is absent.
+3. **Route everything through OpenRouter's Anthropic-compat endpoint** to keep a single SDK. Not possible: OpenRouter serves Qwen only via the OpenAI-compat endpoint (Alibaba DashScope's native API shape).
+4. **Write our own thin HTTP client** instead of pulling in `openai`. Rejected: the `openai` SDK handles retries, streaming, base64 / multipart image encoding, rate-limit backoff, and the tail of quirks between OpenAI-compat providers. Adding one dep is cheaper than maintaining those ourselves.
+5. **Qwen-VL-Plus instead of Qwen-VL-Max.** Plus is cheaper but didn't reliably refuse fake figures (it accepted black placeholders as "a rectangle figure"). Max's reject quality is what makes the pymupdf-everything-VLM-filter approach work.
+
+**Rationale**: The v1.2 pymupdf refactor reduced the VLM's job from "localize and identify figures" (hard, needed spatial grounding) to "read text and match captions" (easy, commodity VLM territory). That's Qwen-VL-Max's sweet spot. The dual-SDK dispatcher is localized to one module (`util/vlm.py`) and one call site (`tools/ingest_document.py`) — it doesn't leak into planner or critic. Cost data on the 43-page Longcat-Next paper: old Sonnet 4.6 ingest ~$1.80 per run; Qwen-VL-Max ~$0.35 per run (caption matching × 153 candidates is the hot loop, parallelized 6 wide).
+
+**Revisit when**: (a) Qwen-VL-Max reject quality drops on a specific paper category (e.g. medical imaging with lots of annotated grids) → A/B against Sonnet 4.7; (b) OpenRouter adds an Anthropic-compat Qwen endpoint → collapse back to single SDK; (c) we want ingest to run fully offline → local Qwen-VL via Ollama, same OpenAI-compat dispatch.
+
+---
+
+## 2026-04-21 — v1.2 pymupdf-native figure extraction replaces Claude-vision bbox locator (commit `ce50f2a`)
+
+**Decision**: Drop the Claude-Sonnet vision "find the figure bboxes on this rasterized page" step entirely. Use pymupdf **directly** for figure localization: `page.get_images(full=True)` + `doc.extract_image(xref)` pulls every embedded raster image at its **native author-uploaded resolution** (lossless — the PDF's actual bytes); `page.get_drawings()` clustered by `_merge_rects(raw_bboxes, tol=12pt)` + filtered by `min_side_pt=80` / `max_area_frac=0.80` + rendered at **300 dpi** catches vector diagrams (architecture illustrations, pipeline flows). Dedup raster vs vector per page (raster wins on ≥ 80 % containment + min-side ≥ 200 px). VLM (Qwen-VL-Max) only handles caption matching + fake-figure filtering on the already-cropped candidates.
+
+**Alternatives considered**:
+1. **Upgrade the VLM locator** from Sonnet 4.6 to Sonnet 4.7 (better vision grounding) or Qwen-VL-Max. Rejected: "guess pixel bboxes on a rasterized page" is the **wrong abstraction** for this problem. The figure bboxes are already **encoded in the PDF**; the vision model is inherently worse than reading them directly. No amount of model-swap fixes "rasterizing text + guessing coordinates".
+2. **Layout-parsing libraries** (pdfplumber, PyPDF2, pdfminer.six). Rejected: all of them are text-centric; none handle the "extract embedded raster bytes + separate vector drawings" workflow cleanly. pymupdf covers the full stack (text + images + drawings + tables) in one import.
+3. **Ship the old locator as fallback** in case pymupdf misses something. Rejected for YAGNI: in dogfood on the Longcat-Next paper pymupdf found 135 raster + 18 vector candidates; the VLM caption-matching filter drops the 110 noise ones (black placeholders, equation renders, snowflake icons, horse photos). There's no failure mode the locator catches that the current path misses.
+
+**Rationale**: The Sonnet 4.6 locator produced half-page screenshots (Fig. 1 came back as the top half of page 1 with abstract text + GitHub URLs + histograms all bundled together), clipped diagrams (Fig. 2 was the title-banner-only top strip), and hallucinated figures on text-only pages. None of these are model-quality failures — they're architectural failures of "rasterize the page, ask a VLM to paint rectangles". pymupdf native gives us author-uploaded PNG bytes directly, which is what the old pipeline was trying to approximate through two lossy steps. Dogfood results: Fig. 1 crop went from 1454 × 820 (with text contamination) to 1890 × 1211 (pure histograms, zero post-processing); slides no longer have blurry table cells because the source PNG is already print-resolution.
+
+**Coupled decision — `detect_scanned_pdf` guard**: If the whole PDF has almost no extractable text AND zero vector drawings, it's almost certainly a scanned PDF we can't figure-extract from. Raise `ScannedPdfError` with a clear user message rather than silently returning zero figures.
+
+**Revisit when**: (a) we add scanned-PDF OCR support → the detector becomes a dispatch fork, not a hard error; (b) a paper format uses SVG-embedded figures (LaTeX with `\includegraphics{*.svg}` compiled via `svg.latex`) that `get_images()` misses → add a third extraction strategy for embedded XObject SVGs.
+
+---
+
 ## 2026-04-20 — v1.1 paper2any: polymorphic `ingest_document` + Sonnet default + pymupdf figure cropping
 
 **Decision**: Ship v1.1 document ingestion as a **single polymorphic tool** (`ingest_document(file_paths: list[str])`) dispatching by file extension — not a family of sibling tools (`ingest_pdf` / `ingest_markdown` / `passthrough_image`). Use **Sonnet 4.6 by default** (via `settings.ingest_model`) for the PDF structure-extraction + bbox-locator calls, not Opus. Crop figures with **pymupdf** locally and passthrough the original pixels — do NOT re-generate paper figures via NBP. Register ingested figures in `ctx.state["rendered_layers"]` with stable `ingest_fig_NN` / `ingest_img_<sha8>` layer_ids so the planner can reference them as image children in `propose_design_spec.layer_graph` with NO `src_path` — composite hydrates automatically (same pattern as generate_image for landing/deck).

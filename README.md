@@ -4,9 +4,16 @@
 
 The open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) and similar closed SaaS design tools. From the [Longcat](https://github.com/) ecosystem.
 
-> **Current status** (2026-04-20): v1.0 MVP **9.75 of 11 items shipped** — full **3-artifact coverage** complete (poster + landing + deck), **11 tools wired** (v1.1 `ingest_document` just added), smoke **16/16 green**. Landing + deck pipelines ship with **NBP (Gemini 3 Pro Image Preview) imagery** so output is commercial-grade, not wireframe. v1.0 launch blockers: README screenshots + demo video + smoke HTML/PPTX extension.
+> **Current status** (2026-04-21): **v1.2 paper2any shipped** — full **3-artifact coverage** (poster + landing + deck) × full **paper → artifact** ingestion pipeline, **11 tools wired**, smoke **16/16 green**. Landing + deck ship with **NBP (Gemini 3 Pro Image Preview) imagery**; paper-sourced artifacts ship with **native-resolution PDF figures + live-editable tables**.
 >
-> **v1.1 paper2any — partial ship (2026-04-20)**: `ingest_document` tool live; CLI `--from-file` + chat `:attach` entry wired; poster-mode image layers + bbox hydration patches; Sonnet-default ingest model + 10-min timeout guardrails. Verified: 43-page / 17 MB Longcat-Next paper ingests cleanly on Sonnet (~5 min, 25 figures cropped via pymupdf + Claude vision). Full paper → poster/landing/deck pipeline in active dogfood. See [docs/ROADMAP.md § v1.1](docs/ROADMAP.md#v11--document-ingestion-paper2any--core).
+> **v1.2 highlights (shipped 2026-04-21, commits [ce50f2a](https://github.com/Yaxin9Luo/OpenDesign/commit/ce50f2a) · [da664a5](https://github.com/Yaxin9Luo/OpenDesign/commit/da664a5) · [a08bbb9](https://github.com/Yaxin9Luo/OpenDesign/commit/a08bbb9) · [349c899](https://github.com/Yaxin9Luo/OpenDesign/commit/349c899))**:
+> - **pymupdf-native figure extraction** replaces the Claude-Sonnet vision locator — native-resolution crops (author-uploaded PNGs at 1890×1211 instead of 1454×820 half-page screenshots).
+> - **Qwen-VL-Max via OpenRouter** is the default ingest model (~5× cheaper than Sonnet 4.6 for the "read this paper + match captions" workload; dual-SDK dispatcher routes Qwen via OpenAI-compat endpoint while planner / critic stay on Anthropic SDK).
+> - **`kind="table"` LayerKind**: ingested data tables render as **native PowerPoint** `add_table` shapes for decks, real **`<table>`** for landing, **PIL-drawn PNG** with bold-winner column highlights for posters. No more cropped-screenshot tables.
+> - **Poster visual-density rules**: planner now places ≥ 4 figures + ≥ 1 table for a paper poster (up from 1 figure previously); critic rubric weight reshuffled to penalize text-wall layouts.
+> - **Aspect-preserve composite**: letterbox contain-fit for images, re-render tables at bbox dims with font autoscale — underspec'd bboxes degrade gracefully instead of squishing 14-row tables into 13 px / row.
+>
+> Verified end-to-end on the 43-page Longcat-Next paper: poster critique **0.62 → 0.86**, landing **pass 0.92**, deck **pass 0.88** with 8 bold-winner cells on a 15×12 editable PPTX table.
 
 ---
 
@@ -101,9 +108,9 @@ uv run python -m longcat_design.cli run "10 张投资者 pitch deck：奶茶品�
 
 Outputs land in `out/runs/<run_id>/` (per-artifact — `poster.pptx` + `slides/` + `preview.png` for deck; `index.html` + `preview.png` for landing; `poster.psd/svg/html` + `layers/` for poster). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
 
-### Paper → poster / landing / deck (v1.1 paper2any, partial ship)
+### Paper → poster / landing / deck (v1.2 paper2any, shipped)
 
-Drop a paper / markdown / image into any run — planner calls `ingest_document` first, passes real figures through from the PDF:
+Drop a paper / markdown / image into any run — planner calls `ingest_document` first, pulls the structured content through, and the artifact renderers consume real figures + editable tables directly from the PDF:
 
 ```bash
 # One-shot CLI
@@ -120,7 +127,13 @@ uv run python -m longcat_design.cli
   [generating — anthropic/claude-opus-4.7, may take 1-5 min, ingesting 1 file(s)]
 ```
 
-Supported inputs: **PDF** (via Anthropic native document block + pymupdf figure cropping), **Markdown / TXT** (with embedded `![](image.png)` refs resolved), **PNG / JPG** (single-image passthrough). `.docx` + multi-paper fusion are v1.2+. Details in [docs/WORKFLOWS.md § Ingesting a paper](docs/WORKFLOWS.md#ingesting-a-paper) once published.
+Supported inputs:
+- **PDF** (pymupdf native figure extraction via `page.get_images()` + `doc.extract_image(xref)` for embedded rasters; `get_drawings()` + proximity clustering @ 300 dpi for vector diagrams; `page.find_tables()` for data-table localization. VLM = Qwen-VL-Max via OpenRouter for structure extraction + caption matching + fake-figure filtering).
+- **Markdown / TXT** (with embedded `![](image.png)` refs resolved).
+- **PNG / JPG** (single-image passthrough).
+- `.docx` + multi-paper fusion: deferred to v1.3+.
+
+What the planner gets on a paper run: title / authors / abstract / sections, up to 20 ranked figure candidates with `(page, size, extract-strategy, caption)` each, and any registered tables with structured `rows + headers + col_highlight_rule` (winner-per-column "max"/"min"/""). Tables render as **native editable primitives** in decks + landing and as a PIL-drawn PNG on poster (with deep-green winner-cell highlighting since the bundled NotoSansSC only ships bold). See [docs/WORKFLOWS.md § Paper → artifact](docs/WORKFLOWS.md#paper--poster--landing--deck).
 
 ### Round-trip edit (poster + landing)
 
@@ -138,7 +151,7 @@ Deck edits happen in PowerPoint / Keynote / Google Slides directly — the `.ppt
 
 ## Architecture in one breath
 
-A **chat REPL** loop takes each user turn; a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** (no LangGraph / CrewAI) over **11 tools**: `switch_artifact_type` → `ingest_document` (optional — paper2any) → `propose_design_spec` → `generate_background` / `generate_image` (both via Gemini 3 Pro Image Preview / NBP) → `render_text_layer` → `edit_layer` → `fetch_brand_asset` → `composite` (dispatches on artifact type to PSD+SVG+HTML for poster · HTML+inline-imagery for landing · PPTX+per-slide-PNGs for deck) → `critique` (vision for poster, text-only for landing + deck) → `finalize`. Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
+A **chat REPL** loop takes each user turn; a single **Claude Opus 4.7** planner drives a **handwritten Anthropic tool-use loop** (no LangGraph / CrewAI) over **11 tools**: `switch_artifact_type` → `ingest_document` (optional — paper2any, uses **Qwen-VL-Max via OpenRouter** for structure + caption matching + fake-figure filtering; pymupdf does all figure / table localization natively) → `propose_design_spec` → `generate_background` / `generate_image` (both via Gemini 3 Pro Image Preview / NBP) → `render_text_layer` → `edit_layer` → `fetch_brand_asset` → `composite` (dispatches on artifact type to PSD+SVG+HTML+aspect-preserve preview for poster · HTML + `<table>` + inline-imagery for landing · PPTX+native-tables+per-slide-PNGs for deck) → `critique` (vision for poster — includes visual-density rubric for paper posters; text-only for landing + deck) → `finalize`. Per-turn `Trajectory` JSON gets wrapped under a `ChatSession` persisted to `sessions/<id>.json`.
 
 Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
