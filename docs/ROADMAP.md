@@ -18,43 +18,41 @@ Validated with two real runs:
 
 **Positioning at the time**: research prototype for Longcat-Next training-data capture. Pivoted 2026-04-18 to **LongcatDesign** open-source product — trajectory machinery preserved as internal session state; no longer the primary pitch.
 
-### v1.0 in-progress milestones (2026-04-18, ongoing)
+### v1.0 — LongcatDesign public MVP (2026-04-18 → 2026-04-20, **code complete**)
 
-**Package rename** (commit `ffd4389`): `design_agent` → `longcat_design`. pyproject `longcat-design` distribution, `longcat-design` CLI, all internal imports and references updated. Clean `pip install -e .` registers the new package; both `python -m longcat_design.cli` and `longcat-design` script entry work (modulo the macOS UF_HIDDEN trap documented in GOTCHAS).
+Three-artifact conversational design agent, MIT-licensed, `pip install longcat-design`-able. All 10 code items (#1 – #8.75) shipped across the commit series below; the only remaining launch-blocker is a screencast demo video (non-code, item #10 in [V1-MVP-PLAN.md](V1-MVP-PLAN.md)).
 
-**v1.0 #3 — `switch_artifact_type` tool + ArtifactType enum** (commit `21dc44f`): schema gains `ArtifactType` (poster / deck / landing) + `DesignSpec.artifact_type` field + new `StepType` `"artifact_switch"`. New tool registered FIRST in TOOL_SCHEMAS. Planner prompt updated with artifact-type declaration as step 1 of the workflow contract. propose_design_spec falls back to `ctx.state["artifact_type"]` when spec omits the field. 7 → 8 tools wired.
+| # | Item | Commit |
+|---|---|---|
+| 1 | **KB/docs pivot** (narrative → open-source product) | 2026-04-18 docs batch |
+| 2 | **Package rename** `design_agent` → `longcat_design` | [`ffd4389`](https://github.com/Yaxin9Luo/OpenDesign/commit/ffd4389) |
+| 3 | **`switch_artifact_type` tool** + `ArtifactType` enum + `DesignSpec.artifact_type` | [`21dc44f`](https://github.com/Yaxin9Luo/OpenDesign/commit/21dc44f) |
+| 4 | **CLI chat shell** — multi-turn REPL, 8 slash commands, `ChatSession` persistence (absorbs item #7) | [`03517ba`](https://github.com/Yaxin9Luo/OpenDesign/commit/03517ba) |
+| 5 | **`edit_layer` tool** — targeted subset-diff onto a single text layer (`text / font / fill / bbox / effects / …`); re-renders just that PNG, no implicit composite | [`eabaab9`](https://github.com/Yaxin9Luo/OpenDesign/commit/eabaab9) |
+| 6 | **HTML renderer** (poster) + in-browser edit toolbar (drag handle, font / size / color / family inputs, Save → download) | [`0937428`](https://github.com/Yaxin9Luo/OpenDesign/commit/0937428) |
+| 6.5 | **`apply-edits` CLI** — round-trip edited HTML back into new PSD / SVG / HTML / PNG run with parent_run_id lineage | [`695f200`](https://github.com/Yaxin9Luo/OpenDesign/commit/695f200) |
+| 7 | **PPTX renderer** (deck) — native `TextFrame`s, per-slide PNG thumbs + grid preview, `python-pptx` 1.0.x | [`ecdea54`](https://github.com/Yaxin9Luo/OpenDesign/commit/ecdea54) |
+| 8 | **Landing mode** — section-tree schema + flow-layout HTML renderer, `LayerKind += "section"` | [`adea66b`](https://github.com/Yaxin9Luo/OpenDesign/commit/adea66b) |
+| 8.5 | **6 bundled design systems** — minimalist / editorial / claymorphism / liquid-glass / glassmorphism / neubrutalism. All CSS inlined, zero external deps. | [`c16a7f7`](https://github.com/Yaxin9Luo/OpenDesign/commit/c16a7f7) |
+| 8.5-fix | **Critic text-only for landing** — grades section tree + copy quality instead of a lossy Pillow preview | [`64522f9`](https://github.com/Yaxin9Luo/OpenDesign/commit/64522f9) |
+| 8.75 | **Landing NBP imagery** — `generate_image` tool (10th), `LayerKind += "image"`, per-style imagery prompts, `<figure>` inline in HTML | [`9b6b6d0`](https://github.com/Yaxin9Luo/OpenDesign/commit/9b6b6d0) |
+| 9 | **README + docs** — product-facing quickstart, feature matrix, paper2any walk-through; KB kept current through v1.2.5 | ongoing |
 
-**v1.0 #4 — CLI conversational chat shell + ChatSession persistence** (commit `03517ba`): new `chat.py` (REPL, 8 slash commands: `:help`/`:save`/`:load`/`:new`/`:list`/`:history`/`:tokens`/`:export`/`:exit`) + new `session.py` (`ChatSession`/`ChatMessage`/`TrajectoryRef` + save/load/list helpers). cli.py restructured with subparsers (`chat` default + `run` one-shot). Context injection: every non-first brief prefixed with a compact summary of the latest trajectory so planner can distinguish revision-vs-new-artifact. Planner prompt grows a dedicated "revision vs new-artifact decision" section. Smoke 6 → 7 steps with ChatSession round-trip coverage.
+**Dogfood validation**:
+- 国宝回家 poster (v0 baseline): 100 s / $1.41 / score 0.86 · CVPR academic poster: 196 s / $2.49 / score 0.86
+- LongcatDesign launch poster (2026-04-18): 5 min / $3.74 / 5 layers / pass 0.82 (2-iter critique loop)
+- 茉语 milk-tea landing (claymorphism, 2026-04-19): 207 s / $2.20 / 5 NBP images across 4 sections / pass 0.94
 
-**Third dogfood run** (2026-04-18): LongcatDesign launch poster in 5 minutes / $3.74 / 5 layers / 2-iter critique (revise 0.78 → pass 0.82). Chinese title 「龙猫设计」, English subtitle, red stamp 「开源」, bottom tagline 「对话 · 解构 · 编辑」 — all independently editable layers. Proves the architecture holds up on harder briefs (agent retried NBP 3× when safety-filter rejected first attempts).
+**Remaining launch blocker**:
+- **#10 demo video** — screencast of a multi-turn session producing all 3 artifact types. Non-code, requires recording + narration.
 
----
+**Deferred from v1.0 to v1.x** (scope kept tight):
 
-## v1.0 — LongcatDesign public MVP launch (4 of 11 items done)
-
-Three-artifact conversational design agent on GitHub, MIT-licensed, `pip install longcat-design`-able. See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for full implementation breakdown with status column.
-
-**Must-haves for launch**:
-
-1. ✅ **Rename** — `pyproject.toml` project name → `longcat-design`; CLI entry `longcat-design`; Python package → `longcat_design/`; docs/README branding. (commit `ffd4389`)
-2. ✅ **CLI chat shell** — multi-turn conversational REPL replacing one-shot `cli.py`. 8 slash commands, readline editing, session persistence to `sessions/<id>.json`, resumable via `--resume`. (commit `03517ba`)
-3. ✅ **artifact_type tool** — `switch_artifact_type(poster|deck|landing)` + `ArtifactType` enum + `DesignSpec.artifact_type` field. Declares what we're making before spec. (commit `21dc44f`)
-4. **HTML renderer** — structured Tailwind CSS + inline base64 assets, self-contained `.html` file. First-class target for posters AND landing pages. Key technical differentiator vs closed SaaS. **← NEXT DEEP WORK**
-5. **PPTX renderer** — `python-pptx` writing native PowerPoint type frames, one slide per deck section. Editable in PowerPoint / Keynote / Slides with no special steps.
-6. **edit_layer tool** — planner-invocable: modify an existing layer's text/font/color/bbox and recompose. Unlocks `:edit` slash command (currently revisions go through full re-spec path).
-7. ✅ **Conversation persistence** — each chat session saves its full message history + trajectory refs to `sessions/<id>.json`. Reload with `:load <id>` or CLI `--resume`. (shipped with #2)
-8. **README + docs** — product-facing README (quickstart, showcase, install, config), KB updates for all new pieces. (partial — docs kept current; final polish pending)
-9. **1 demo video** — screencast of a multi-turn session producing all 3 artifact types.
-
-**Deferred from v1.0 to v1.x** (keeps launch scope tight):
-
-- Multi-image insets (v0.1 original plan, now **v1.1**)
-- Real PSD type layer (was v0.3, now **v1.3**)
-- Brand Kit PDF parsing (was v0.6, now **v1.4**)
-- Skill sedimentation (was v0.5, now **v1.5**)
-- Font generator / custom fonts (was v0.7, still way later)
-
-**Progress** (as of 2026-04-18): **4 of 11 items done** (rename + #3 + #4 + persistence included-with-#4). Remaining core work: HTML renderer (#6, biggest lift), PPTX renderer (#7), edit_layer tool (#5), landing schema (#8), README polish (#9), demo video (#10), smoke HTML/PPTX assertions (#11). Estimate ~15 h coding + 2-4 h docs/video to v1.0 tag.
+- Multi-image insets → shipped inside v1.0 #8.75 (landing) + v1.1 `ingest_document` (paper figures).
+- Real PSD type layer → **v1.4**.
+- Brand Kit PDF parsing → **v1.5**.
+- Skill sedimentation → **v1.6**.
+- Font generator / custom fonts → later.
 
 ---
 

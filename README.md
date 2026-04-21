@@ -178,7 +178,7 @@ Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Status
 
-**v1.0 MVP — 9.75 of 11 items shipped** (2026-04-20). Full 3-artifact coverage complete; 10 tools wired; smoke 13/13 green. Remaining for v1.0 tag: README screenshots + showcase gallery (#9), demo video (#10), smoke HTML/PPTX regression extension (#11).
+**v1.0 MVP — code complete** (2026-04-20). All 10 code items (#1 – #8.75) shipped across the commit series; full 3-artifact coverage (poster + deck + landing) with in-browser edit toolbar + `apply-edits` round-trip; 11 tools wired (v1.1+ added `ingest_document`); smoke **18/18** green. Remaining for the v1.0 tag: **#10 demo video** (screencast, non-code) and the README screenshots / showcase gallery polish. Post-v1.0 work (v1.1 / v1.2.0 – v1.2.5) has been shipping continuously since 2026-04-20 — see [ROADMAP.md](docs/ROADMAP.md).
 
 **Dogfood runs** (real API, real $):
 
