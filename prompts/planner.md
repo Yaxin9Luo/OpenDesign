@@ -400,7 +400,9 @@ The top level is a flat list of `kind: "section"` nodes (one per page section), 
         {"layer_id": "C1", "name": "cta_headline", "kind": "text", "z_index": 1,
          "text": "pip install longcat-design",
          "font_family": "NotoSansSC-Bold", "font_size_px": 36,
-         "align": "center", "effects": {"fill": "#f8fafc"}}
+         "align": "center", "effects": {"fill": "#f8fafc"}},
+        {"layer_id": "C2", "name": "cta_button", "kind": "cta", "z_index": 2,
+         "text": "Get started", "href": "#sec-features", "variant": "primary"}
       ]
     }
   ]
@@ -433,6 +435,51 @@ Name them consistently (exact match or containing the keyword works — `"hero"`
 **Landing canvas conventions:**
 
 `canvas.w_px` becomes the HTML's max-width; `canvas.h_px` is just metadata (flow layout means actual page height varies). Typical values: `w_px: 1200` for standard, `1440` for wider.
+
+## Interactivity (v1.3 — CTA buttons, section nav, reveal-on-scroll)
+
+Landing pages are interactive web pages, not static posters. v1.3 adds three first-class primitives that the renderer handles automatically — you just declare intent in the DesignSpec.
+
+### 1. CTA buttons — `kind: "cta"`
+
+Use a CTA layer when you want a **primary action** ("Get started", "Book a demo", "View on GitHub") that renders as a styled `<a role="button">` instead of plain body text. Fields on the layer:
+
+```json
+{
+  "layer_id": "S3_cta_primary",
+  "name": "primary_cta",
+  "kind": "cta",
+  "z_index": 5,
+  "text": "Get started",
+  "href": "#install",       // anchor (same page) or full URL
+  "variant": "primary"      // "primary" | "secondary" | "ghost"
+}
+```
+
+Place CTA layers inside a section's `children[]` — typically the `hero` section (1 primary) and the `cta` section (1 primary, optionally 1 secondary). Each design system paints CTAs differently (neubrutalism brutalist block, editorial underline-link, claymorphism puffy 3D) — you don't control the chrome, just the intent + copy.
+
+- **Variants**: `primary` = the main action, always present. `secondary` = an alternate action (e.g. "Read the docs"). `ghost` = quieter tertiary link. Don't declare more than 2 CTAs per section; 1 is usually right.
+- **`href`**: use `#<section-slug>` for same-page anchors (the renderer auto-assigns `id="sec-<slug-of-section-name>"` to every section, so `#sec-install` scrolls to a section named "install"). External URLs are fine too.
+- **Copy**: ≤ 4 words. Verb-led on most styles ("Start now", "Book a demo"); underline-only on editorial ("Read the essay →").
+
+### 2. Section anchors + auto-generated top nav
+
+Every `<section>` already carries `id="sec-<slug-of-name>"` and each section's name shows up in a top nav when enabled.
+
+- **Auto-behaviour**: nav renders automatically when the spec has **≥ 4 sections**. This covers most real landings (hero + features + pricing + cta + footer).
+- **Explicit opt-in / opt-out**: set `design_system.show_nav: true` or `show_nav: false` to override.
+- **What shows in the nav**: every section's `name` (e.g. "features" → "features", "pricing" → "pricing"). Hero and footer-variant sections are skipped automatically (hero is the page top; footer has its own semantic role).
+- **Active link**: the nav item for the currently-visible section gets `aria-current="page"` via JS — no spec fields needed.
+
+### 3. Reveal-on-scroll + accessibility baseline
+
+Every section fades in on scroll (IntersectionObserver). All this happens automatically — you don't declare it. Alongside:
+
+- The last section is auto-upgraded to a semantic `<footer>` when its `name` contains `"footer"` (e.g. `name: "footer"` or `name: "page_footer"`).
+- Images gain `<img alt>` from their layer `name`.
+- Anchor clicks smooth-scroll to the target section; nav sets `aria-current="page"` on the active link.
+
+Tabs, accordions, and forms are **NOT** supported yet — deferred to v1.3.5. Don't declare them.
 
 # Deck workflow (artifact_type = "deck")
 

@@ -6,6 +6,30 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-21 — v1.3.0 interactive landing pages (CTA layer kind, auto-nav, inline JS)
+
+**Decision**: Ship landing interactivity as four decoupled pieces, each owned by an existing layer in the stack — no new tool, no framework, no server component. Specifically:
+
+1. CTA as a new `LayerKind "cta"` on `LayerNode` (+ optional `href`, `variant` fields), NOT as a new `render_cta_button` tool.
+2. Section `id`s derived from `_slugify(name)`, nav auto-generated when `section_count >= 4` with tri-state `DesignSystem.show_nav: bool | None` for explicit override.
+3. A second inline `<script>` injected AFTER the existing edit-toolbar script, holding a ~1.6 KB vanilla IIFE: `IntersectionObserver` reveal + smooth anchor scroll + `aria-current` active-link tracking. Feature-detects `IntersectionObserver` and degrades gracefully; respects `prefers-reduced-motion`.
+4. Footer semantic auto-upgrade: when the last section's name resolves to the `footer` variant, emit `<footer class="ld-section">` OUTSIDE `<main>`; `apply_edits._restore_landing` picks it up by also scanning `main.parent` for sibling footers.
+
+CTAs render with `contenteditable="false"` so the edit toolbar cannot silently mutate link text; round-trip reads `href / variant` from authoritative `data-*` attrs.
+
+**Alternatives considered**:
+1. **`render_cta_button` as a new tool** (original ROADMAP sketch). Rejected: adds an 11th → 12th tool for something that's semantically just "a styled layer". The LayerKind path reuses `propose_design_spec` + `edit_layer` plumbing — zero new tool registration, zero planner-workflow bloat.
+2. **CSS `scroll-behavior: smooth` INSTEAD of JS `scrollIntoView({behavior: 'smooth'})`**. Rejected: having both would double-animate anchor clicks. JS wins because the nav active-link logic already uses `IntersectionObserver` in the same script, so keeping all scroll behavior in one place is clearer than splitting it between CSS + JS.
+3. **Footer as a boolean flag on `LayerNode`** vs heuristic upgrade from name. Rejected: the `_section_variant` helper already maps names to variants for CSS — reusing that keeps the "name → semantics" contract consistent. Planner can already opt in by naming the section `footer`.
+4. **Nav always-on vs ≥4-section auto-policy**. Rejected always-on because 2-section landings with a nav look silly ("Hero | CTA" single-link nav is worse than no nav). The tri-state `show_nav: bool | None` gives the planner explicit override when the auto-policy is wrong.
+5. **Tabs + accordions in v1.3.0**. Rejected: both need stateful containers (`kind: "tabs"` with per-tab children + toggle state) that would roughly double the schema + renderer delta. Deferred to v1.3.5 as a clean incremental ship.
+
+**Rationale**: The user-visible shift is significant (static → interactive landings) but the code delta is small because the existing layer model + design-system CSS system already carries most of the weight. CTAs, nav, reveal, a11y are decorative on top of the same section-tree primitive — they cost ~200 LOC of Python + ~180 LOC of CSS across the 6 styles + 1 new helper in `apply_edits` + one smoke expansion. No new tool, no new dep, no new critic branch.
+
+**Revisit when**: (a) tabs/accordions become the #1 landing request → v1.3.5 lifts off with a stateful `kind: "tabs"` container; (b) planners emit nav-worthy `>=4`-section landings where they actually want nav suppressed more than 20 % of the time → drop the auto threshold or invert default; (c) `prefers-reduced-motion` feedback suggests the 0.6 s reveal transition is too slow → tune in `_landing_base_css`.
+
+---
+
 ## 2026-04-21 — v1.2.5 .docx / .pptx ingest branches + scanned-PDF OCR fallback
 
 **Decision**: Extend `ingest_document` to swallow `.docx` and `.pptx` inputs via their native structural readers (no VLM) and to fall back to VLM-page-OCR when `detect_scanned_pdf` fires on a PDF. All three branches funnel into the same downstream contract: one dict per file with `manifest.sections`, `registered_figure_ids`, and the `rendered_layers` records that composite + planner + critic already know how to consume.

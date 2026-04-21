@@ -170,15 +170,22 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
-## v1.3 — Landing-page refinement: interactive HTML
+## v1.3.0 — Interactive landing pages ✅ SHIPPED 2026-04-21
 
-**Why**: v1.0 HTML output is static. Real landing pages want CTAs, nav sections, scroll anchors — interactive primitives.
+From static HTML pages to production-grade marketing pages. Four user-visible improvements, all backward compatible:
 
-**Scope**:
-- `render_cta_button(text, href, style)` tool → emits `<a class="...">` in HTML with `role="button"` styling.
-- Section anchors (`<section id="..."`) for nav scroll.
-- Optional JS component library (ship as a single inlined `<script>` block in the HTML) for reveal-on-scroll, tabs, accordions — non-framework, just vanilla.
-- Accessibility baseline: alt text for every image, semantic HTML (`<header> / <main> / <footer>`).
+- **CTA buttons** as first-class `LayerKind "cta"` — planner declares `{kind: "cta", text, href, variant}` alongside text/image/table; renderer emits `<a role="button" class="ld-cta ld-cta--{variant}">` with per-design-system styling (minimalist filled accent, editorial underline-link, claymorphism puffy 3D, liquid-glass frosted pill, glassmorphism aurora frosted, neubrutalism hard-shadow block).
+- **Section anchors + auto top nav** — every section gets `id="sec-{slug}"`; a `<header><nav>` auto-renders when the spec has ≥ 4 sections OR `design_system.show_nav=true`. Hero and footer sections are skipped from the nav. Active link gets `aria-current="page"` via JS.
+- **Inline vanilla JS** (~1.6 KB) — `IntersectionObserver` reveal-on-scroll (`[data-reveal]` → `.is-revealed`), smooth anchor click → `scrollIntoView`, nav active-link tracking. Respects `prefers-reduced-motion`.
+- **Accessibility baseline** — semantic `<header>` / `<main>` / `<footer>` (last section with variant `footer` is auto-upgraded to `<footer class="ld-section">` outside `<main>`), `<img alt>` from layer name, `role="button"` on CTAs, `aria-current` on active nav link.
+
+`apply_edits` round-trip preserves CTAs with `href` + `variant` intact via `data-*` attributes (CTAs are `contenteditable=false` so the edit toolbar can't silently mutate link text). Smoke expanded to a 5-section fixture (hero + features + pricing + cta + footer) asserting 19 HTML markers + full round-trip; suite stays 18/18.
+
+## Deferred to v1.3.5
+
+- **Tab groups** (new `kind: "tabs"` container + per-tab `LayerNode` children)
+- **Accordions** (`kind: "accordion"`)
+- **Email capture / newsletter forms** — needs backend endpoint policy, not v1.x scope
 
 ---
 

@@ -2,7 +2,7 @@
 
 This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
 
-> **Status (2026-04-21)**: **v1.2 paper2any shipped + v1.2.5 polish**. Full 3-artifact coverage (poster + landing + deck) × full paper → artifact pipeline, now also eating `.docx` / `.pptx` / scanned-PDF inputs. 11 tools wired, smoke 18/18 green.
+> **Status (2026-04-21)**: **v1.2 paper2any shipped + v1.2.5 polish + v1.3.0 interactive landings**. Full 3-artifact coverage (poster + landing + deck) × full paper → artifact pipeline (now also eating `.docx` / `.pptx` / scanned-PDF), and landings now emit with CTAs, auto-nav, reveal-on-scroll, and semantic `<header>/<main>/<footer>`. 11 tools wired, smoke 18/18 green.
 >
 > **v1.2 milestones shipped this cycle**:
 > - [ce50f2a](https://github.com/Yaxin9Luo/OpenDesign/commit/ce50f2a) — pymupdf-native figure extraction + Qwen-VL-Max ingest (replaces Claude-Sonnet vision locator).
@@ -11,6 +11,7 @@ This directory is the **single source of truth** for what LongcatDesign is, why 
 > - [349c899](https://github.com/Yaxin9Luo/OpenDesign/commit/349c899) — composite aspect-preserve (contain-fit for images, re-render-at-bbox for tables).
 > - **v1.2.4** — deterministic text-overlap detector (catches title descender ↔ subtitle cap-height crashes at composite time, before the critic round) + figure↔text cross-reference enforcement in planner + critic prompts (assign display numbers in reading order; every placed `ingest_fig_NN` / `ingest_table_NN` must be cited as `(Fig. N)` / `(Table N)` in at least one text layer).
 > - **v1.2.5** — `.docx` / `.pptx` ingest branches (structural readers, no VLM needed) + scanned-PDF OCR fallback via Qwen-VL-Max (6-worker page-parallel OCR at 200 dpi). Ingest now eats any paper or deck format the user throws at it; smoke suite gains two new steps (18/18).
+> - **v1.3.0** — interactive landing pages: `LayerKind "cta"` with variant / href (per-design-system styling across all 6 styles), auto-generated top nav at ≥ 4 sections (or explicit `design_system.show_nav=true`), inline vanilla JS for reveal-on-scroll + smooth anchor scroll + `aria-current` active-link, semantic `<header>/<main>/<footer>` + `<img alt>` + `role="button"` on CTAs. `apply_edits` round-trip preserves CTAs with `href` + `variant` via `data-*` attrs. Smoke expanded to 5-section fixture with 19 HTML markers asserted.
 >
 > End-to-end verification on the 43-page Longcat-Next paper: poster critique **0.62 → 0.86**, landing **pass 0.92**, deck **pass 0.88** with 8 bold-winner cells on a 15×12 editable PPTX table. See [ROADMAP.md § Shipped](ROADMAP.md#shipped).
 

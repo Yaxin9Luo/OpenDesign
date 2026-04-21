@@ -275,9 +275,23 @@ def _restore_landing(main_el: Tag, ctx: ToolContext,
                      skipped: list[str]) -> list[LayerNode]:
     """Walk a `<main class='ld-landing'>` tree and return a list[LayerNode]
     for design_spec.layer_graph. Each <section> becomes a kind='section'
-    node with children = text / image layers inside."""
+    node with children = text / image / cta layers inside.
+
+    v1.3 note: a footer-variant section may render as `<footer class="ld-section">`
+    OUTSIDE `<main>` for accessibility. We pick it up by searching the
+    main's parent for a sibling `<footer class="ld-section">` AFTER
+    walking the in-main sections, so the round-trip preserves it.
+    """
     out: list[LayerNode] = []
-    for section in main_el.find_all("section", class_="ld-section", recursive=False):
+    # In-main <section> elements + the sibling <footer class="ld-section"> if any.
+    nodes = list(
+        main_el.find_all("section", class_="ld-section", recursive=False)
+    )
+    parent = main_el.parent
+    if parent is not None:
+        for footer in parent.find_all("footer", class_="ld-section", recursive=False):
+            nodes.append(footer)
+    for section in nodes:
         s_layer_id = section.get("data-layer-id") or ""
         s_name = section.get("data-layer-name") or "content"
         s_z = _int_attr(section, "data-z-index", len(out) + 1)
@@ -293,6 +307,11 @@ def _restore_landing(main_el: Tag, ctx: ToolContext,
             image_node = _landing_image_from_figure(figure, ctx, skipped)
             if image_node is not None:
                 children.append(image_node)
+        # v1.3 — CTA layers are <a class="ld-cta ld-cta--*">
+        for a in section.find_all("a", class_="ld-cta", recursive=False):
+            cta_node = _landing_cta_from_a(a, skipped)
+            if cta_node is not None:
+                children.append(cta_node)
 
         # Sort children by their z_index so the DOM-order preservation isn't
         # lost (text and image were in different select calls).
@@ -343,6 +362,39 @@ def _landing_image_from_figure(fig: Tag, ctx: ToolContext,
         bbox=None,
         src_path=str(out_path),
         aspect_ratio=fig.get("data-aspect-ratio") or None,
+    )
+
+
+def _landing_cta_from_a(a: Tag, skipped: list[str]) -> LayerNode | None:
+    """Decode a `<a class="ld-cta ld-cta--*">` back into a CTA LayerNode.
+
+    Reads `text` from the element's innerText and `href / variant` from
+    the authoritative `data-*` attributes that the renderer wrote (so
+    a toolbar click that mutates `href` on the anchor without touching
+    `data-href` still round-trips cleanly — the data-attr wins).
+    """
+    if a.get("data-kind") != "cta":
+        return None
+    layer_id = a.get("data-layer-id") or ""
+    name = a.get("data-layer-name") or layer_id or "cta"
+    text = a.get_text(strip=True)
+    if not text:
+        skipped.append(layer_id or "?")
+        return None
+    href = a.get("data-href") or a.get("href") or "#"
+    variant_raw = (a.get("data-variant") or "primary").lower()
+    variant = variant_raw if variant_raw in (
+        "primary", "secondary", "ghost"
+    ) else "primary"
+    return LayerNode(
+        layer_id=layer_id or f"cta-{id(a)}",
+        name=name,
+        kind="cta",
+        z_index=_int_attr(a, "data-z-index", 1),
+        bbox=None,
+        text=text,
+        href=href,
+        variant=variant,  # type: ignore[arg-type]
     )
 
 

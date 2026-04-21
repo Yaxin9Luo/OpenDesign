@@ -106,3 +106,32 @@ body {
 .ld-section[data-section-variant="cta"] .layer.text:first-of-type {
   font-weight: 700; line-height: 1.2;
 }
+
+/* v1.3 — top nav: soft pastel pill with puffy shadow */
+.ld-header { background: var(--ld-bg); padding: 16px 32px; border-radius: 0 0 28px 28px;
+             box-shadow: 0 8px 18px rgba(170, 150, 200, 0.18); }
+.ld-nav ul { justify-content: center; gap: 30px; }
+.ld-nav a { color: var(--ld-fg); font-family: 'Nunito', 'Quicksand', system-ui, sans-serif;
+            font-weight: 700; font-size: 14px; padding: 6px 14px; border-radius: 14px;
+            transition: background .18s ease, color .18s ease; }
+.ld-nav a:hover { background: var(--ld-card-lavender); }
+.ld-nav a[aria-current="page"] { background: var(--ld-accent); color: #fff;
+                                 box-shadow: 4px 4px 12px rgba(165,140,255,0.35); }
+
+/* v1.3 — CTA: big puffy 3D buttons with pastel highlights */
+.ld-cta { font-family: 'Nunito', 'Quicksand', system-ui, sans-serif; font-weight: 800;
+          font-size: 17px; padding: 18px 32px; border-radius: 24px; border: 0;
+          transition: transform .18s ease, box-shadow .18s ease; }
+.ld-cta--primary { background: var(--ld-accent); color: #fff; box-shadow: var(--ld-shadow-clay); }
+.ld-cta--primary:hover { transform: translateY(-3px);
+                         box-shadow: inset 3px 3px 6px rgba(255,255,255,0.6),
+                                     inset -3px -3px 6px rgba(0,0,0,0.12),
+                                     14px 14px 32px rgba(165,140,255,0.4); }
+.ld-cta--secondary { background: var(--ld-card-peach); color: var(--ld-fg);
+                     box-shadow: var(--ld-shadow-clay); }
+.ld-cta--secondary:hover { transform: translateY(-3px); }
+.ld-cta--ghost { background: rgba(255,255,255,0.5); color: var(--ld-accent);
+                 box-shadow: inset 2px 2px 4px rgba(0,0,0,0.06),
+                             inset -2px -2px 4px rgba(255,255,255,0.8); }
+.ld-cta--ghost:hover { background: rgba(255,255,255,0.9); }
+.ld-cta:focus-visible { outline: 3px solid var(--ld-accent); outline-offset: 4px; }

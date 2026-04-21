@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -695,10 +696,28 @@ def write_landing_html(
                                style_name=style,
                                style_css=style_css)
 
+    # v1.3 — detect sections + CTA. Last section with variant=="footer"
+    # is auto-upgraded to <footer> outside <main> for accessibility.
+    section_nodes = [n for n in layer_graph
+                     if getattr(n, "kind", None) == "section"]
+    section_count = len(section_nodes)
+    footer_node: Any | None = None
+    if section_nodes:
+        last = section_nodes[-1]
+        if _section_variant(getattr(last, "name", "") or "") == "footer":
+            footer_node = last
+
+    show_nav = getattr(ds, "show_nav", None) if ds else None
+    need_nav = show_nav if show_nav is not None else (section_count >= 4)
+    nav_html = _landing_nav_html(section_nodes, footer_node) if need_nav else ""
+
     sections_html: list[str] = []
     for node in layer_graph:
         kind = getattr(node, "kind", None)
         if kind == "section":
+            if node is footer_node:
+                # Emit the footer node OUTSIDE <main> below — skip here.
+                continue
             sections_html.append(_landing_section_html(node, ctx))
         elif kind == "text" and getattr(node, "text", None):
             # Orphan text at top level — wrap in an implicit section.
@@ -709,19 +728,31 @@ def write_landing_html(
                 + "\n  </section>"
             )
 
+    footer_html = (_landing_section_html(footer_node, ctx, as_footer=True)
+                   if footer_node is not None else "")
+
     body_parts: list[str] = [
         f'<body data-ld-style="{_attr(style)}">',
         _landing_user_comment(style),
+    ]
+    if nav_html:
+        body_parts.append(nav_html)
+    body_parts.extend([
         f'<main class="ld-landing" data-mode="landing" data-w="{cw}" '
         f'data-ld-style="{_attr(style)}">',
         *sections_html,
         "</main>",
+    ])
+    if footer_html:
+        body_parts.append(footer_html)
+    body_parts.extend([
         _edit_toolbar_html(bundled_families),
         _save_modal_html(),
         f"<script>{_edit_script(bundled_families)}</script>",
+        f"<script>{_landing_interactive_js()}</script>",
         "</body>",
         "</html>",
-    ]
+    ])
 
     doc = head + "\n".join(body_parts)
     out_path.write_text(doc, encoding="utf-8")
@@ -839,6 +870,24 @@ def _landing_base_css(cw: int) -> str:
         "  .ld-landing .ld-table .ld-table-winner { font-weight: 700; }\n"
         "  .ld-landing .layer.table figcaption {\n"
         "             margin-top: 0.4em; font-size: 0.85em; opacity: 0.7; }\n"
+        "  /* v1.3 reveal-on-scroll — structural only; per-style CSS may tune. */\n"
+        "  [data-reveal] { opacity: 0; transform: translateY(12px);\n"
+        "             transition: opacity .6s ease, transform .6s ease; }\n"
+        "  [data-reveal].is-revealed { opacity: 1; transform: none; }\n"
+        "  @media (prefers-reduced-motion: reduce) {\n"
+        "    [data-reveal] { opacity: 1; transform: none; transition: none; }\n"
+        "  }\n"
+        "  /* v1.3 top nav — structural; per-style CSS owns colors/typography. */\n"
+        "  .ld-header { display: flex; justify-content: center;\n"
+        "             padding: 1rem 2rem; }\n"
+        "  .ld-nav ul { list-style: none; display: flex; flex-wrap: wrap;\n"
+        "             gap: 1.5rem; margin: 0; padding: 0; }\n"
+        "  .ld-nav a { text-decoration: none; color: inherit;\n"
+        "             padding: 0.3em 0.2em; }\n"
+        "  /* v1.3 CTA — structural only; per-style CSS paints the chrome. */\n"
+        "  .ld-cta { display: inline-block; text-decoration: none;\n"
+        "             cursor: pointer; align-self: flex-start;\n"
+        "             margin-top: 0.5em; }\n"
     )
 
 
@@ -857,20 +906,25 @@ def _landing_user_comment(style: str = "minimalist") -> str:
     )
 
 
-def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
+def _landing_section_html(section_node: Any, ctx: ToolContext,
+                          *, as_footer: bool = False) -> str:
     layer_id = getattr(section_node, "layer_id", "") or ""
     name = getattr(section_node, "name", "") or "content"
     variant = _section_variant(name)
     children = getattr(section_node, "children", None) or []
     has_image = any(getattr(c, "kind", None) == "image" for c in children)
+    slug = _slugify(name) or _slugify(layer_id) or f"section-{variant}"
+    tag = "footer" if as_footer else "section"
 
     parts: list[str] = [
-        f'  <section class="ld-section"'
+        f'  <{tag} class="ld-section" id="sec-{_attr(slug)}"'
         f'{" data-has-image=\"true\"" if has_image else ""} '
         f'data-layer-id="{_attr(layer_id)}" '
         f'data-kind="section" '
         f'data-layer-name="{_attr(name)}" '
         f'data-section-variant="{_attr(variant)}" '
+        f'data-section-slug="{_attr(slug)}" '
+        f'data-reveal="true" '
         f'data-z-index="{int(getattr(section_node, "z_index", 0) or 0)}">',
     ]
     for child in children:
@@ -882,7 +936,9 @@ def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
         elif kind == "table" and (getattr(child, "rows", None)
                                   or getattr(child, "headers", None)):
             parts.append(_landing_table_html(child))
-    parts.append("  </section>")
+        elif kind == "cta" and getattr(child, "text", None):
+            parts.append(_landing_cta_html(child))
+    parts.append(f"  </{tag}>")
     return "\n".join(parts)
 
 
@@ -1000,6 +1056,150 @@ def _section_variant(name: str) -> str:
         if key in low:
             return key
     return "content"
+
+
+# v1.3 — interactive landing primitives -----------------------------------
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(name: str) -> str:
+    """Lowercase + collapse non-alnum to dashes + strip edges.
+
+    Used for both `<section id>` and matching nav anchor hrefs. Must be
+    idempotent so planners re-running composite get stable ids.
+    """
+    low = (name or "").strip().lower()
+    slug = _SLUG_RE.sub("-", low).strip("-")
+    return slug
+
+
+def _landing_cta_html(cta_node: Any) -> str:
+    """Render a v1.3 `kind="cta"` layer as a styled `<a role="button">`.
+
+    The anchor carries all round-trip state as data-* attrs so
+    `apply_edits._landing_cta_from_a` can reconstitute a LayerNode(cta).
+    `contenteditable="false"` keeps the edit toolbar from accidentally
+    mutating the link text (planner still revises via `edit_layer` or
+    `propose_design_spec`).
+    """
+    layer_id = getattr(cta_node, "layer_id", "") or ""
+    name = getattr(cta_node, "name", "") or layer_id or "cta"
+    text = getattr(cta_node, "text", "") or ""
+    href = getattr(cta_node, "href", None) or "#"
+    variant = (getattr(cta_node, "variant", None) or "primary").lower()
+    if variant not in ("primary", "secondary", "ghost"):
+        variant = "primary"
+    z = int(getattr(cta_node, "z_index", 0) or 0)
+    return (
+        f'    <a class="ld-cta ld-cta--{_attr(variant)}" '
+        f'role="button" href="{_attr(href)}" '
+        f'contenteditable="false" '
+        f'data-kind="cta" '
+        f'data-layer-id="{_attr(layer_id)}" '
+        f'data-layer-name="{_attr(name)}" '
+        f'data-variant="{_attr(variant)}" '
+        f'data-href="{_attr(href)}" '
+        f'data-z-index="{z}">'
+        f'{html.escape(text)}'
+        f'</a>'
+    )
+
+
+def _landing_nav_html(section_nodes: list[Any],
+                      footer_node: Any | None) -> str:
+    """Build `<header><nav>…` with anchor links to each section.
+
+    Skips `hero` and the footer-upgraded section (hero is usually the
+    page's top so a nav link to itself is weird; footer lives outside
+    `<main>` and has its own role). Returns empty string when the nav
+    would have 0 links.
+    """
+    items: list[str] = []
+    for node in section_nodes:
+        if node is footer_node:
+            continue
+        name = getattr(node, "name", "") or ""
+        variant = _section_variant(name)
+        if variant == "hero":
+            continue
+        slug = _slugify(name) or _slugify(
+            getattr(node, "layer_id", "") or ""
+        ) or f"section-{variant}"
+        label = name.strip() or variant.title()
+        items.append(
+            f'      <li><a href="#sec-{_attr(slug)}" '
+            f'data-nav-target="sec-{_attr(slug)}">'
+            f'{html.escape(label)}</a></li>'
+        )
+    if not items:
+        return ""
+    lines = [
+        '  <header class="ld-header">',
+        '    <nav class="ld-nav" aria-label="Section navigation">',
+        '      <ul>',
+        *items,
+        '      </ul>',
+        '    </nav>',
+        '  </header>',
+    ]
+    return "\n".join(lines)
+
+
+def _landing_interactive_js() -> str:
+    """Vanilla IIFE: reveal-on-scroll + smooth anchor scroll + active-nav.
+
+    Self-contained. No external deps. Feature-detects
+    `IntersectionObserver` and falls back to revealing everything if
+    the browser is ancient. Sits AFTER the edit-toolbar script so it
+    doesn't interfere with its init.
+    """
+    return """(() => {
+  if (typeof document === 'undefined') return;
+  const hasIO = 'IntersectionObserver' in window;
+  const targets = document.querySelectorAll('[data-reveal]');
+  if (hasIO) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add('is-revealed');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    targets.forEach((el) => io.observe(el));
+  } else {
+    targets.forEach((el) => el.classList.add('is-revealed'));
+  }
+
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest && ev.target.closest('a[href^="#"]');
+    if (!a) return;
+    const id = a.getAttribute('href').slice(1);
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    ev.preventDefault();
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  const navLinks = document.querySelectorAll('.ld-nav a[data-nav-target]');
+  if (hasIO && navLinks.length) {
+    const byId = new Map();
+    navLinks.forEach((a) => byId.set(a.dataset.navTarget, a));
+    const navIO = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          navLinks.forEach((a) => a.removeAttribute('aria-current'));
+          const a = byId.get(e.target.id);
+          if (a) a.setAttribute('aria-current', 'page');
+        }
+      });
+    }, { threshold: 0.5 });
+    document.querySelectorAll('.ld-section, footer.ld-section')
+      .forEach((s) => { if (s.id) navIO.observe(s); });
+  }
+})();"""
 
 
 # --- helpers --------------------------------------------------------------

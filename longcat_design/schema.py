@@ -33,6 +33,9 @@ class DesignSystem(BaseModel):
     style: LandingStyle = "minimalist"
     accent_color: str | None = None      # override the style's --ld-accent token
     font_pairing: str | None = None      # free-text planner hint, not enforced
+    # v1.3 tri-state — None = auto (nav rendered when section_count >= 4),
+    # True/False = explicit opt-in/out. Renderer at render time.
+    show_nav: bool | None = None
 
 
 class ArtifactType(str, Enum):
@@ -68,6 +71,8 @@ LayerKind = Literal[
     "table",         # v1.2 paper2any: structured data (rows/headers) — renderers
                      # produce native PPTX / HTML tables instead of cropped images.
                      # src_path holds a PIL-drawn PNG fallback for PSD/SVG paths.
+    "cta",           # v1.3 landing call-to-action button — renders as <a role="button">
+                     # with href + variant. Per-design-system styling via .ld-cta--*.
 ]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
@@ -153,6 +158,10 @@ class LayerNode(BaseModel):
     headers: list[str] | None = None
     caption: str | None = None
     col_highlight_rule: list[str] | None = None
+
+    # v1.3 landing interactivity — cta-only
+    href: str | None = None
+    variant: Literal["primary", "secondary", "ghost"] | None = None
 
 
 class DesignSpec(BaseModel):

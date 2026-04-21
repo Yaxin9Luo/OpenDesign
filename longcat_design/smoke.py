@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/16] imports")
+    print("[1/18] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/16] tool registry")
+    print("[2/18] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -77,7 +77,7 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/16] pydantic schema round-trip")
+    print("[3/18] pydantic schema round-trip")
     spec = DesignSpec(
         brief="国宝回家 公益项目主视觉海报，竖版 3:4",
         canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
@@ -120,7 +120,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/16] fonts")
+    print("[4/18] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -140,7 +140,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/16] composite (no API)")
+    print("[5/18] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -241,7 +241,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/16] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/18] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -312,7 +312,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/16] chat session save/load")
+    print("[7/18] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -374,7 +374,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/16] edit_layer (no API)")
+    print("[8/18] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -499,7 +499,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/16] apply-edits round-trip (no API)")
+    print("[9/18] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -575,8 +575,14 @@ def check_apply_edits_roundtrip() -> None:
 
 
 def check_landing_mode() -> None:
-    """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip."""
-    print("[10/16] landing mode (no API)")
+    """Landing end-to-end: section-tree spec → HTML + preview → apply-edits roundtrip.
+
+    v1.3: expanded fixture to 4 sections (hero + features + pricing + cta)
+    with a `kind="cta"` child, plus a footer-variant section to exercise
+    the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
+    round-trip must preserve CTA nodes with href + variant.
+    """
+    print("[10/18] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -632,12 +638,29 @@ def check_landing_mode() -> None:
                   "font_family": "NotoSansSC-Bold", "font_size_px": 20,
                   "effects": {"fill": "#334155"}},
              ]},
-            {"layer_id": "S3", "name": "cta", "kind": "section", "z_index": 3,
+            {"layer_id": "S3", "name": "pricing", "kind": "section", "z_index": 3,
+             "children": [
+                 {"layer_id": "P1", "name": "pricing_title", "kind": "text", "z_index": 1,
+                  "text": "Free forever. Bring your own API keys.",
+                  "font_family": "NotoSerifSC-Bold", "font_size_px": 40,
+                  "align": "center", "effects": {"fill": "#0f172a"}},
+             ]},
+            {"layer_id": "S4", "name": "cta", "kind": "section", "z_index": 4,
              "children": [
                  {"layer_id": "C1", "name": "cta_text", "kind": "text", "z_index": 1,
                   "text": "pip install longcat-design",
                   "font_family": "NotoSansSC-Bold", "font_size_px": 36,
                   "align": "center", "effects": {"fill": "#f8fafc"}},
+                 {"layer_id": "C2", "name": "cta_button", "kind": "cta", "z_index": 2,
+                  "text": "Get started", "href": "#sec-features",
+                  "variant": "primary"},
+             ]},
+            {"layer_id": "S5", "name": "footer", "kind": "section", "z_index": 5,
+             "children": [
+                 {"layer_id": "FT1", "name": "copyright", "kind": "text", "z_index": 1,
+                  "text": "© 2026 LongcatDesign · MIT",
+                  "font_family": "NotoSansSC-Bold", "font_size_px": 14,
+                  "align": "center", "effects": {"fill": "#94a3b8"}},
              ]},
         ],
     }}
@@ -671,6 +694,16 @@ def check_landing_mode() -> None:
         "toolbar container":     'class="ld-toolbar"',
         "save modal":            'id="ld-modal-backdrop"',
         "landing hides drag":    "/* Drag handle hidden in landing",
+        # v1.3 interactive markers
+        "auto-nav header":       '<header class="ld-header"',
+        "nav anchor":            'data-nav-target="sec-',
+        "section id":            'id="sec-',
+        "reveal attr":           'data-reveal="true"',
+        "cta anchor":             '<a class="ld-cta ld-cta--primary"',
+        "cta href":               'href="#sec-features"',
+        "cta data-kind":          'data-kind="cta"',
+        "semantic footer":        '<footer class="ld-section"',
+        "interactive JS":         'IntersectionObserver',
     }
     for label, needle in required_markers.items():
         if needle not in html_text:
@@ -698,10 +731,11 @@ def check_landing_mode() -> None:
               f"{traj.metadata.get('parent_run_id')!r}")
     if traj.design_spec.artifact_type != ArtifactType.LANDING:
         _fail("landing round-trip lost artifact_type")
-    # Layer graph should have 3 sections + their children preserved
+    # Layer graph should have 5 sections + their children preserved (the
+    # footer section is restored from the semantic <footer class="ld-section">).
     sections = [n for n in traj.layer_graph if n.kind == "section"]
-    if len(sections) != 3:
-        _fail(f"expected 3 sections, got {len(sections)}")
+    if len(sections) != 5:
+        _fail(f"expected 5 sections, got {len(sections)}")
     # Headline font size should reflect the edit (128, not 96)
     headline = next((c for s in sections for c in (s.children or [])
                      if c.name == "hero_headline"), None)
@@ -709,14 +743,25 @@ def check_landing_mode() -> None:
         _fail("hero_headline lost on round-trip")
     if headline.font_size_px != 128:
         _fail(f"edit lost: hero_headline.font_size_px={headline.font_size_px}, expected 128")
-    _ok(f"landing round-trip: 3 sections + children preserved, edits applied "
-        f"(hero_headline: 96px → 128px)")
+    # v1.3 — CTA node must survive round-trip with href + variant intact.
+    cta = next((c for s in sections for c in (s.children or [])
+                if c.kind == "cta"), None)
+    if cta is None:
+        _fail("CTA node lost on round-trip")
+    if cta.text != "Get started":
+        _fail(f"CTA text lost: got {cta.text!r}")
+    if cta.href != "#sec-features":
+        _fail(f"CTA href lost: got {cta.href!r}")
+    if cta.variant != "primary":
+        _fail(f"CTA variant lost: got {cta.variant!r}")
+    _ok(f"landing round-trip: 5 sections + children preserved, edits applied "
+        f"(hero_headline: 96px → 128px), CTA node + href + variant intact")
 
 
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/16] design-system styles (no API)")
+    print("[11/18] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -817,7 +862,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/16] landing with images (no API)")
+    print("[12/18] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -932,7 +977,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/16] deck mode (no API)")
+    print("[13/18] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1104,7 +1149,7 @@ def check_reasoning_step_roundtrip() -> None:
     bugs; this one specifically exercises the CoT capture path with the exact
     shape the planner will emit at runtime.
     """
-    print("[14/16] reasoning step + ThinkingBlockRecord roundtrip")
+    print("[14/18] reasoning step + ThinkingBlockRecord roundtrip")
     plain = ThinkingBlockRecord(
         thinking="I need to first declare the artifact type, then propose a spec.",
         signature="sig_abc123_opaque_anthropic_signature",

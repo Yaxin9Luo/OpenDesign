@@ -70,3 +70,22 @@ body { background: #e8e2d3; color: var(--ld-fg); font-family: Georgia, 'Times Ne
 .ld-section[data-section-variant="cta"] .layer.text:not(:first-of-type) {
   color: var(--ld-fg-inverse); opacity: 0.85;
 }
+
+/* v1.3 — top nav: serif small-caps rule with hairline border */
+.ld-header { background: var(--ld-bg); border-bottom: 1px solid var(--ld-rule); padding: 18px 80px; }
+.ld-nav ul { justify-content: center; gap: 42px; }
+.ld-nav a { color: var(--ld-fg); font-family: Georgia, serif; font-size: 13px;
+            letter-spacing: 0.16em; text-transform: uppercase; }
+.ld-nav a:hover { color: var(--ld-accent); }
+.ld-nav a[aria-current="page"] { color: var(--ld-accent); border-bottom: 1px solid var(--ld-accent); }
+
+/* v1.3 — CTA: link-style, no button chrome (editorial rejects buttons) */
+.ld-cta { font-family: Georgia, serif; font-size: 17px; font-style: italic;
+          padding: 2px 0; border: 0; background: transparent; }
+.ld-cta--primary { color: var(--ld-accent); border-bottom: 2px solid var(--ld-accent); }
+.ld-cta--primary:hover { color: var(--ld-fg); border-bottom-color: var(--ld-fg); }
+.ld-cta--secondary { color: var(--ld-fg); border-bottom: 1px solid var(--ld-rule); }
+.ld-cta--secondary:hover { color: var(--ld-accent); border-bottom-color: var(--ld-accent); }
+.ld-cta--ghost { color: var(--ld-fg-muted); }
+.ld-cta--ghost:hover { color: var(--ld-fg); }
+.ld-cta:focus-visible { outline: 1px solid var(--ld-accent); outline-offset: 3px; }

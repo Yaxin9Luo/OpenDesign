@@ -84,3 +84,35 @@ body { background: var(--ld-fg); color: var(--ld-fg); font-family: 'Archivo Blac
 .ld-landing .layer.text:focus {
   outline: 3px dashed var(--ld-fg); outline-offset: 6px;
 }
+
+/* v1.3 — top nav: thick candy-bar with hard shadow */
+.ld-header { background: var(--ld-card-2); border: var(--ld-border); border-top: none;
+             padding: 16px 32px; box-shadow: var(--ld-shadow-hard-sm); }
+.ld-nav ul { justify-content: center; gap: 0; flex-wrap: wrap; }
+.ld-nav a { color: var(--ld-fg); font-family: 'Archivo Black', 'Space Grotesk', sans-serif;
+            font-weight: 900; font-size: 14px; letter-spacing: 0.05em;
+            text-transform: uppercase; padding: 10px 18px;
+            border-right: var(--ld-border); transition: background .1s ease; }
+.ld-nav ul li:last-child a { border-right: 0; }
+.ld-nav a:hover { background: var(--ld-bg); }
+.ld-nav a[aria-current="page"] { background: var(--ld-accent); color: var(--ld-fg-inverse); }
+
+/* v1.3 — CTA: brutalist primary-only pattern */
+.ld-cta { font-family: 'Archivo Black', 'Space Grotesk', sans-serif; font-weight: 900;
+          font-size: 17px; letter-spacing: 0.05em; text-transform: uppercase;
+          padding: 18px 32px; border: var(--ld-border); border-radius: 0;
+          transition: transform .1s ease, box-shadow .1s ease; }
+.ld-cta--primary { background: var(--ld-accent); color: var(--ld-fg-inverse);
+                   box-shadow: var(--ld-shadow-hard); }
+.ld-cta--primary:hover { transform: translate(-2px, -2px);
+                         box-shadow: 10px 10px 0 #000000; }
+.ld-cta--primary:active { transform: translate(4px, 4px);
+                          box-shadow: 2px 2px 0 #000000; }
+.ld-cta--secondary { background: var(--ld-card-4); color: var(--ld-fg);
+                     box-shadow: var(--ld-shadow-hard); }
+.ld-cta--secondary:hover { transform: translate(-2px, -2px);
+                           box-shadow: 10px 10px 0 #000000; }
+.ld-cta--ghost { background: var(--ld-bg); color: var(--ld-fg);
+                 box-shadow: var(--ld-shadow-hard-sm); }
+.ld-cta--ghost:hover { background: var(--ld-card-1); }
+.ld-cta:focus-visible { outline: 4px solid var(--ld-accent); outline-offset: 4px; }
