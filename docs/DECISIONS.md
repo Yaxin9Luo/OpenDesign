@@ -6,6 +6,24 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-21 — v1.3.1 paper landings: ingested figures > NBP stock icons
+
+**Decision**: Add a "Paper landing imagery policy" section to `prompts/planner.md` that flips the default imagery source for **paper-sourced** landings: when `ingest_document` registered ≥ 3 figure layers, the planner MUST prefer `ingest_fig_NN` layers in content sections (highlights / method / results / showcase); NBP (`generate_image`) is reserved for imagery the paper cannot provide (hero brand shots only, and usually not even that since papers ship Fig. 1 as a viable hero). Ingested benchmark tables MUST land as `kind: "table"` layers rendering a real HTML `<table>` with winner-cell bolding — NOT as cropped screenshots.
+
+The policy mirrors v1.2.2's poster visual-density rules: hard floor on ingested-figure count (≥ 3 when ≥ 5 available; ≥ 5 when ≥ 10), plus caption-keyword routing hints (caption contains "architecture" → method section, "samples" → showcase, "benchmark" → results). Style preference: `editorial` (default for papers), `minimalist`, or `liquid-glass`. Consumer-product styles (`claymorphism`, `neubrutalism`, `glassmorphism`) are explicitly discouraged for paper landings — they collide visually with academic content.
+
+**Alternatives considered**:
+1. **Add a new `ArtifactType` subtype like `paper_landing`.** Rejected: the artifact IS still a landing; the only difference is imagery policy. Overloading the type system for what's effectively a prompt rule is heavier than the problem.
+2. **Gate the policy at code level** — composite auto-rejects NBP calls when `ingested` state is non-empty. Rejected: strips agency from the planner. The right shape is a prompt rule the planner reasons about + a critic that can catch violations (the critic already grades content/copy appropriateness for landings; orphan-figure penalties from v1.2.4 extend naturally).
+3. **Extend the per-style design-system prompt files** (`prompts/design-systems/*.md`) with paper-specific guidance. Rejected: the policy is cross-cutting across ALL paper landings regardless of style, so it belongs in the landing-workflow section of `planner.md`, not fragmented across 6 style files.
+4. **Keep the claymorphism-first default** because "friendly landing pages look better". Rejected by the user after the first dogfood run: academic papers deserve editorial typography + restrained palette + serious tone. Marketing-style landings collide visually with the paper's content, so the planner should route away from them when the input signals academic.
+
+**Rationale**: First real paper2landing dogfood (run `20260421-201900-cb30b9bd`, claymorphism) produced **5 NBP stock icons + 1 ingested figure** — the "feature cards" pattern that looks right for a SaaS product page but wrong for a research paper. The prompt's step-4 line ("`generate_image` — once per image layer you want inline: hero + feature-card icons") had no paper carve-out, so the planner defaulted to NBP for highlights. v1.3.1 fix is prompt-only (no code change) and validated by the re-run `20260421-203226-fc1740c9` (editorial): **0 NBP calls, 9 ingested figures + 1 ingested table across 8 sections**, `pass 0.88` in one iteration, method section features 4 paper figures (architecture + tokenizer + training pipeline), results has the full 14×12 benchmark table with 9 bolded winner cells, showcase has 2 qualitative figures. The planner also auto-applied v1.2.4's figure cross-reference rule on the landing — body copy cites "Figure 1" / "Figure 6" where appropriate.
+
+**Revisit when**: (a) a user complains that a non-paper landing (e.g. developer tool with bundled screenshots) gets blocked from NBP icons → the policy currently only kicks in when `ingest_document` ran; verify this gate is working; (b) planners systematically under-use the policy (still reach for NBP when paper figures are available) → tighten the rule into a hard blocker via the critic rubric; (c) users want claymorphism for a specific paper (e.g. children's-education research) → loosen the "explicitly discouraged" to "prefer editorial / minimalist / liquid-glass unless the brief calls out otherwise".
+
+---
+
 ## 2026-04-21 — v1.3.0 interactive landing pages (CTA layer kind, auto-nav, inline JS)
 
 **Decision**: Ship landing interactivity as four decoupled pieces, each owned by an existing layer in the stack — no new tool, no framework, no server component. Specifically:

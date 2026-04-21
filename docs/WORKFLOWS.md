@@ -141,31 +141,53 @@ Canvas: typically 3:4 (`1536×2048`) or 4:3 (`2048×1536`) for print; `1920×108
 
 ### Landing (`artifact_type = "landing"`)
 
-HTML one-pager with 6 bundled design systems + inline NBP imagery.
+Self-contained HTML one-pager with 6 bundled design systems + inline NBP or ingested imagery. **v1.3** adds CTA layers, auto-generated top nav, reveal-on-scroll, and semantic `<header>/<main>/<footer>`.
 
 ```
 switch_artifact_type("landing")
   → propose_design_spec {
       canvas: { w_px: 1200-1440 },
-      design_system: { style: "claymorphism", accent_color: "#..." },
-      layer_graph: [ section { children: [text, image (src_path: null)] }, ... ]
+      design_system: { style: "editorial", accent_color: "#...", show_nav: null|true|false },
+      layer_graph: [
+        section {
+          name: "hero"|"features"|"cta"|"footer"|...,
+          children: [
+            text { ... },                              // native HTML text
+            image { src_path: null (→ generate_image) OR ingest_fig_NN (paper passthrough) },
+            table { rows, headers, col_highlight_rule },  // real <table>
+            cta { text, href, variant: primary|secondary|ghost }  // v1.3 <a role="button">
+          ]
+        },
+        ...
+      ]
     }
-  → generate_image × N (per image declared in propose_design_spec; src_path: null hydrated at composite)
+  → generate_image × N (only for NBP imagery; skip entirely for paper landings per the policy below)
   → composite → index.html + preview.png (NO PSD/SVG — text is native HTML)
   → critique (text-only) → pass / revise / fail
   → finalize
 ```
 
+**v1.3 auto-behaviors** (no spec fields needed):
+- Every `<section>` gets `id="sec-{slug(name)}"` — CTAs with `href="#sec-pricing"` scroll smoothly to that section.
+- A `<header><nav>` is auto-prepended when `section_count ≥ 4`; override explicitly via `design_system.show_nav: true|false`. Hero + footer sections are skipped from the nav; active link gets `aria-current="page"` via JS.
+- Last section whose `variant == "footer"` is auto-upgraded to semantic `<footer>` outside `<main>` (apply-edits round-trip also scans for it).
+- An inline vanilla JS IIFE runs `IntersectionObserver` reveal-on-scroll (`[data-reveal]` → `.is-revealed`) + smooth `scrollIntoView` on `<a href="#...">` + active-nav tracking. Respects `prefers-reduced-motion`.
+
 Design system picker (via `prompts/planner.md` loudness cheat sheet):
 
 | Style | Loudness | Brief vibe |
 |---|---|---|
-| minimalist | 3/10 | SaaS · fintech · enterprise (default) |
-| editorial | 3/10 | publication · essay · long-form |
-| claymorphism | 5/10 | friendly · consumer · wellness |
+| editorial | 3/10 | publication · essay · long-form · **paper landings (default)** |
+| minimalist | 3/10 | SaaS · fintech · enterprise |
 | liquid-glass | 5/10 | premium · Apple-like · media-rich |
+| claymorphism | 5/10 | friendly · consumer · wellness |
 | glassmorphism | 6/10 | modern SaaS · AI platform |
 | neubrutalism | 10/10 | indie · punk · bold portfolio |
+
+**Paper landings (v1.3.1)** — when `ingest_document` registered ≥ 3 figure layers, the prompt enforces an academic vs marketing split:
+- ≥ 3 ingested figure layers in content sections if ≥ 5 available (≥ 5 if ≥ 10); NO NBP calls for `highlights` / `method` / `benchmarks` / `showcase`. NBP is reserved for imagery the paper can't provide (rare — most papers have Fig. 1 as a viable hero).
+- Ingested `ingest_table_NN` MUST appear on the landing as `kind: "table"` — a real HTML `<table>` with winner-cell bolding, not a cropped screenshot.
+- Preferred styles: `editorial` (default), `minimalist`, `liquid-glass`. Consumer-product styles (`claymorphism`, `neubrutalism`, `glassmorphism`) are explicitly discouraged.
 
 ### Deck (`artifact_type = "deck"`)
 
@@ -336,13 +358,16 @@ The ingest tool_result summary includes a **ranked top-20 figure catalog** (with
 
 ### Sample costs (43-page / 17 MB Longcat-Next paper, Qwen-VL-Max default)
 
-| Run | Wall time | Cost | Critique |
-|---|---|---|---|
-| paper → poster | ~8-11 min | $6-12 | revise 0.86 (3 issues) |
-| paper → landing | ~5.7 min | $3.20 | pass 0.92 (4 issues) |
-| paper → deck | ~7.8-9.6 min | $4.17-6.63 | pass 0.88 (4 issues) |
+| Run | Wall time | Cost | Critique | Imagery |
+|---|---|---|---|---|
+| paper → poster (v1.2) | ~8-11 min | $6-12 | revise 0.86 (3 issues) | 5 ingested figures + 1 ingested table |
+| paper → landing (v1.3, claymorphism — marketing vibe) | 8m 12s | $4.42 | pass 0.88 (3 issues) | 5 NBP icons + 1 ingested figure + 1 table |
+| **paper → landing (v1.3.1, editorial — academic)** | **6m 26s** | **$4.07** | **pass 0.88** (4 issues) | **0 NBP + 9 ingested figures + 1 table** |
+| paper → deck | ~7.8-9.6 min | $4.17-6.63 | pass 0.88 (4 issues) | Mix — planner chooses per slide |
 
 Landing is fastest + cheapest because flow layout needs no preview rasterization; deck is moderate because of per-slide PNG previews + critic. Poster is most expensive + most-revised because the visual-density critique is strictest (20 % weight) and the layout has more placement DOF.
+
+The claymorphism-vs-editorial contrast on the same paper is the v1.3.1 dogfood — adding "Paper landing imagery policy" rules to the planner prompt flipped the feature/highlights/method sections from NBP stock icons to the paper's actual figures without changing any code.
 
 ### Tuning
 
