@@ -26,6 +26,59 @@ from .html_renderer import write_html, write_landing_html
 from .pptx_renderer import render_slide_preview_png, write_pptx
 from ..schema import ArtifactType, CompositionArtifacts, ToolObservation
 from ..util.logging import log
+from ..util.table_png import render_table_png
+
+
+# Warn when the planner's bbox aspect is this many times off from the
+# layer's source-content aspect. Above the threshold we letterbox for
+# images / re-render for tables so text/figures stay legible; below,
+# we keep the old "stretch to fit" behavior (imperceptible squeeze).
+_ASPECT_MISMATCH_WARN_RATIO = 2.0
+
+
+def _aspect_fit_contain(
+    src_size: tuple[int, int],
+    dst_size: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    """Compute the (new_w, new_h, off_x, off_y) that fits `src_size`
+    into `dst_size` preserving aspect ratio, centered. Letterbox-style.
+
+    Empty source or dest yields a 1×1 no-op at origin so callers don't
+    crash on malformed input.
+    """
+    sw, sh = src_size
+    dw, dh = dst_size
+    if sw <= 0 or sh <= 0 or dw <= 0 or dh <= 0:
+        return 1, 1, 0, 0
+    scale = min(dw / sw, dh / sh)
+    nw = max(1, int(sw * scale))
+    nh = max(1, int(sh * scale))
+    off_x = (dw - nw) // 2
+    off_y = (dh - nh) // 2
+    return nw, nh, off_x, off_y
+
+
+def _maybe_warn_aspect(layer: dict[str, Any], src_size: tuple[int, int],
+                       bbox: tuple[int, int, int, int]) -> None:
+    """Emit `composite.bbox_aspect_warning` when the planner's bbox
+    aspect ratio diverges from the layer's source content by more than
+    `_ASPECT_MISMATCH_WARN_RATIO`. Future planner-prompt tuning can
+    consume these warnings to learn which figure kinds get systemically
+    under-sized."""
+    sw, sh = src_size
+    _bx, _by, bw, bh = bbox
+    if min(sw, sh, bw, bh) <= 0:
+        return
+    src_aspect = sw / sh
+    bbox_aspect = bw / bh
+    ratio = max(src_aspect, bbox_aspect) / min(src_aspect, bbox_aspect)
+    if ratio >= _ASPECT_MISMATCH_WARN_RATIO:
+        log("composite.bbox_aspect_warning",
+            layer_id=layer.get("layer_id"),
+            kind=layer.get("kind"),
+            src_size=f"{sw}x{sh}",
+            bbox=f"{bw}x{bh}",
+            aspect_mismatch=round(ratio, 2))
 
 
 def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
@@ -71,7 +124,7 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     layer_manifest: list[dict[str, Any]] = []
 
     try:
-        _write_psd(sorted_layers, cw, ch, psd_path, layer_manifest)
+        _write_psd(sorted_layers, cw, ch, psd_path, layer_manifest, ctx)
     except Exception as e:
         return obs_error(f"PSD write failed: {e}")
 
@@ -86,7 +139,7 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         return obs_error(f"HTML write failed: {e}")
 
     try:
-        _write_preview(sorted_layers, cw, ch, preview_path)
+        _write_preview(sorted_layers, cw, ch, preview_path, ctx)
     except Exception as e:
         return obs_error(f"preview render failed: {e}")
 
@@ -538,17 +591,18 @@ def _write_landing_preview(spec: Any, out_path: Path, ctx: ToolContext) -> None:
 
 
 def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,
-               out_path: Path, manifest: list[dict[str, Any]]) -> None:
+               out_path: Path, manifest: list[dict[str, Any]],
+               ctx: ToolContext) -> None:
     psd = PSDImage.new(mode="RGB", size=(cw, ch), depth=8)
 
     text_group = None
 
     for L in layers:
-        png = Image.open(L["src_path"])
         bbox = L["bbox"]
         bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
 
         if L["kind"] == "background":
+            png = Image.open(L["src_path"])
             if png.mode != "RGB":
                 png = png.convert("RGB")
             if png.size != (cw, ch):
@@ -562,28 +616,61 @@ def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,
                 "layer_id": L["layer_id"], "name": L["name"], "kind": "background",
                 "png_path": L["src_path"], "bbox": {"x": 0, "y": 0, "w": cw, "h": ch},
             })
-        elif L["kind"] == "image" or L["kind"] == "table":
-            # v1.1 paper2any: ingested figures + user-passthrough images are
-            # native-sized PNGs (not full-canvas). v1.2 adds "table" which
-            # reaches the PSD path via its pre-rendered src_path fallback
-            # (HTML uses live <table>; PSD has no table primitive so we
-            # flatten to a pixel layer same as images).
-            if png.mode != "RGBA":
-                png = png.convert("RGBA")
-            if png.size != (bw, bh):
-                png = png.resize((bw, bh), Image.LANCZOS)
+        elif L["kind"] == "table":
+            # v1.2.1: rebake the table PNG at the planner's bbox dims.
+            # PSD has no live-table primitive, so we flatten to a pixel
+            # layer — but by calling render_table_png with width_px=bw
+            # and max_height_px=bh, the font autoscale produces a
+            # legible PNG at bbox scale rather than a stretched one.
+            try:
+                tmp = ctx.layers_dir / f"table_at_bbox_{L['layer_id']}_psd.png"
+                render_table_png(
+                    rows=L.get("rows") or [],
+                    headers=L.get("headers") or [],
+                    out_path=tmp,
+                    width_px=bw,
+                    max_height_px=bh,
+                    col_highlight_rule=L.get("col_highlight_rule") or [],
+                    font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+                    bold_font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+                )
+                png = Image.open(tmp).convert("RGBA")
+            except Exception:
+                png = Image.open(L["src_path"]).convert("RGBA")
             psd.create_pixel_layer(
                 png, name=L["name"], top=by, left=bx,
                 opacity=255, blend_mode=BlendMode.NORMAL,
                 compression=Compression.RLE,
             )
             manifest.append({
-                "layer_id": L["layer_id"], "name": L["name"], "kind": L["kind"],
+                "layer_id": L["layer_id"], "name": L["name"], "kind": "table",
+                "png_path": L["src_path"], "bbox": {"x": bx, "y": by, "w": bw, "h": bh},
+            })
+        elif L["kind"] == "image":
+            # v1.2.1: contain-fit instead of stretch. The PSD pixel
+            # layer is sized to the fitted image (letterbox inside the
+            # planner's bbox); `top`/`left` shifted by the centering
+            # offset so the figure doesn't drift off-bbox.
+            png = Image.open(L["src_path"])
+            if png.mode != "RGBA":
+                png = png.convert("RGBA")
+            _maybe_warn_aspect(L, png.size, (bx, by, bw, bh))
+            nw, nh, off_x, off_y = _aspect_fit_contain(png.size, (bw, bh))
+            if (nw, nh) != png.size:
+                png = png.resize((nw, nh), Image.LANCZOS)
+            psd.create_pixel_layer(
+                png, name=L["name"], top=by + off_y, left=bx + off_x,
+                opacity=255, blend_mode=BlendMode.NORMAL,
+                compression=Compression.RLE,
+            )
+            manifest.append({
+                "layer_id": L["layer_id"], "name": L["name"], "kind": "image",
                 "png_path": L["src_path"], "bbox": {"x": bx, "y": by, "w": bw, "h": bh},
             })
         else:
             # text layer — render_text_layer produces a full-canvas transparent
             # RGBA with glyphs inside bbox, so we crop by bbox then place.
+            png = Image.open(L["src_path"])
             if png.mode != "RGBA":
                 png = png.convert("RGBA")
             crop = png.crop((bx, by, bx + bw, by + bh))
@@ -608,6 +695,7 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
     text_layers = [L for L in layers if L["kind"] == "text" and L.get("text")]
     bg_layers = [L for L in layers if L["kind"] == "background"]
     image_layers = [L for L in layers if L["kind"] == "image"]
+    table_layers = [L for L in layers if L["kind"] == "table"]
 
     fonts_used: dict[str, set[str]] = {}
     for L in text_layers:
@@ -634,6 +722,8 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
 
     # v1.1 paper2any: emit ingested/passthrough images as <image> elements
     # positioned by bbox, ordered by z_index so they layer correctly with text.
+    # v1.2.1: preserveAspectRatio="xMidYMid meet" = SVG's letterbox — the
+    # renderer scales the image into the bbox without stretching, centered.
     for L in sorted(image_layers, key=lambda x: int(x.get("z_index", 0))):
         bbox = L["bbox"]
         bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
@@ -642,6 +732,38 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
         dwg.add(dwg.image(
             href=f"data:image/png;base64,{b64}",
             insert=(bx, by), size=(bw, bh),
+            preserveAspectRatio="xMidYMid meet",
+        ))
+
+    # v1.2.1: table layers. Re-render at the planner's bbox so the
+    # SVG-embedded PNG is font-autoscaled rather than post-squished.
+    # preserveAspectRatio is still set so viewers (Illustrator / Inkscape /
+    # browsers) letterbox if the embedded PNG doesn't exactly fill bbox.
+    for L in sorted(table_layers, key=lambda x: int(x.get("z_index", 0))):
+        bbox = L["bbox"]
+        bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+        src_path = L["src_path"]
+        try:
+            tmp = ctx.layers_dir / f"table_at_bbox_{L['layer_id']}_svg.png"
+            render_table_png(
+                rows=L.get("rows") or [],
+                headers=L.get("headers") or [],
+                out_path=tmp,
+                width_px=bw,
+                max_height_px=bh,
+                col_highlight_rule=L.get("col_highlight_rule") or [],
+                font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+                bold_font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+            )
+            src_path = str(tmp)
+        except Exception:
+            pass
+        with open(src_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        dwg.add(dwg.image(
+            href=f"data:image/png;base64,{b64}",
+            insert=(bx, by), size=(bw, bh),
+            preserveAspectRatio="xMidYMid meet",
         ))
 
     for L in text_layers:
@@ -676,32 +798,69 @@ def _write_svg(layers: list[dict[str, Any]], cw: int, ch: int,
     dwg.save(pretty=True)
 
 
-def _write_preview(layers: list[dict[str, Any]], cw: int, ch: int, out_path: Path) -> None:
+def _write_preview(layers: list[dict[str, Any]], cw: int, ch: int,
+                   out_path: Path, ctx: ToolContext) -> None:
     base = Image.new("RGBA", (cw, ch), (255, 255, 255, 255))
     for L in layers:
-        png = Image.open(L["src_path"])
-        if png.mode != "RGBA":
-            png = png.convert("RGBA")
         kind = L["kind"]
         if kind == "background":
+            png = Image.open(L["src_path"])
+            if png.mode != "RGBA":
+                png = png.convert("RGBA")
             if png.size != (cw, ch):
                 png = png.resize((cw, ch), Image.LANCZOS)
             base = Image.alpha_composite(base, png)
-        elif kind == "image" or kind == "table":
-            # image layer  → v1.1 native-sized PNG placed at bbox.
-            # table layer → v1.2 PIL-rendered table PNG (src_path); HTML
-            # renderer uses live <table>, but PSD / SVG / preview paths
-            # just treat it as another image.
+        elif kind == "table":
+            # v1.2.1: re-render tables at the planner's exact bbox dims.
+            # render_table_png autoscales font-size + drops rows that
+            # won't fit — so an under-sized bbox degrades gracefully
+            # instead of LANCZOS-squishing 14 rows into 12 px tall each.
             bbox = L["bbox"]
             bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
-            if png.size != (bw, bh):
-                png = png.resize((bw, bh), Image.LANCZOS)
+            try:
+                tmp = ctx.layers_dir / f"table_at_bbox_{L['layer_id']}.png"
+                render_table_png(
+                    rows=L.get("rows") or [],
+                    headers=L.get("headers") or [],
+                    out_path=tmp,
+                    width_px=bw,
+                    max_height_px=bh,
+                    col_highlight_rule=L.get("col_highlight_rule") or [],
+                    font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+                    bold_font_path=ctx.settings.fonts_dir / "NotoSansSC-Bold.otf",
+                )
+                png = Image.open(tmp).convert("RGBA")
+            except Exception:
+                # Fall back to the pre-baked src_path render if rerender fails.
+                png = Image.open(L["src_path"]).convert("RGBA")
             full = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            # render_table_png may return shorter than bh (rows truncated)
+            # or narrower than bw; paste at bbox origin, let it be.
             full.paste(png, (bx, by))
+            base = Image.alpha_composite(base, full)
+        elif kind == "image":
+            # v1.2.1: contain-fit (letterbox) instead of stretching to
+            # bbox. Matches HTML's object-fit:contain behavior. A wildly
+            # under-sized bbox now leaves whitespace around the figure
+            # instead of distorting it.
+            png = Image.open(L["src_path"])
+            if png.mode != "RGBA":
+                png = png.convert("RGBA")
+            bbox = L["bbox"]
+            bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+            _maybe_warn_aspect(L, png.size, (bx, by, bw, bh))
+            nw, nh, off_x, off_y = _aspect_fit_contain(png.size, (bw, bh))
+            if (nw, nh) != png.size:
+                png = png.resize((nw, nh), Image.LANCZOS)
+            full = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            full.paste(png, (bx + off_x, by + off_y))
             base = Image.alpha_composite(base, full)
         else:
             # text layer: already full-canvas transparent RGBA with glyphs
             # positioned inside bbox.
+            png = Image.open(L["src_path"])
+            if png.mode != "RGBA":
+                png = png.convert("RGBA")
             if png.size != (cw, ch):
                 full = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
                 full.paste(png, (0, 0))
