@@ -233,9 +233,77 @@ matching landing page"):
 
 # Artifact-type specific guidance
 
-- **poster**: absolutely-positioned layers over a text-free background. Canvas e.g. 1536×2048 (3:4) or 2048×1536 (4:3). Use `generate_background` for the main visual, then `render_text_layer` for each text element.
+- **poster**: absolutely-positioned layers over a text-free background. Canvas e.g. 1536×2048 (3:4) or 2048×1536 (4:3). Use `generate_background` for the main visual, then `render_text_layer` for each text element. **Academic paper → poster**: see the **Poster workflow (paper2poster)** section below — this is a visual-first medium and the default "text blocks in columns" layout is wrong for it.
 - **deck**: N slides output as a native `.pptx` (python-pptx with live TextFrames — editable in PowerPoint / Keynote / Google Slides). Slide-sized canvas: default `1920×1080` (16:9). Each slide is one top-level `LayerNode` with `kind: "slide"` whose `children` hold per-slide text / image / background elements positioned by pixel `bbox`. See the **Deck workflow** section below.
 - **landing**: single self-contained HTML page with semantic sections (header / hero / features / cta / footer). Flow layout, not absolute positioning. See the **Landing workflow** section below.
+
+# Poster workflow (paper2poster) — visual-density rules
+
+A research poster is **not** a text document with decorative images —
+it is a **visual artifact** that has to stop a viewer walking past it
+at a conference. Treat the paper's figures and tables as the
+**primary** content, and the text as labels / captions that explain
+what the viewer is already seeing.
+
+## Hard rules when the brief is a paper
+
+These apply when `ingest_document` returned ≥ 3 figure layers AND the
+user asked for a poster.
+
+1. **Figure count floor.**
+   - If `n_figures_available ≥ 5`: place **at least 4 distinct `ingest_fig_NN` image layers** in the DesignSpec.
+   - If `n_figures_available ≥ 10`: place **at least 6**.
+   - If the paper registered a benchmark table (`ingest_table_NN`): place **at least 1 table layer** in addition to the figures.
+   - **Never ship a paper poster with only 1 figure** — that's the anti-pattern this rule exists to kill.
+
+2. **Figure diversity.** Pick figures from DIFFERENT categories, not 4 variations of the same chart. The canonical mix:
+   - 1 × **system / pipeline diagram** (architecture, method overview) — usually the paper's Fig. 1 or Fig. 2.
+   - 1-2 × **qualitative examples / visualization** (generated samples, saliency maps, t-SNE, case studies).
+   - 1-2 × **quantitative results** (benchmark bars, scaling curves, ablation plots, comparison tables).
+   Use the per-figure captions in the ingest summary to route each into its category.
+
+3. **Image-area target: ≥ 45 % of canvas.** Sum of `bbox.w × bbox.h` across all `kind: "image"` + `kind: "table"` layers should be at least `0.45 × canvas.w_px × canvas.h_px`. For a 1536×2048 canvas that's ~1.4M px² of imagery total. A single 900×600 hero + six 300×200 thumbnails gets nowhere close — go bigger.
+
+4. **Minimum figure bbox.** Every placed figure must be at least **600px on its shorter side**. Squeezing a dense diagram into a 400×200 thumbnail makes it unreadable at poster scale — better to leave that figure out than place it too small. Tables need **≥ 600px height** AND **≥ 900px width**; if the table doesn't fit in the remaining canvas at those dims, drop the table rather than stretch it into a thin strip.
+
+5. **Text density caps.** Posters are read at 2-3 meters from 1 meter away — not on a laptop screen.
+   - Body text layers: **≤ 30 words per layer**, font_size_px ≥ 20.
+   - Section headings: **≤ 6 words**, font_size_px ≥ 36.
+   - Title: **≤ 8 words**, font_size_px ≥ 96.
+   - Prefer 1-word or 3-word **labels** next to each figure over paragraph summaries.
+   - If you find yourself writing a 3-sentence paragraph explaining a figure, DELETE the paragraph and trust the figure — the caption layer (auto-placed next to the figure via `caption` field) already has the paper's exact wording.
+
+6. **Anti-pattern**: three columns of body text + one big hero figure at the top. That's a research paper's page 1 printed as a PNG — not a poster. The viewer has to stop and read to extract anything, which they won't. If your DesignSpec looks like this, restructure before emitting.
+
+## Shape of the DesignSpec for a paper poster
+
+A working paper-poster layout typically has **5-8 image/table layers + 8-12 text layers** (vs. the default "all text" tendency of 1-2 images + 20 text layers). Target distribution for a 1536×2048 (3:4) canvas:
+
+- **Top band (y=0 to ~400)**: title + authors + affiliation + paper-metadata stamp (arXiv, HuggingFace links) — fully text.
+- **Hero figure (y=~400 to ~1000)**: 1 flagship visual, ~1376×560. Usually the architecture diagram or the benchmark hero chart.
+- **Body grid (y=~1000 to ~1700)**: 2-3 column grid mixing figures + short labels. Each figure ~500×400 minimum. Each label ≤ 20 words.
+- **Results strip (y=~1700 to ~2000)**: the benchmark table (if any) OR a row of 3 smaller result plots. Tables get the full width (1376×280 or more).
+- **Footer band (y=~1960 to ~2048)**: contact / QR / repo URL.
+
+## Picking figures from the ingest summary
+
+The `ingest_document` tool result includes a `Figures available:` list with `(page, WxH, strategy) caption` per figure. Use it to pick deliberately:
+
+- Prefer figures where the shorter side ≥ 600 px (the candidate has enough pixels to render crisply at poster scale).
+- Prefer figures whose caption contains keywords that match your chosen narrative columns (e.g. if your column is "Method", pick figures with "pipeline" / "architecture" / "overview" in the caption).
+- Skip figures whose caption is empty AND strategy is "raster" with dimensions < 600px — those are usually sub-component icons (emoji-style glyphs, audio waveform doodles) that the figure extractor caught but aren't real standalone content.
+
+## Example — strong vs. weak paper poster spec
+
+**Weak** (what we're trying to avoid — the real anti-pattern from earlier runs):
+- 1 figure layer (hero histogram).
+- 12 text layers covering TL;DR + 3 columns of body + 5 bullets + footer = ~450 words on the poster.
+- Table placed at 900×110 → unreadable.
+
+**Strong**:
+- 5 figure layers: architecture diagram (1376×560 hero) + 2 qualitative case panels (480×360 each) + scaling curves (480×360) + training pipeline (480×360).
+- 1 table layer: benchmark table at (80, 1620, 1376, 340).
+- 8 text layers: title + subtitle + authors + 3 section labels ("① Method", "② Results", "③ Impact") + 3 short figure captions ≤ 15 words each + QR/contact footer = ~80 words total.
 
 # Landing workflow (artifact_type = "landing")
 

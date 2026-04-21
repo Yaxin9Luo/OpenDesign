@@ -76,6 +76,14 @@ _MAX_PDF_PAGES = 80
 
 _MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
+# Max number of figures listed in the ingest tool_result summary shown
+# to the planner. Papers with 40+ figures would otherwise blow the
+# planner's remaining output budget on turn 2 just for a catalog it
+# mostly doesn't need; the planner can still reference ANY `ingest_fig_NN`
+# layer_id — the rendered_layers dict has them all. 20 is enough for
+# the planner to pick a diverse 4-8 for a poster.
+_PLANNER_FIG_CATALOG_CAP = 20
+
 # Max parallel caption-matching calls. VLM calls are HTTP-bound; 4–6 in
 # flight keeps wall time tight without tripping OpenRouter rate limits.
 _CAPTION_MATCH_PARALLELISM = 6
@@ -294,13 +302,58 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
         t = s["type"]
         if t == "pdf":
             m = s["manifest"]
+            figure_ids = s.get("registered_figure_ids") or s["registered_layer_ids"]
+            table_ids = s.get("registered_table_ids") or []
             lines.append(
                 f"  • {f} (PDF): \"{m.get('title','?')}\" by "
                 f"{', '.join(m.get('authors', [])[:3]) or 'unknown'} — "
                 f"{len(m.get('sections', []))} section(s), "
-                f"{len(s['registered_layer_ids'])} figure layer(s): "
-                f"{s['registered_layer_ids']}"
+                f"{len(figure_ids)} figure layer(s), "
+                f"{len(table_ids)} table layer(s)."
             )
+            # Per-figure detail so planner can pick meaningfully (not
+            # just place one and move on). Cap the displayed catalog to
+            # the top-N "high-signal" candidates so the planner has
+            # enough output budget to emit a full DesignSpec — papers
+            # with 30+ figures can otherwise push the planner over its
+            # max_tokens budget mid-tool_use.
+            rendered = ctx.state.get("rendered_layers") or {}
+            if figure_ids:
+                ranked = _rank_figure_ids_for_planner(figure_ids, rendered)
+                shown = ranked[:_PLANNER_FIG_CATALOG_CAP]
+                lines.append(
+                    f"    Figures available ({len(figure_ids)} total; "
+                    f"showing top {len(shown)} by size + caption):"
+                )
+                for fid in shown:
+                    rec = rendered.get(fid) or {}
+                    w_h = rec.get("image_size") or "?x?"
+                    page = rec.get("source_page", "?")
+                    cap = (rec.get("caption") or "").replace("\n", " ")[:100]
+                    strat = rec.get("extract_strategy") or "?"
+                    lines.append(
+                        f"      - {fid} (p.{page}, {w_h}, {strat}) {cap}"
+                    )
+                remaining = len(figure_ids) - len(shown)
+                if remaining > 0:
+                    lines.append(
+                        f"      (+ {remaining} smaller / uncaptioned figures "
+                        f"available by layer_id if needed)"
+                    )
+            if table_ids:
+                lines.append("    Tables available:")
+                for tid in table_ids:
+                    rec = rendered.get(tid) or {}
+                    page = rec.get("source_page", "?")
+                    n_rows = len(rec.get("rows") or [])
+                    n_cols = len(rec.get("headers") or []) or (
+                        len((rec.get("rows") or [[]])[0])
+                    )
+                    cap = (rec.get("caption") or rec.get("title") or "")
+                    cap = cap.replace("\n", " ")[:100]
+                    lines.append(
+                        f"      - {tid} (p.{page}, {n_rows}x{n_cols}) {cap}"
+                    )
         elif t == "markdown":
             lines.append(
                 f"  • {f} (MD): {s['n_chars']} chars, "
@@ -982,6 +1035,39 @@ def _register_image_file(src: Path, ctx: ToolContext, *, name_hint: str) -> str:
         "source_file": str(src),
     }
     return layer_id
+
+
+def _rank_figure_ids_for_planner(
+    figure_ids: list[str], rendered: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Order figure ids so the ones most useful to a poster planner
+    come first. Ranking signal, in decreasing priority:
+
+    1. has a non-empty caption (carries explicit author intent),
+    2. larger min-dimension (more printable at poster scale),
+    3. source strategy = "vector" (composite diagrams > raster sub-panels),
+    4. smaller page number (main-paper figures before appendix ones).
+    """
+    def key(fid: str) -> tuple[int, int, int, int]:
+        rec = rendered.get(fid) or {}
+        cap = (rec.get("caption") or "").strip()
+        size = rec.get("image_size") or "0x0"
+        try:
+            w_s, h_s = size.split("x")
+            w = int(w_s); h = int(h_s)
+            side = min(w, h)
+        except Exception:
+            side = 0
+        strat_rank = 1 if rec.get("extract_strategy") == "vector" else 0
+        has_caption_rank = 1 if cap else 0
+        try:
+            page = int(rec.get("source_page") or 999)
+        except (TypeError, ValueError):
+            page = 999
+        # Sort DESC by caption/strategy/size, ASC by page → negate page.
+        return (has_caption_rank, strat_rank, side, -page)
+
+    return sorted(figure_ids, key=key, reverse=True)
 
 
 def _aspect_from_dims(w: int, h: int) -> str:
