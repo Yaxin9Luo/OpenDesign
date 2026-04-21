@@ -101,6 +101,34 @@ _STRUCTURE_PAGE_DPI = 144
 # ~60k chars fits comfortably in the ~16k-token context window Qwen
 # uses for this call while leaving headroom for the JSON response.
 _STRUCTURE_TOTAL_TEXT_CAP = 60_000
+# Scanned-PDF OCR fallback (v1.2.5). When `detect_scanned_pdf` returns
+# True we render each page at this DPI and hand the PNG to the VLM for
+# text extraction — 200 dpi is the sweet spot: dense enough for small
+# body text, not so heavy that a 40-page doc burns minutes. We still
+# cap at `_MAX_PDF_PAGES` so runaway OCR cost is impossible.
+_OCR_PAGE_DPI = 200
+_OCR_PAGE_PARALLELISM = 6
+_OCR_PER_PAGE_TIMEOUT_S = 120.0
+
+
+_OCR_PROMPT = """\
+You are an OCR engine. The image is ONE page from a PDF. Extract every
+readable word exactly as it appears, preserving reading order, newlines
+between paragraphs, and bullets / numbered lists. Ignore page numbers,
+running headers, and watermarks unless they carry content.
+
+Output **a single fenced JSON code block, nothing else**:
+
+```json
+{"text": "<extracted text with \\n newlines>"}
+```
+
+Rules:
+- Use `\\n\\n` between paragraphs, `\\n` between lines inside a paragraph.
+- Do NOT translate. Preserve the original language.
+- Do NOT invent words the image doesn't show.
+- If the page is blank or unreadable, return `{"text": ""}`.
+"""
 
 
 _INGEST_STRUCTURE_PROMPT = """\
@@ -272,6 +300,10 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
         try:
             if ext == ".pdf":
                 s = _ingest_pdf(fp, ctx)
+            elif ext == ".docx":
+                s = _ingest_docx(fp, ctx)
+            elif ext == ".pptx":
+                s = _ingest_pptx(fp, ctx)
             elif ext in (".md", ".markdown", ".txt"):
                 s = _ingest_markdown(fp, ctx)
             elif ext in (".png", ".jpg", ".jpeg", ".webp"):
@@ -279,7 +311,8 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
             else:
                 return obs_error(
                     f"unsupported file type {ext!r}; supported: "
-                    ".pdf, .md/.markdown/.txt, .png/.jpg/.jpeg/.webp",
+                    ".pdf, .docx, .pptx, .md/.markdown/.txt, "
+                    ".png/.jpg/.jpeg/.webp",
                 )
         except ScannedPdfError as e:
             return obs_error(f"ingest failed on {fp.name}: {e}")
@@ -354,6 +387,36 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
                     lines.append(
                         f"      - {tid} (p.{page}, {n_rows}x{n_cols}) {cap}"
                     )
+        elif t in ("docx", "pptx"):
+            m = s["manifest"]
+            figure_ids = s.get("registered_figure_ids") or s["registered_layer_ids"]
+            kind_label = "DOCX" if t == "docx" else "PPTX"
+            lines.append(
+                f"  • {f} ({kind_label}): \"{m.get('title','?')}\" — "
+                f"{len(m.get('sections', []))} section(s), "
+                f"{len(figure_ids)} figure layer(s)."
+            )
+            rendered = ctx.state.get("rendered_layers") or {}
+            if figure_ids:
+                ranked = _rank_figure_ids_for_planner(figure_ids, rendered)
+                shown = ranked[:_PLANNER_FIG_CATALOG_CAP]
+                lines.append(
+                    f"    Figures available ({len(figure_ids)} total; "
+                    f"showing top {len(shown)} by size + caption):"
+                )
+                for fid in shown:
+                    rec = rendered.get(fid) or {}
+                    w_h = rec.get("image_size") or "?x?"
+                    src_ref = rec.get("source_ref", "?")
+                    cap = (rec.get("caption") or "").replace("\n", " ")[:100]
+                    lines.append(
+                        f"      - {fid} ({src_ref}, {w_h}) {cap}"
+                    )
+                remaining = len(figure_ids) - len(shown)
+                if remaining > 0:
+                    lines.append(
+                        f"      (+ {remaining} smaller figures available by layer_id)"
+                    )
         elif t == "markdown":
             lines.append(
                 f"  • {f} (MD): {s['n_chars']} chars, "
@@ -397,45 +460,50 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
         )
 
     doc = fitz.open(fp)
+    is_scanned = False
     try:
-        if detect_scanned_pdf(doc):
-            raise ScannedPdfError(
-                f"{fp.name} appears to be a scanned PDF (no extractable "
-                "text or vector drawings). OCR is not supported in v1.2."
+        is_scanned = detect_scanned_pdf(doc)
+        if is_scanned:
+            # v1.2.5 — OCR fallback via Qwen-VL-Max. Scanned PDFs have
+            # no embedded rasters (the pages ARE the images) so figure
+            # extraction is skipped; we render each page and OCR it so
+            # structure extraction still has something to chew on.
+            page_texts = _ocr_scanned_pdf(fp, doc, ctx)
+            candidates: list[PdfFigureCandidate] = []
+            table_candidates: list[PdfTableCandidate] = []
+        else:
+            # 1. pymupdf figure candidates (no LLM).
+            candidates = []
+            candidates.extend(extract_embedded_rasters(doc, ctx.layers_dir))
+            candidates.extend(extract_vector_clusters(doc, ctx.layers_dir))
+            candidates = dedup_raster_vector(candidates)
+            log("ingest.pdf.candidates", file=fp.name,
+                raster=sum(1 for c in candidates if c.strategy == "raster"),
+                vector=sum(1 for c in candidates if c.strategy == "vector"))
+
+            # 1b. pymupdf table candidates (localization only; VLM parses
+            # cells). Produced alongside figures — planner picks either a
+            # `kind="image"` figure or a `kind="table"` structured layer.
+            # Dedup against vector figures on same page: if a figure bbox
+            # covers ≥70% of a "table" bbox, it's almost certainly the
+            # figure proper (find_tables occasionally trips on composite
+            # diagrams). Prefer the figure path.
+            table_candidates = extract_table_candidates(
+                doc, ctx.layers_dir,
             )
+            pre_dedup = len(table_candidates)
+            table_candidates = dedup_tables_against_figures(
+                table_candidates, candidates,
+            )
+            log("ingest.pdf.table_candidates",
+                file=fp.name, n=len(table_candidates),
+                dropped_by_figure_overlap=pre_dedup - len(table_candidates))
 
-        # 1. pymupdf figure candidates (no LLM).
-        candidates: list[PdfFigureCandidate] = []
-        candidates.extend(extract_embedded_rasters(doc, ctx.layers_dir))
-        candidates.extend(extract_vector_clusters(doc, ctx.layers_dir))
-        candidates = dedup_raster_vector(candidates)
-        log("ingest.pdf.candidates", file=fp.name,
-            raster=sum(1 for c in candidates if c.strategy == "raster"),
-            vector=sum(1 for c in candidates if c.strategy == "vector"))
-
-        # 1b. pymupdf table candidates (localization only; VLM parses
-        # cells). Produced alongside figures — planner picks either a
-        # `kind="image"` figure or a `kind="table"` structured layer.
-        # Dedup against vector figures on same page: if a figure bbox
-        # covers ≥70% of a "table" bbox, it's almost certainly the
-        # figure proper (find_tables occasionally trips on composite
-        # diagrams). Prefer the figure path.
-        table_candidates: list[PdfTableCandidate] = extract_table_candidates(
-            doc, ctx.layers_dir,
-        )
-        pre_dedup = len(table_candidates)
-        table_candidates = dedup_tables_against_figures(
-            table_candidates, candidates,
-        )
-        log("ingest.pdf.table_candidates",
-            file=fp.name, n=len(table_candidates),
-            dropped_by_figure_overlap=pre_dedup - len(table_candidates))
-
-        # 2. Page text (lossless, free). Feeds the VLM as text instead
-        # of shipping 43 page images — Qwen-VL-Max on DashScope rejects
-        # multi-image payloads over ~10 images, and text is denser
-        # information per token than rasterized pages anyway.
-        page_texts = extract_page_text(doc)
+            # 2. Page text (lossless, free). Feeds the VLM as text instead
+            # of shipping 43 page images — Qwen-VL-Max on DashScope rejects
+            # multi-image payloads over ~10 images, and text is denser
+            # information per token than rasterized pages anyway.
+            page_texts = extract_page_text(doc)
     finally:
         doc.close()
 
@@ -484,6 +552,73 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
                    f"{len(registered_table_ids)} table(s), "
                    f"{len(manifest.get('sections', []))} section(s)",
     }
+
+
+def _ocr_scanned_pdf(
+    fp: Path, doc: "fitz.Document", ctx: ToolContext,
+) -> list[str]:
+    """Render each page of a scanned PDF at `_OCR_PAGE_DPI` and ask
+    Qwen-VL-Max (or whichever VLM `settings.ingest_model` points at) to
+    OCR it. Returns one string per page (1-indexed: index 0 = page 1).
+
+    Runs pages in parallel via ThreadPoolExecutor so a 40-page doc takes
+    ~8 s wall time at 6 workers instead of 40 × 1 s serial. OCR failures
+    on individual pages degrade to empty strings — we don't block the
+    whole doc on one bad page, and the structure extractor handles
+    partial text fine.
+    """
+    import time as _time
+
+    n_pages = len(doc)
+    log("ingest.pdf.ocr.start", file=fp.name, pages=n_pages,
+        dpi=_OCR_PAGE_DPI, parallelism=_OCR_PAGE_PARALLELISM,
+        model=ctx.settings.ingest_model)
+    t0 = _time.monotonic()
+
+    page_pngs: list[Path] = []
+    for i in range(n_pages):
+        out_path = ctx.layers_dir / f"ingest_ocr_page_{i + 1:03d}.png"
+        try:
+            pix = doc[i].get_pixmap(dpi=_OCR_PAGE_DPI)
+            pix.save(str(out_path))
+            page_pngs.append(out_path)
+        except Exception as e:
+            log("ingest.pdf.ocr.render_fail", page=i + 1, error=str(e))
+            page_pngs.append(None)  # type: ignore[arg-type]
+
+    def ocr_one(idx: int) -> tuple[int, str]:
+        png = page_pngs[idx]
+        if png is None:
+            return idx, ""
+        try:
+            result = vlm_call_json(
+                settings=ctx.settings,
+                model=ctx.settings.ingest_model,
+                system=_OCR_PROMPT,
+                user_text=f"Page {idx + 1} of {n_pages}. OCR it.",
+                images=[VlmImage.from_path(png)],
+                max_tokens=4096,
+                timeout_s=_OCR_PER_PAGE_TIMEOUT_S,
+            )
+            return idx, str(result.get("text") or "")
+        except Exception as e:
+            log("ingest.pdf.ocr.page_fail", page=idx + 1, error=str(e))
+            return idx, ""
+
+    results: dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=_OCR_PAGE_PARALLELISM) as pool:
+        futures = [pool.submit(ocr_one, i) for i in range(n_pages)]
+        for fut in as_completed(futures):
+            idx, text = fut.result()
+            results[idx] = text
+
+    page_texts = [results.get(i, "") for i in range(n_pages)]
+    total_chars = sum(len(t) for t in page_texts)
+    log("ingest.pdf.ocr.done", file=fp.name,
+        wall_s=round(_time.monotonic() - t0, 1),
+        total_chars=total_chars,
+        pages_with_text=sum(1 for t in page_texts if t.strip()))
+    return page_texts
 
 
 def _extract_structure(
@@ -983,6 +1118,322 @@ def _ingest_markdown(fp: Path, ctx: ToolContext) -> dict[str, Any]:
                    f"{len(registered)} image(s)"
                    + (f", {len(skipped)} skipped" if skipped else ""),
     }
+
+
+# ─────────────────────────── .docx branch ─────────────────────────────
+
+def _ingest_docx(fp: Path, ctx: ToolContext) -> dict[str, Any]:
+    """Read a Word document into the same manifest shape as PDF.
+
+    Docx has real structural metadata (heading styles, inline images,
+    captions), so unlike PDF this branch does NOT need a VLM call —
+    we read the docx tree directly, which is faster, free, and more
+    faithful.
+    """
+    from docx import Document
+
+    doc = Document(str(fp))
+
+    body_paras: list[tuple[str, str]] = []  # (style_name, text)
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if not text:
+            continue
+        style = (para.style.name if para.style is not None else "") or ""
+        body_paras.append((style, text))
+
+    title = _docx_pick_title(body_paras)
+    sections = _docx_build_sections(body_paras, title)
+
+    registered_figure_ids: list[str] = []
+    for rel_id, rel in doc.part.rels.items():
+        if rel.reltype and "image" in rel.reltype:
+            try:
+                blob = rel.target_part.blob
+                mime = getattr(rel.target_part, "content_type", "") or ""
+                ext = _ext_for_image_mime(mime)
+                layer_id = _register_image_blob(
+                    blob, ext, ctx,
+                    name_hint=f"{fp.stem}_{rel_id}",
+                    source_file=fp,
+                    source_ref=f"rel={rel_id}",
+                )
+                registered_figure_ids.append(layer_id)
+            except (RuntimeError, OSError) as e:
+                log("ingest.docx.image_skip", rel=rel_id, error=str(e))
+
+    manifest = {
+        "title": title or fp.stem,
+        "authors": [],
+        "venue": None,
+        "abstract": sections[0]["summary"] if sections else "",
+        "sections": sections,
+        "figures": [],
+        "tables": [],
+        "key_quotes": [],
+    }
+    _normalize_manifest_lists(manifest)
+
+    log("ingest.docx.done", file=fp.name,
+        sections=len(sections), figures=len(registered_figure_ids))
+
+    return {
+        "file": str(fp), "type": "docx", "manifest": manifest,
+        "registered_layer_ids": registered_figure_ids,
+        "registered_figure_ids": registered_figure_ids,
+        "registered_table_ids": [],
+        "summary": f"{manifest['title']} — "
+                   f"{len(registered_figure_ids)} figure(s), "
+                   f"{len(sections)} section(s)",
+    }
+
+
+_DOCX_HEADING_PREFIXES = ("Heading", "Title")
+
+
+def _docx_pick_title(paras: list[tuple[str, str]]) -> str:
+    for style, text in paras:
+        if style.startswith("Title"):
+            return text
+    for style, text in paras:
+        if style.startswith("Heading 1") or style == "Heading 1":
+            return text
+    for _style, text in paras:
+        return text
+    return ""
+
+
+def _docx_build_sections(
+    paras: list[tuple[str, str]], title: str,
+) -> list[dict[str, Any]]:
+    """Group paragraphs under their nearest preceding heading. Non-
+    heading paras become the section body; the first sentence (or 2-3
+    sentences up to ~400 chars) becomes `summary`, and short bullet-like
+    lines become `key_points`."""
+    sections: list[dict[str, Any]] = []
+    current_heading: str | None = None
+    current_body: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_heading, current_body
+        if current_heading is None and not current_body:
+            return
+        heading = current_heading or "Body"
+        body_text = "\n".join(current_body).strip()
+        sections.append({
+            "idx": len(sections) + 1,
+            "heading": heading,
+            "summary": _first_sentences(body_text, max_chars=400),
+            "key_points": _pick_key_points(current_body),
+        })
+        current_heading = None
+        current_body = []
+
+    for style, text in paras:
+        is_heading = any(style.startswith(p) for p in _DOCX_HEADING_PREFIXES)
+        if is_heading and text == title:
+            continue
+        if is_heading:
+            flush()
+            current_heading = text
+        else:
+            current_body.append(text)
+    flush()
+
+    return sections
+
+
+def _first_sentences(text: str, max_chars: int = 400) -> str:
+    if not text:
+        return ""
+    pieces: list[str] = re.split(r"(?<=[.!?。！？])\s+", text)
+    acc = ""
+    for p in pieces:
+        if not p:
+            continue
+        if len(acc) + len(p) + 1 > max_chars:
+            break
+        acc = (acc + " " + p).strip() if acc else p
+    return acc or text[:max_chars]
+
+
+def _pick_key_points(body: list[str]) -> list[str]:
+    """Pull bullet-like lines (short, starts with punctuation/enumeration
+    marker, OR simply short standalone paras ≤ 120 chars). Max 5."""
+    out: list[str] = []
+    for line in body:
+        s = line.strip()
+        if not s or len(s) > 160:
+            continue
+        if re.match(r"^[-\*•]|^\d+[\.\)]\s", s) or len(s) <= 120:
+            out.append(s.lstrip("-*•").strip())
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _ext_for_image_mime(mime: str) -> str:
+    mime = (mime or "").lower()
+    if "png" in mime:
+        return ".png"
+    if "jpeg" in mime or "jpg" in mime:
+        return ".jpg"
+    if "gif" in mime:
+        return ".gif"
+    if "webp" in mime:
+        return ".webp"
+    if "bmp" in mime:
+        return ".bmp"
+    if "tif" in mime:
+        return ".tif"
+    return ".png"
+
+
+# ─────────────────────────── .pptx branch ─────────────────────────────
+
+def _ingest_pptx(fp: Path, ctx: ToolContext) -> dict[str, Any]:
+    """Read a PowerPoint file into the same manifest shape. Each slide
+    becomes one section; title placeholder → section heading, body
+    placeholders → section body; picture shapes → ingest_fig_NN layers.
+    """
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    prs = Presentation(str(fp))
+
+    sections: list[dict[str, Any]] = []
+    registered_figure_ids: list[str] = []
+    deck_title: str | None = None
+
+    for slide_idx, slide in enumerate(prs.slides, start=1):
+        slide_title: str | None = None
+        body_parts: list[str] = []
+        for shape in slide.shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    blob = shape.image.blob
+                    mime = shape.image.content_type or ""
+                    ext = _ext_for_image_mime(mime)
+                    layer_id = _register_image_blob(
+                        blob, ext, ctx,
+                        name_hint=f"{fp.stem}_slide{slide_idx:02d}",
+                        source_file=fp,
+                        source_ref=f"slide={slide_idx}",
+                    )
+                    registered_figure_ids.append(layer_id)
+                except (RuntimeError, OSError) as e:
+                    log("ingest.pptx.image_skip",
+                        slide=slide_idx, error=str(e))
+                continue
+            if not shape.has_text_frame:
+                continue
+            text = (shape.text_frame.text or "").strip()
+            if not text:
+                continue
+            is_title = (
+                hasattr(shape, "placeholder_format")
+                and shape.placeholder_format is not None
+                and shape.placeholder_format.idx == 0
+            )
+            if is_title and slide_title is None:
+                slide_title = text
+            else:
+                body_parts.append(text)
+
+        if slide_idx == 1 and slide_title:
+            deck_title = slide_title
+
+        heading = slide_title or f"Slide {slide_idx}"
+        body_text = "\n".join(body_parts).strip()
+        sections.append({
+            "idx": slide_idx,
+            "heading": heading,
+            "summary": _first_sentences(body_text, max_chars=400),
+            "key_points": _pick_key_points(body_parts),
+        })
+
+    manifest = {
+        "title": deck_title or fp.stem,
+        "authors": [],
+        "venue": None,
+        "abstract": sections[0]["summary"] if sections else "",
+        "sections": sections,
+        "figures": [],
+        "tables": [],
+        "key_quotes": [],
+    }
+    _normalize_manifest_lists(manifest)
+
+    log("ingest.pptx.done", file=fp.name,
+        slides=len(sections), figures=len(registered_figure_ids))
+
+    return {
+        "file": str(fp), "type": "pptx", "manifest": manifest,
+        "registered_layer_ids": registered_figure_ids,
+        "registered_figure_ids": registered_figure_ids,
+        "registered_table_ids": [],
+        "summary": f"{manifest['title']} — "
+                   f"{len(sections)} slide(s), "
+                   f"{len(registered_figure_ids)} figure(s)",
+    }
+
+
+def _register_image_blob(
+    blob: bytes, ext: str, ctx: ToolContext, *,
+    name_hint: str, source_file: Path, source_ref: str,
+) -> str:
+    """Register an in-memory image blob as an `ingest_fig_NN` layer.
+
+    Unlike `_register_image_file` which expects an on-disk source and
+    uses the sha-based layer_id shape (`ingest_img_<sha8>`), this helper
+    allocates a sequential `ingest_fig_NN` id so .docx / .pptx images
+    show up to the planner the same way PDF figures do — and the
+    figure-cross-reference detector in composite picks them up too.
+    """
+    import hashlib
+    from PIL import Image as _Image
+    import io
+
+    # Sequential id — peek at rendered_layers to find next free index.
+    existing = [
+        k for k in ctx.state["rendered_layers"]
+        if k.startswith("ingest_fig_")
+    ]
+    next_idx = len(existing) + 1
+    layer_id = f"ingest_fig_{next_idx:02d}"
+
+    dest = ctx.layers_dir / f"img_{layer_id}{ext}"
+    dest.write_bytes(blob)
+
+    try:
+        with _Image.open(io.BytesIO(blob)) as im:
+            w, h = im.size
+    except Exception as e:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"blob not readable ({e})")
+
+    sha = hashlib.sha256(blob).hexdigest()
+    ctx.state["rendered_layers"][layer_id] = {
+        "layer_id": layer_id,
+        "name": _sanitize_name(name_hint) or layer_id,
+        "kind": "image",
+        "z_index": 5,
+        "bbox": None,
+        "src_path": str(dest),
+        "aspect_ratio": _aspect_from_dims(w, h),
+        "image_size": f"{w}x{h}",
+        "sha256": sha,
+        "source": "ingested_" + ("pptx" if source_ref.startswith("slide=") else "docx"),
+        "source_file": str(source_file),
+        "source_ref": source_ref,
+        "caption": "",
+        "extract_strategy": "embedded",
+        "caption_confidence": 0.0,
+    }
+    return layer_id
 
 
 # ─────────────────────────── Image branch ──────────────────────────────

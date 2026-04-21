@@ -1198,7 +1198,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/16] ingest_document markdown (no API)")
+    print("[15/18] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1254,7 +1254,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/16] ingest_document image (no API)")
+    print("[16/18] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1300,6 +1300,127 @@ def check_ingest_document_image() -> None:
         f"sha256[:8]={rec['sha256'][:8]}")
 
 
+def check_ingest_document_docx() -> None:
+    """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
+    an inline image, verify ingest_document extracts sections + figures
+    without any VLM call."""
+    print("[17/18] ingest_document docx (no API)")
+    from docx import Document
+    from docx.shared import Inches
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.ingest_document import ingest_document
+
+    out_dir = REPO_ROOT / "out" / "smoke_ingest_docx"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    src_dir = out_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    img_path = src_dir / "icon.png"
+    Image.new("RGB", (64, 64), (200, 80, 80)).save(img_path)
+
+    docx_path = src_dir / "notes.docx"
+    doc = Document()
+    doc.add_heading("Quick Tour", level=0)
+    doc.add_heading("Motivation", level=1)
+    doc.add_paragraph("First thought about the project. Second thought.")
+    doc.add_paragraph("- Short bullet.")
+    doc.add_heading("Architecture", level=1)
+    doc.add_paragraph("Planner + critic + composer.")
+    doc.add_picture(str(img_path), width=Inches(1.0))
+    doc.save(str(docx_path))
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-ingest-docx")
+
+    obs = ingest_document({"file_paths": [str(docx_path)]}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"ingest_document(docx): {obs.summary}")
+
+    ingested = ctx.state.get("ingested") or []
+    if len(ingested) != 1 or ingested[0]["type"] != "docx":
+        _fail(f"ingested manifest missing docx entry: {ingested}")
+    m = ingested[0]["manifest"]
+    if m["title"] != "Quick Tour":
+        _fail(f"docx title wrong: {m['title']!r}")
+    headings = [s["heading"] for s in m["sections"]]
+    if headings != ["Motivation", "Architecture"]:
+        _fail(f"docx sections wrong: {headings}")
+    figure_ids = ingested[0]["registered_figure_ids"]
+    if len(figure_ids) != 1 or not figure_ids[0].startswith("ingest_fig_"):
+        _fail(f"docx figure registration wrong: {figure_ids}")
+    rec = ctx.state["rendered_layers"][figure_ids[0]]
+    if rec.get("source") != "ingested_docx" or not Path(rec["src_path"]).exists():
+        _fail(f"docx figure record wrong: {rec}")
+    _ok(f"docx ingested: title='{m['title']}', "
+        f"{len(m['sections'])} section(s), 1 figure ({figure_ids[0]})")
+
+
+def check_ingest_document_pptx() -> None:
+    """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
+    body bullets, and an embedded picture; verify slides become sections
+    and the picture becomes an ingest_fig_NN layer."""
+    print("[18/18] ingest_document pptx (no API)")
+    from pptx import Presentation
+    from pptx.util import Inches
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.ingest_document import ingest_document
+
+    out_dir = REPO_ROOT / "out" / "smoke_ingest_pptx"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    src_dir = out_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    img_path = src_dir / "chart.png"
+    Image.new("RGB", (128, 128), (50, 160, 90)).save(img_path)
+
+    pptx_path = src_dir / "deck.pptx"
+    prs = Presentation()
+    s1 = prs.slides.add_slide(prs.slide_layouts[0])
+    s1.shapes.title.text = "LongcatDesign Pitch"
+    s1.placeholders[1].text = "Open-source conversational design agent"
+    s2 = prs.slides.add_slide(prs.slide_layouts[1])
+    s2.shapes.title.text = "Why now?"
+    s2.placeholders[1].text = "Claude Design shipped. We go terminal-first."
+    s2.shapes.add_picture(str(img_path), Inches(4), Inches(2), width=Inches(2))
+    prs.save(str(pptx_path))
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-ingest-pptx")
+
+    obs = ingest_document({"file_paths": [str(pptx_path)]}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"ingest_document(pptx): {obs.summary}")
+
+    ingested = ctx.state.get("ingested") or []
+    if len(ingested) != 1 or ingested[0]["type"] != "pptx":
+        _fail(f"ingested manifest missing pptx entry: {ingested}")
+    m = ingested[0]["manifest"]
+    if m["title"] != "LongcatDesign Pitch":
+        _fail(f"pptx title wrong: {m['title']!r}")
+    if len(m["sections"]) != 2:
+        _fail(f"pptx slides→sections wrong: {[s['heading'] for s in m['sections']]}")
+    figure_ids = ingested[0]["registered_figure_ids"]
+    if len(figure_ids) != 1 or not figure_ids[0].startswith("ingest_fig_"):
+        _fail(f"pptx figure registration wrong: {figure_ids}")
+    rec = ctx.state["rendered_layers"][figure_ids[0]]
+    if rec.get("source") != "ingested_pptx" or rec.get("source_ref") != "slide=2":
+        _fail(f"pptx figure record wrong: {rec}")
+    _ok(f"pptx ingested: title='{m['title']}', "
+        f"2 slide(s), 1 figure ({figure_ids[0]})")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -1317,10 +1438,13 @@ def main() -> int:
     check_reasoning_step_roundtrip()
     check_ingest_document_markdown()
     check_ingest_document_image()
+    check_ingest_document_docx()
+    check_ingest_document_pptx()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
-          "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/")
+          "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
+          "out/smoke_ingest_docx/, out/smoke_ingest_pptx/")
     return 0
 
 

@@ -6,6 +6,27 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-21 — v1.2.5 .docx / .pptx ingest branches + scanned-PDF OCR fallback
+
+**Decision**: Extend `ingest_document` to swallow `.docx` and `.pptx` inputs via their native structural readers (no VLM) and to fall back to VLM-page-OCR when `detect_scanned_pdf` fires on a PDF. All three branches funnel into the same downstream contract: one dict per file with `manifest.sections`, `registered_figure_ids`, and the `rendered_layers` records that composite + planner + critic already know how to consume.
+
+- **`.docx`** (`python-docx`): read the paragraph stream, bucket by nearest preceding Heading-style para, extract embedded images via `doc.part.rels`. Builds the manifest directly — Word's structural metadata is faithful enough that we don't need a VLM call (faster, free, more reliable).
+- **`.pptx`** (`python-pptx`, already in deps for writing): each slide = one section (title placeholder → heading, body placeholders → summary + key_points), picture shapes → `ingest_fig_NN` layers.
+- **Scanned-PDF OCR** (`_ocr_scanned_pdf`): on scanned detection, render each page at 200 dpi and OCR through `vlm_call_json` in a `ThreadPoolExecutor(6)`. Failures on individual pages degrade to empty strings — partial text is better than a blocking error. Figure / table candidates skip entirely on this path (scanned PDFs have the "figures" baked into page rasters, not separable).
+- New shared `_register_image_blob` helper allocates sequential `ingest_fig_NN` ids for docx/pptx images so the existing figure-cross-reference detector (v1.2.4) works untouched.
+
+**Alternatives considered**:
+1. **Convert .docx / .pptx to PDF first, then run the PDF pipeline.** Rejected: requires LibreOffice or Word installed (non-trivial CI dep) AND loses structural fidelity — docx heading styles and pptx slide structure are exactly what we want to preserve; round-tripping via PDF throws that away and then we'd pay VLM costs to re-derive what was already there.
+2. **Use VLM on .docx too (render pages as images, then structure-extract like PDF).** Rejected: Word is a structured format; ignoring its structure to use VLM is strictly worse (slower, costlier, more error-prone) than reading the tree directly.
+3. **Tesseract for scanned-PDF OCR.** Rejected: adds a heavy binary dep (tesseract + language packs) that our users have to install separately. We already have Qwen-VL-Max wired via `util/vlm.py`; running OCR through it is zero new deps. Quality is similar or better (modern VLMs match or beat Tesseract on anything non-trivial), language coverage is inherent, and per-page cost (~$0.001) is irrelevant next to planner / critic spend.
+4. **Keep raising `ScannedPdfError`.** Rejected: the whole point of the parked item was to let scanned papers work. If a PDF is scanned, the user usually doesn't know or care — they just want the poster.
+
+**Rationale**: Adding two structural readers + one VLM-OCR loop unlocks the three most common "my input is a non-PDF" complaints in one commit. The existing downstream contract is powerful enough that each branch is <100 lines and none need composite / renderer / critic changes. Dep footprint grows by one (`python-docx`); `python-pptx` was already in for deck writing. Smoke gains two no-API checks that run against fixtures built inline in the smoke file (no binary test data in-repo).
+
+**Revisit when**: (a) docx tables become common in user input → add a table-extraction path reusing the existing `kind: "table"` layer shape; (b) scanned PDFs frequently contain diagrams we'd want to extract → add a VLM-driven page-region crop pass on the OCR fallback path; (c) `.rtf` / `.pages` / other formats surface repeatedly → add more branches (trivial).
+
+---
+
 ## 2026-04-21 — v1.2.4 deterministic text-overlap + figure-xref detectors in composite
 
 **Decision**: Close the planner↔critic loop in ONE turn for two recurring paper-poster failure modes by running deterministic detectors inside `composite` and appending their findings to the tool_result summary (the planner reads it on the next turn). Two checks:

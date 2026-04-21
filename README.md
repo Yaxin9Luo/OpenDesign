@@ -4,7 +4,7 @@
 
 The open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) and similar closed SaaS design tools. From the [Longcat](https://github.com/) ecosystem.
 
-> **Current status** (2026-04-21): **v1.2 paper2any shipped** — full **3-artifact coverage** (poster + landing + deck) × full **paper → artifact** ingestion pipeline, **11 tools wired**, smoke **16/16 green**. Landing + deck ship with **NBP (Gemini 3 Pro Image Preview) imagery**; paper-sourced artifacts ship with **native-resolution PDF figures + live-editable tables**.
+> **Current status** (2026-04-21): **v1.2 paper2any shipped + v1.2.4 / v1.2.5 polish** — full **3-artifact coverage** (poster + landing + deck) × full **paper / deck / doc → artifact** ingestion pipeline (PDF + DOCX + PPTX + scanned-PDF OCR), **11 tools wired**, smoke **18/18 green**. Landing + deck ship with **NBP (Gemini 3 Pro Image Preview) imagery**; paper-sourced artifacts ship with **native-resolution PDF figures + live-editable tables**. Composite runs **deterministic text-overlap + figure-cross-reference detectors** so geometry + citation errors surface one turn earlier than the critic round.
 >
 > **v1.2 highlights (shipped 2026-04-21, commits [ce50f2a](https://github.com/Yaxin9Luo/OpenDesign/commit/ce50f2a) · [da664a5](https://github.com/Yaxin9Luo/OpenDesign/commit/da664a5) · [a08bbb9](https://github.com/Yaxin9Luo/OpenDesign/commit/a08bbb9) · [349c899](https://github.com/Yaxin9Luo/OpenDesign/commit/349c899))**:
 > - **pymupdf-native figure extraction** replaces the Claude-Sonnet vision locator — native-resolution crops (author-uploaded PNGs at 1890×1211 instead of 1454×820 half-page screenshots).
@@ -129,9 +129,12 @@ uv run python -m longcat_design.cli
 
 Supported inputs:
 - **PDF** (pymupdf native figure extraction via `page.get_images()` + `doc.extract_image(xref)` for embedded rasters; `get_drawings()` + proximity clustering @ 300 dpi for vector diagrams; `page.find_tables()` for data-table localization. VLM = Qwen-VL-Max via OpenRouter for structure extraction + caption matching + fake-figure filtering).
+- **Scanned PDF** — auto-detected via `detect_scanned_pdf`; falls back to per-page Qwen-VL OCR at 200 dpi, 6 workers in parallel. Figure extraction is skipped (scanned pages are single rasters); structure extraction runs as normal on the OCR'd text.
+- **DOCX** (Word) — `python-docx` reads Heading 1/2/Title paragraphs → section tree, `doc.part.rels` yields embedded images as `ingest_fig_NN`. No VLM call needed.
+- **PPTX** (PowerPoint) — each slide becomes one section (title placeholder → heading, body placeholders → summary + key_points), picture shapes become `ingest_fig_NN`.
 - **Markdown / TXT** (with embedded `![](image.png)` refs resolved).
 - **PNG / JPG** (single-image passthrough).
-- `.docx` + multi-paper fusion: deferred to v1.3+.
+- Multi-paper fusion: deferred to v1.3+.
 
 What the planner gets on a paper run: title / authors / abstract / sections, up to 20 ranked figure candidates with `(page, size, extract-strategy, caption)` each, and any registered tables with structured `rows + headers + col_highlight_rule` (winner-per-column "max"/"min"/""). Tables render as **native editable primitives** in decks + landing and as a PIL-drawn PNG on poster (with deep-green winner-cell highlighting since the bundled NotoSansSC only ships bold). See [docs/WORKFLOWS.md § Paper → artifact](docs/WORKFLOWS.md#paper--poster--landing--deck).
 

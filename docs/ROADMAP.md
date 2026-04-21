@@ -127,11 +127,20 @@ Closed two of the four parked paper2any polish items in one pass.
 
 Both detectors are deterministic — they run BEFORE the critic so the planner can self-correct in one iteration instead of burning a critic round. Non-paper posters skip the cross-reference check (no placed `ingest_*` layers → empty display map → early return).
 
+### v1.2.5 — .docx / .pptx ingest + scanned-PDF OCR fallback (2026-04-21)
+
+Closed the last three parked paper2any gaps in one pass.
+
+- **`.docx` branch** (`_ingest_docx` in `ingest_document.py`): reads Heading 1/2/Title styled paragraphs to build a section tree, extracts embedded images via `doc.part.rels` into `ingest_fig_NN` layers. No VLM call — Word's structural metadata is faithful enough that we can build the manifest directly (faster, free).
+- **`.pptx` branch** (`_ingest_pptx`): each slide becomes one manifest section (title placeholder → heading, body placeholders → summary + key_points); picture shapes → `ingest_fig_NN` layers. Reuses the existing `python-pptx` dep (we already had it for writing decks).
+- **Scanned-PDF OCR fallback** (`_ocr_scanned_pdf`): when `detect_scanned_pdf` returns True, render each page at 200 dpi and run Qwen-VL-Max OCR in parallel (6 workers) to rebuild `page_texts`; figure / table candidates skip (scanned PDFs have no separable embedded rasters). Structure extraction then runs as normal.
+- New shared helper `_register_image_blob` allocates sequential `ingest_fig_NN` ids so docx/pptx images show up to the planner the same way PDF figures do — the figure-cross-reference detector in composite picks them up with zero changes.
+- Dependency add: `python-docx>=1.1.0`. Dispatcher extended with `.docx` / `.pptx` extensions + planner prompt mentions the new formats.
+- Smoke: two new steps (`check_ingest_document_docx`, `check_ingest_document_pptx`) build a minimal fixture, run ingest end-to-end, assert section tree + embedded figure. Suite now 18/18.
+
 ### Remaining paper2any gaps (parked for v1.3+)
 
-- `.docx` / `.pptx` ingestion (needs `python-docx` / `python-pptx` readers).
 - Multi-paper fusion (cross-paper figure reuse + ingest cache).
-- Scanned-PDF OCR fallback (currently raises `ScannedPdfError`).
 
 ---
 
