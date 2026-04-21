@@ -39,13 +39,22 @@ class Settings:
 
     planner_model: str
     critic_model: str
+    # v1.2: separate slot for the OpenRouter key so `util/vlm.py` can
+    # spin up its OpenAI-compat client for Qwen-VL-Max without aliasing
+    # `anthropic_api_key`. In OpenRouter mode both hold the same value;
+    # in stock-Anthropic mode this is None and the VLM module refuses
+    # to route to the OpenAI branch. Default None keeps existing test
+    # code (and smoke stubs) constructing Settings without this kw.
+    openrouter_api_key: str | None = None
     image_model: str = "gemini-3-pro-image-preview"
-    # v1.1 paper2any: Sonnet-class model used by ingest_document for
-    # PDF structure extraction + figure bbox location. Much faster than
-    # Opus for large PDFs (~3-5× shorter wall time) and plenty capable
-    # for "extract title / sections / figures" — not a reasoning task.
-    # Override via INGEST_MODEL env var.
-    ingest_model: str = "anthropic/claude-sonnet-4-6"
+    # v1.2 paper2any: VLM used by ingest_document for PDF structure
+    # extraction + figure caption matching. Figure localization is done
+    # by pymupdf directly (no VLM needed), so the model only has to
+    # read text and describe images — Qwen-VL-Max on OpenRouter is
+    # ~5× cheaper and faster than Claude Sonnet for this workload.
+    # Override via INGEST_MODEL env var (e.g. claude-sonnet-4-7 to A/B
+    # back on Anthropic).
+    ingest_model: str = "qwen/qwen-vl-max"
     # Explicit HTTP timeout (seconds) for ingest Anthropic calls so a
     # stalled request fails fast instead of hanging 20+ minutes.
     ingest_http_timeout: float = 600.0  # 10 minutes
@@ -108,12 +117,15 @@ def load_settings() -> Settings:
 
     planner_model = os.getenv("PLANNER_MODEL", "").strip() or default_model
     critic_model = os.getenv("CRITIC_MODEL", "").strip() or default_model
-    # v1.1: default ingest to Sonnet (fast + cheap for "read this PDF").
-    # Respects OpenRouter vs stock naming convention via default_model prefix.
+    # v1.2: default ingest to Qwen-VL-Max when OpenRouter is available
+    # (cheap + fast; no reasoning needed — just reads the paper and
+    # matches captions to pymupdf-extracted figures). Stock-Anthropic
+    # mode falls back to Sonnet 4.7 (4.6's vision grounding was weak
+    # enough to motivate this whole refactor).
     if or_key:
-        ingest_default = "anthropic/claude-sonnet-4-6"
+        ingest_default = "qwen/qwen-vl-max"
     else:
-        ingest_default = "claude-sonnet-4-6"
+        ingest_default = "claude-sonnet-4-7"
     ingest_model = os.getenv("INGEST_MODEL", "").strip() or ingest_default
 
     planner_budget = _parse_int_env("PLANNER_THINKING_BUDGET", 10000)
@@ -126,6 +138,7 @@ def load_settings() -> Settings:
     return Settings(
         anthropic_api_key=api_key,
         anthropic_base_url=base_url,
+        openrouter_api_key=or_key or None,
         gemini_api_key=gemini,
         planner_model=planner_model,
         critic_model=critic_model,

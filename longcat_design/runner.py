@@ -116,10 +116,20 @@ class PipelineRunner:
 
 
 def _materialize_layer_graph(rendered: dict[str, dict[str, Any]]) -> list[LayerNode]:
-    """Convert ctx.state['rendered_layers'] (dict-by-id) to a flat LayerNode list ordered by z."""
+    """Convert ctx.state['rendered_layers'] (dict-by-id) to a flat
+    LayerNode list ordered by z.
+
+    Skips layers with `bbox=None` — those are "orphaned" ingest
+    candidates the planner registered via `ingest_document` but never
+    placed in the DesignSpec (v1.2 paper2any ingest commonly
+    pre-registers many figure candidates; the planner only references
+    a subset).
+    """
     nodes: list[LayerNode] = []
     for L in sorted(rendered.values(), key=lambda x: int(x.get("z_index", 0))):
-        bbox = L["bbox"]
+        bbox = L.get("bbox")
+        if bbox is None:
+            continue
         bb = SafeZone(x=int(bbox["x"]), y=int(bbox["y"]),
                       w=int(bbox["w"]), h=int(bbox["h"]))
         eff_dict = L.get("effects") or {}

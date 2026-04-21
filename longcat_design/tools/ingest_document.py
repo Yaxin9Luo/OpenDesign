@@ -1,59 +1,102 @@
-"""ingest_document — v1.1 paper2any entry point.
+"""ingest_document — v1.2 paper2any entry point.
 
-Polymorphic by file extension:
+v1.1 asked a VLM to locate figure bboxes on rasterized PDF pages. That
+was unreliable: the model returned half-page screenshots, clipped
+diagrams, and hallucinated "figures" on text-only pages.
 
-  .pdf  →  Anthropic native `document` content block for structure
-           extraction + pymupdf for figure cropping. Every extracted figure
-           lands in `ctx.state["rendered_layers"]` with a stable
-           `layer_id` so the planner can just reference it in
-           `propose_design_spec` (no separate `passthrough_image` call).
-  .md / .markdown / .txt
-        →  Read as text, resolve any `![](image.png)` refs relative to the
-           file, copy resolved images into `ctx.layers_dir` + register.
-  .png / .jpg / .jpeg / .webp
-        →  Copy file into `ctx.layers_dir`, register as a single image
-           layer. Used for ad-hoc user-attached logos / photos.
+v1.2 separates two concerns:
 
-Returns a summary the planner can use + writes a full manifest into
-`ctx.state["ingested"]` (list of per-file dicts) for downstream
-`propose_design_spec` consumption.
+1. **Figure localization** is now done by **pymupdf directly** —
+   `doc.extract_image(xref)` pulls embedded raster images at native
+   resolution (e.g. 1890×1211 PNGs the paper author uploaded), and
+   `page.get_drawings()` + proximity clustering + 300 dpi rendering
+   catches vector-drawn architecture diagrams. No VLM guessing.
+
+2. **Reading / matching** is still VLM work — but the default model
+   is now Qwen-VL-Max via OpenRouter (~5× cheaper and faster than
+   Claude Sonnet for this non-reasoning workload). Two calls:
+
+     a. **Structure extraction**: render pages at 144 dpi, send as
+        multi-image request, receive title / authors / abstract /
+        sections / figures / tables JSON. `figures` now carries only
+        `{caption, page, description}` — no bbox or idx (we already
+        have bboxes from pymupdf).
+
+     b. **Caption matching**: for each pymupdf candidate, ask the VLM
+        which caption matches and whether it's a real figure. Fake
+        candidates (logos, page headers, equation renders) are
+        filtered at this step.
+
+The `rendered_layers` record shape is unchanged (see the downstream
+contract in `docs/DECISIONS.md` and `longcat_design/tools/composite.py`
+hydration helpers): callers reference ingested figures by the stable
+`layer_id` we register (e.g. `ingest_fig_01`), and the renderer
+hydrates `src_path` / `bbox` / `caption` from the layer registry.
+
+Markdown and image branches are untouched.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
+import fitz  # pymupdf
 
 from ._contract import ToolContext, obs_error, obs_ok
 from ..schema import ToolObservation
 from ..util.io import sha256_file
 from ..util.logging import log
-from ..util.pdf import crop_bbox, page_count, render_page_png
+from ..util.pdf import (
+    PdfFigureCandidate,
+    ScannedPdfError,
+    dedup_raster_vector,
+    detect_scanned_pdf,
+    extract_embedded_rasters,
+    extract_page_text,
+    extract_vector_clusters,
+    page_count,
+    render_page_png,
+)
+from ..util.vlm import VlmImage, vlm_call_json
 
 
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-
-# Max PDF bytes we send in one Anthropic call. Anthropic caps documents at
-# ~32 MB base64-encoded; we stay well under. Larger PDFs are rejected with
-# a redirect (user can split them — v1.1.5 will add chunking).
+# Max PDF bytes we accept in one call (belt-and-suspenders — pymupdf
+# itself can open almost anything, but ingest touches every page and
+# we want to fail fast on pathological inputs rather than spin).
 _MAX_PDF_BYTES = 24 * 1024 * 1024  # 24 MB
-# Hard cap on page count per request (Anthropic: 100 pages; we leave headroom).
 _MAX_PDF_PAGES = 80
 
 _MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
+# Max parallel caption-matching calls. VLM calls are HTTP-bound; 4–6 in
+# flight keeps wall time tight without tripping OpenRouter rate limits.
+_CAPTION_MATCH_PARALLELISM = 6
+# Confidence floor for accepting a VLM caption match — below this we
+# still keep the figure but flag it; `is_real_figure=false` drops it
+# regardless of confidence.
+_CAPTION_MATCH_MIN_CONFIDENCE = 0.35
+# DPI for the cover-page image handed to the VLM during structure
+# extraction. We only send ONE image (the front page) — the rest of
+# the paper reaches the VLM as pymupdf-extracted text, which is both
+# cheaper and dodges Qwen-VL-Max's per-request image-count cap
+# (DashScope rejects >10 images with HTTP 400 "invalid_parameter").
+_STRUCTURE_PAGE_DPI = 144
+# Total text budget across all pages sent to the structure extractor.
+# ~60k chars fits comfortably in the ~16k-token context window Qwen
+# uses for this call while leaving headroom for the JSON response.
+_STRUCTURE_TOTAL_TEXT_CAP = 60_000
+
 
 _INGEST_STRUCTURE_PROMPT = """\
-You are a document-structure extractor for LongcatDesign. You will be given
-a PDF via a `document` content block. Return a STRICT JSON manifest that
-downstream tools can consume verbatim. The planner uses this to generate a
-poster / landing page / slide deck from the document.
+You are a document-structure extractor for LongcatDesign. You will be
+given ONE cover-page image (page 1) for visual grounding, followed by
+the full extracted text of the paper (all pages, marked with
+[PAGE N] headers). Return a STRICT JSON manifest that downstream tools
+consume verbatim.
 
 Output **a single fenced JSON code block, nothing else**:
 
@@ -70,13 +113,13 @@ Output **a single fenced JSON code block, nothing else**:
     ...
   ],
   "figures": [
-    {"idx": 1, "caption": "<figure's full caption text>",
-     "page": <1-indexed page number>,
-     "description": "<what's in the figure — 1 sentence, used to match bbox>"},
+    {"caption": "<figure's full caption text, as it appears in the doc>",
+     "page": <1-indexed page where the figure is anchored>,
+     "description": "<1 sentence describing what's in the figure; used later to match it to a crop>"},
     ...
   ],
   "tables": [
-    {"idx": 1, "caption": "<table caption>", "page": <int>},
+    {"caption": "<table caption>", "page": <int>},
     ...
   ],
   "key_quotes": ["<memorable line from the doc>", ...]
@@ -85,45 +128,48 @@ Output **a single fenced JSON code block, nothing else**:
 
 Rules:
 - Titles: use the human-facing title, not the first line.
-- Sections: include each top-level heading (or the logical equivalent if
-  the doc doesn't have explicit headings). Max ~10 sections; if the doc
-  has more, collapse aggressively (group related subsections).
-- Figures: only include actual figures (diagrams, charts, screenshots,
-  photos). Ignore logos, decorative borders, page numbers. Captions as
-  they literally appear in the doc.
+- Sections: include each top-level heading (or the logical equivalent
+  if the doc doesn't have explicit headings). Max ~10 sections; if the
+  doc has more, collapse aggressively (group related subsections).
+- Figures: only include REAL visual figures (diagrams, charts,
+  screenshots, photos). Ignore logos, page headers, decorative borders,
+  page numbers, watermarks, and inline equation renders. Captions as
+  they literally appear in the doc. Include sub-panels only if they
+  have their own caption line.
 - Pages: 1-indexed.
 - Empty lists are fine. Don't guess.
 - No extra prose outside the fenced JSON block.
 """
 
 
-_BBOX_LOCATOR_PROMPT = """\
-You will see an image of ONE rendered page from a PDF. You'll also see a
-list of figures that appear on this page with their captions. For EACH
-figure, return a pixel-bbox (x, y, w, h) that tightly encloses the figure
-artwork — NOT including the caption text beneath/above.
-
-Pixel coordinates use top-left origin; (x, y) is the top-left corner of
-the bbox; w + h are in pixels. The page image dimensions are given to you
-in the user prompt.
+_CAPTION_MATCH_PROMPT = """\
+You are a figure↔caption matcher. You will see ONE image cropped from
+a PDF plus a short list of figure-caption candidates pulled from the
+same paper. Pick the caption that belongs to the image, or report that
+the image is not a real figure.
 
 Output **a single fenced JSON code block, nothing else**:
 
 ```json
 {
-  "figures": [
-    {"idx": <figure index as given>, "bbox": [x, y, w, h]},
-    ...
-  ]
+  "matched_idx": <int index into the candidate list, or null>,
+  "confidence": <float 0.0–1.0>,
+  "is_real_figure": <true | false>,
+  "reason": "<short explanation>"
 }
 ```
 
 Rules:
-- Bbox must be within image dimensions.
-- If a figure spans most of the page, that's fine; a wide bbox is allowed.
-- If you genuinely cannot find a figure (maybe it was mis-identified in
-  the initial structure extraction), omit it from the response — don't
-  invent coordinates.
+- `matched_idx` indexes the candidate list the user gives you (0-based).
+- If none of the captions match OR the image is a logo, page header,
+  publisher mark, decorative border, watermark, or equation render
+  (not a real figure), set `matched_idx=null` and
+  `is_real_figure=false`.
+- If the image is a real figure but its caption isn't in the
+  candidate list (the list was truncated), set `matched_idx=null` and
+  `is_real_figure=true`. Downstream will keep it with an empty caption.
+- Prefer confidence ≥ 0.7 when you're sure; otherwise be honest and
+  use a lower value.
 """
 
 
@@ -162,6 +208,8 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
                     f"unsupported file type {ext!r}; supported: "
                     ".pdf, .md/.markdown/.txt, .png/.jpg/.jpeg/.webp",
                 )
+        except ScannedPdfError as e:
+            return obs_error(f"ingest failed on {fp.name}: {e}")
         except RuntimeError as e:
             return obs_error(f"ingest failed on {fp.name}: {e}")
 
@@ -175,7 +223,6 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
     log("ingest.done", files=len(summaries),
         total_figures=sum(len(s.get("registered_layer_ids", [])) for s in summaries))
 
-    # Build a compact, planner-consumable summary.
     lines = []
     for s in summaries:
         f = Path(s["file"]).name
@@ -223,144 +270,61 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
     if size > _MAX_PDF_BYTES:
         raise RuntimeError(
             f"PDF too large ({size / 1_048_576:.1f} MB > "
-            f"{_MAX_PDF_BYTES / 1_048_576:.0f} MB). Split into smaller "
-            "files or wait for v1.1.5 chunking."
+            f"{_MAX_PDF_BYTES / 1_048_576:.0f} MB). Split the document."
         )
     pages = page_count(fp)
     if pages > _MAX_PDF_PAGES:
         raise RuntimeError(
-            f"PDF has {pages} pages (cap {_MAX_PDF_PAGES}). Trim or "
-            "wait for v1.1.5 chunking."
+            f"PDF has {pages} pages (cap {_MAX_PDF_PAGES}). Trim the document."
         )
 
-    client = _anthropic_client(ctx)
-    import time as _time
+    doc = fitz.open(fp)
+    try:
+        if detect_scanned_pdf(doc):
+            raise ScannedPdfError(
+                f"{fp.name} appears to be a scanned PDF (no extractable "
+                "text or vector drawings). OCR is not supported in v1.2."
+            )
 
-    # Step 1: Claude-native structure extraction.
-    # Sonnet default (via settings.ingest_model) is fast + cheap enough for
-    # "extract title/sections/figures"; Opus would spend ~3-5× longer reading
-    # the PDF with no quality win on this task. Override via INGEST_MODEL.
-    b64 = base64.standard_b64encode(fp.read_bytes()).decode("ascii")
-    log("ingest.pdf.structure.request", file=fp.name, pages=pages,
-        bytes=size, model=ctx.settings.ingest_model,
-        timeout_s=ctx.settings.ingest_http_timeout)
-    _t0 = _time.monotonic()
-    resp = client.messages.create(
-        model=ctx.settings.ingest_model,
-        max_tokens=8192,
-        system=_INGEST_STRUCTURE_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "document",
-                 "source": {"type": "base64",
-                            "media_type": "application/pdf",
-                            "data": b64}},
-                {"type": "text",
-                 "text": ("Extract the structured manifest for this "
-                          "document. Return STRICT JSON only.")},
-            ],
-        }],
-    )
-    log("ingest.pdf.structure.response", file=fp.name,
-        wall_s=round(_time.monotonic() - _t0, 1),
-        in_tok=getattr(resp.usage, "input_tokens", None),
-        out_tok=getattr(resp.usage, "output_tokens", None))
-    manifest = _parse_json_block(resp.content)
-    if not isinstance(manifest, dict):
-        raise RuntimeError("structure extraction returned non-dict JSON")
+        # 1. pymupdf figure candidates (no LLM).
+        candidates: list[PdfFigureCandidate] = []
+        candidates.extend(extract_embedded_rasters(doc, ctx.layers_dir))
+        candidates.extend(extract_vector_clusters(doc, ctx.layers_dir))
+        candidates = dedup_raster_vector(candidates)
+        log("ingest.pdf.candidates", file=fp.name,
+            raster=sum(1 for c in candidates if c.strategy == "raster"),
+            vector=sum(1 for c in candidates if c.strategy == "vector"))
 
-    # Normalise sections/figures/tables to lists so downstream code is safe.
-    # `setdefault` is a no-op when the key is PRESENT WITH None value, so we
-    # explicitly coerce None → [] — Claude sometimes emits "figures": null for
-    # papers it finds no visual figures in.
-    for list_key in ("sections", "figures", "tables", "authors", "key_quotes"):
-        if not isinstance(manifest.get(list_key), list):
-            manifest[list_key] = []
+        # 2. Page text (lossless, free). Feeds the VLM as text instead
+        # of shipping 43 page images — Qwen-VL-Max on DashScope rejects
+        # multi-image payloads over ~10 images, and text is denser
+        # information per token than rasterized pages anyway.
+        page_texts = extract_page_text(doc)
+    finally:
+        doc.close()
 
-    figures: list[dict[str, Any]] = list(manifest["figures"])
+    # Cover-page image: one rasterized page just for visual title/logo
+    # grounding. The rest of the paper reaches the VLM via text.
+    cover_png = ctx.layers_dir / "ingest_page_001.png"
+    try:
+        render_page_png(fp, 1, cover_png, dpi=_STRUCTURE_PAGE_DPI)
+    except Exception as e:
+        log("ingest.pdf.render_fail", page=1, error=str(e))
+        cover_png = None  # type: ignore[assignment]
+
+    manifest = _extract_structure(page_texts, cover_png, ctx, fp)
+    _normalize_manifest_lists(manifest)
+
+    # 3. Caption matching — per candidate, parallelized.
     registered_layer_ids: list[str] = []
-
-    if not figures:
-        log("ingest.pdf.structure.done", file=fp.name, figures=0,
-            sections=len(manifest.get("sections", [])))
-        return {
-            "file": str(fp), "type": "pdf", "manifest": manifest,
-            "registered_layer_ids": [],
-            "summary": f"{manifest.get('title', '?')} — "
-                       f"0 figures, {len(manifest.get('sections', []))} sections",
-        }
-
-    # Step 2: render each page that has figures (page-level caching saves
-    # rendering the same page multiple times for multi-figure pages).
-    pages_needed: dict[int, Path] = {}
-    for fig in figures:
-        try:
-            page = int(fig.get("page", 0))
-        except (TypeError, ValueError):
-            continue
-        if page < 1 or page > pages:
-            continue
-        fig["page"] = page
-        if page not in pages_needed:
-            page_png = ctx.layers_dir / f"ingest_page_{page:03d}.png"
-            try:
-                render_page_png(fp, page, page_png, dpi=192)
-            except Exception as e:
-                log("ingest.pdf.render_fail", page=page, error=str(e))
-                continue
-            pages_needed[page] = page_png
-
-    log("ingest.pdf.structure.done", file=fp.name,
-        figures=len(figures), sections=len(manifest.get("sections", [])),
-        pages_rendered=len(pages_needed))
-
-    # Step 3: for each rendered page, ask Claude for per-figure bboxes.
-    for page_num, page_png in pages_needed.items():
-        page_figs = [f for f in figures if int(f.get("page", 0)) == page_num]
-        try:
-            bboxes_by_idx = _locate_figure_bboxes(page_png, page_figs, client, ctx)
-        except Exception as e:
-            log("ingest.pdf.locator_fail", page=page_num, error=str(e))
-            bboxes_by_idx = {}
-
-        for fig in page_figs:
-            fig_idx = int(fig.get("idx", 0))
-            bbox = bboxes_by_idx.get(fig_idx)
-            if bbox is None:
-                # Fallback: whole page as the "figure."
-                from PIL import Image as _Image
-                with _Image.open(page_png) as im:
-                    bbox = (0, 0, im.width, im.height)
-                log("ingest.pdf.locator_fallback",
-                    page=page_num, fig_idx=fig_idx, reason="no_bbox_from_model")
-
-            cropped_path = ctx.layers_dir / f"img_ingest_fig_{fig_idx:02d}.png"
-            try:
-                cw, ch = crop_bbox(page_png, bbox, cropped_path)
-            except Exception as e:
-                log("ingest.pdf.crop_fail", fig_idx=fig_idx, error=str(e))
-                continue
-
-            layer_id = f"ingest_fig_{fig_idx:02d}"
-            aspect = _aspect_from_dims(cw, ch)
-            ctx.state["rendered_layers"][layer_id] = {
-                "layer_id": layer_id,
-                "name": f"figure_{fig_idx}",
-                "kind": "image",
-                "z_index": 5,
-                "bbox": None,
-                "src_path": str(cropped_path),
-                "aspect_ratio": aspect,
-                "image_size": f"{cw}x{ch}",
-                "sha256": sha256_file(cropped_path),
-                "source": "ingested_pdf",
-                "source_file": str(fp),
-                "source_page": page_num,
-                "caption": str(fig.get("caption", "")),
-            }
-            fig["layer_id"] = layer_id
-            registered_layer_ids.append(layer_id)
+    if candidates:
+        matches = _match_captions_parallel(candidates, manifest, ctx)
+        registered_layer_ids = _register_candidates(
+            candidates=candidates, matches=matches, ctx=ctx, pdf_path=fp,
+        )
+    else:
+        log("ingest.pdf.no_candidates", file=fp.name,
+            note="pymupdf returned 0 figures; VLM manifest may still be useful")
 
     return {
         "file": str(fp), "type": "pdf", "manifest": manifest,
@@ -371,62 +335,228 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
     }
 
 
-def _locate_figure_bboxes(
-    page_png: Path,
-    page_figs: list[dict[str, Any]],
-    client: Anthropic,
+def _extract_structure(
+    page_texts: list[str],
+    cover_png: Path | None,
     ctx: ToolContext,
-) -> dict[int, tuple[int, int, int, int]]:
-    """Ask Claude vision for per-figure bboxes on a rendered page."""
-    from PIL import Image as _Image
-    with _Image.open(page_png) as im:
-        iw, ih = im.size
+    fp: Path,
+) -> dict[str, Any]:
+    import time as _time
 
-    with page_png.open("rb") as fh:
-        b64 = base64.standard_b64encode(fh.read()).decode("ascii")
+    # Concatenate text with [PAGE N] headers; budget the total so the
+    # VLM's context doesn't blow up on reference-heavy long papers.
+    body_lines: list[str] = []
+    used = 0
+    for page_num, text in enumerate(page_texts, start=1):
+        chunk = f"\n[PAGE {page_num}]\n{text.strip()}"
+        if used + len(chunk) > _STRUCTURE_TOTAL_TEXT_CAP:
+            body_lines.append(
+                f"\n[remaining {len(page_texts) - page_num + 1} "
+                f"pages omitted — cap {_STRUCTURE_TOTAL_TEXT_CAP} chars]"
+            )
+            break
+        body_lines.append(chunk)
+        used += len(chunk)
+    full_text = "".join(body_lines)
 
-    fig_lines = "\n".join(
-        f"- idx={f.get('idx')}  caption: {f.get('caption', '')[:200]!r}"
-        for f in page_figs
-    )
     user_text = (
-        f"Page image dimensions: {iw}×{ih} pixels (top-left origin).\n\n"
-        f"Figures on this page:\n{fig_lines}\n\n"
-        "Return a bbox per figure in the JSON schema specified in your "
-        "system prompt. Bbox values must be ints within [0, width] / "
-        "[0, height]."
+        "Below is the complete extracted text of the paper, followed by "
+        "the cover-page image for visual grounding. Extract the "
+        "structured manifest as JSON per the system prompt. Return "
+        "STRICT JSON only.\n\n"
+        f"{full_text}"
     )
 
-    resp = client.messages.create(
+    images = [VlmImage.from_path(cover_png)] if cover_png is not None else []
+
+    log("ingest.pdf.structure.request",
+        file=fp.name, text_chars=used, n_pages=len(page_texts),
+        cover_image=cover_png is not None,
         model=ctx.settings.ingest_model,
-        max_tokens=1024,
-        system=_BBOX_LOCATOR_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image",
-                 "source": {"type": "base64",
-                            "media_type": "image/png",
-                            "data": b64}},
-                {"type": "text", "text": user_text},
-            ],
-        }],
+        timeout_s=ctx.settings.ingest_http_timeout)
+    t0 = _time.monotonic()
+    manifest = vlm_call_json(
+        settings=ctx.settings,
+        model=ctx.settings.ingest_model,
+        system=_INGEST_STRUCTURE_PROMPT,
+        user_text=user_text,
+        images=images,
+        max_tokens=8192,
     )
-    payload = _parse_json_block(resp.content)
-    out: dict[int, tuple[int, int, int, int]] = {}
-    if not isinstance(payload, dict):
-        return out
-    for item in payload.get("figures", []):
-        try:
-            idx = int(item.get("idx"))
-            x, y, w, h = item["bbox"]
-            x, y, w, h = int(x), int(y), int(w), int(h)
-            if w <= 0 or h <= 0:
-                continue
-            out[idx] = (x, y, w, h)
-        except (TypeError, ValueError, KeyError):
+    log("ingest.pdf.structure.response",
+        file=fp.name, wall_s=round(_time.monotonic() - t0, 1))
+    return manifest
+
+
+def _normalize_manifest_lists(manifest: dict[str, Any]) -> None:
+    """Coerce None → [] on list-shaped keys. Claude/Qwen occasionally
+    emit `"figures": null` for papers they find no figures in, which
+    breaks downstream len() calls."""
+    for key in ("sections", "figures", "tables", "authors", "key_quotes"):
+        if not isinstance(manifest.get(key), list):
+            manifest[key] = []
+
+
+def _match_captions_parallel(
+    candidates: list[PdfFigureCandidate],
+    manifest: dict[str, Any],
+    ctx: ToolContext,
+) -> dict[int, dict[str, Any]]:
+    """Run caption matching for each candidate in a thread pool.
+
+    Returns a dict keyed by candidate index → match result dict
+    (`matched_idx`, `confidence`, `is_real_figure`, `reason`, and
+    `caption_text` filled in from the manifest for convenience).
+    """
+    all_figs = list(manifest.get("figures", []))
+    if not all_figs:
+        # No captions to match — keep the raw candidates, no caption.
+        return {
+            i: {"matched_idx": None, "confidence": 0.0,
+                "is_real_figure": True, "reason": "no captions in manifest",
+                "caption_text": ""}
+            for i in range(len(candidates))
+        }
+
+    results: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=_CAPTION_MATCH_PARALLELISM) as ex:
+        futures = {
+            ex.submit(_match_one_caption, i, cand, all_figs, ctx): i
+            for i, cand in enumerate(candidates)
+        }
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                results[i] = fut.result()
+            except Exception as e:
+                log("ingest.pdf.caption_match_fail",
+                    cand_idx=i, error=str(e))
+                results[i] = {
+                    "matched_idx": None, "confidence": 0.0,
+                    "is_real_figure": True,
+                    "reason": f"match call failed: {e}",
+                    "caption_text": "",
+                }
+    return results
+
+
+def _match_one_caption(
+    cand_idx: int,
+    candidate: PdfFigureCandidate,
+    all_figs: list[dict[str, Any]],
+    ctx: ToolContext,
+) -> dict[str, Any]:
+    # Filter captions to the candidate's page ± 1, fall back to whole
+    # manifest if the page window is empty (handles figures whose caption
+    # ends up on the next page due to column overflow).
+    near: list[tuple[int, dict[str, Any]]] = [
+        (i, f) for i, f in enumerate(all_figs)
+        if abs(int(f.get("page", 0)) - candidate.page) <= 1
+    ]
+    pool = near if near else list(enumerate(all_figs))
+    # Indices in `pool` are *relative* to the pool list we show the VLM;
+    # we need to remap back to the full `all_figs` index.
+    local_to_global = {local_i: global_i for local_i, (global_i, _) in enumerate(pool)}
+
+    lines = []
+    for local_i, (_, fig) in enumerate(pool):
+        cap = (fig.get("caption") or "").replace("\n", " ")[:240]
+        lines.append(f"  [{local_i}] (p.{fig.get('page', '?')}) {cap}")
+    user_text = (
+        f"Candidate captions near page {candidate.page} "
+        f"(strategy: {candidate.strategy}):\n"
+        + "\n".join(lines)
+        + "\n\nReturn the JSON described in the system prompt."
+    )
+
+    result = vlm_call_json(
+        settings=ctx.settings,
+        model=ctx.settings.ingest_model,
+        system=_CAPTION_MATCH_PROMPT,
+        user_text=user_text,
+        images=[VlmImage.from_path(candidate.path)],
+        max_tokens=512,
+    )
+
+    # Remap local index → global manifest index, attach caption text.
+    local_idx = result.get("matched_idx")
+    global_idx = None
+    caption_text = ""
+    if isinstance(local_idx, int) and local_idx in local_to_global:
+        global_idx = local_to_global[local_idx]
+        caption_text = str(all_figs[global_idx].get("caption", ""))
+
+    return {
+        "matched_idx": global_idx,
+        "confidence": float(result.get("confidence", 0.0) or 0.0),
+        "is_real_figure": bool(result.get("is_real_figure", True)),
+        "reason": str(result.get("reason", ""))[:200],
+        "caption_text": caption_text,
+    }
+
+
+def _register_candidates(
+    *,
+    candidates: list[PdfFigureCandidate],
+    matches: dict[int, dict[str, Any]],
+    ctx: ToolContext,
+    pdf_path: Path,
+) -> list[str]:
+    """Apply caption matches + fake-figure filter. Register survivors
+    in `ctx.state["rendered_layers"]` with the downstream contract
+    schema, then rename their PNGs to `img_{layer_id}.png` so the
+    layers directory stays tidy."""
+    registered: list[str] = []
+    next_idx = 1
+
+    for cand_idx, cand in enumerate(candidates):
+        match = matches.get(cand_idx, {})
+        is_real = bool(match.get("is_real_figure", True))
+        if not is_real:
+            log("ingest.pdf.reject_fake",
+                page=cand.page, strategy=cand.strategy,
+                reason=match.get("reason", ""), path=cand.path.name)
+            # Clean up the rejected PNG so we don't bloat the run dir.
+            try:
+                cand.path.unlink()
+            except OSError:
+                pass
             continue
-    return out
+
+        layer_id = f"ingest_fig_{next_idx:02d}"
+        next_idx += 1
+        final_path = ctx.layers_dir / f"img_{layer_id}.png"
+        try:
+            if cand.path.resolve() != final_path.resolve():
+                shutil.move(str(cand.path), str(final_path))
+        except OSError as e:
+            log("ingest.pdf.rename_fail",
+                layer_id=layer_id, error=str(e))
+            final_path = cand.path
+
+        ctx.state["rendered_layers"][layer_id] = {
+            "layer_id": layer_id,
+            "name": f"figure_{next_idx - 1}",
+            "kind": "image",
+            "z_index": 5,
+            "bbox": None,
+            "src_path": str(final_path),
+            "aspect_ratio": _aspect_from_dims(cand.width_px, cand.height_px),
+            "image_size": f"{cand.width_px}x{cand.height_px}",
+            "sha256": sha256_file(final_path),
+            "source": "ingested_pdf",
+            "source_file": str(pdf_path),
+            "source_page": cand.page,
+            "caption": match.get("caption_text", ""),
+            "extract_strategy": cand.strategy,   # for debugging
+            "caption_confidence": match.get("confidence", 0.0),
+        }
+        registered.append(layer_id)
+
+    log("ingest.pdf.register",
+        kept=len(registered),
+        dropped=len(candidates) - len(registered))
+    return registered
 
 
 # ───────────────────────── Markdown branch ─────────────────────────────
@@ -439,7 +569,6 @@ def _ingest_markdown(fp: Path, ctx: ToolContext) -> dict[str, Any]:
     for m in _MD_IMG_RE.finditer(text):
         alt_text = m.group(1)
         ref = m.group(2).strip()
-        # Only resolve relative / absolute filesystem paths; skip URLs.
         if ref.startswith(("http://", "https://", "data:")):
             skipped.append(ref[:80])
             continue
@@ -488,33 +617,6 @@ def _ingest_image(fp: Path, ctx: ToolContext) -> dict[str, Any]:
 
 
 # ───────────────────────────── helpers ─────────────────────────────────
-
-def _anthropic_client(ctx: ToolContext) -> Anthropic:
-    """Dedicated client for ingest calls with an explicit longer timeout
-    (default 10 min) so large-PDF requests fail fast if the connection
-    stalls, instead of hanging indefinitely."""
-    kwargs: dict[str, Any] = {
-        "api_key": ctx.settings.anthropic_api_key,
-        "timeout": ctx.settings.ingest_http_timeout,
-        "max_retries": 1,  # retry once on transient network issues, no more
-    }
-    if ctx.settings.anthropic_base_url:
-        kwargs["base_url"] = ctx.settings.anthropic_base_url
-    return Anthropic(**kwargs)
-
-
-def _parse_json_block(content_blocks: list[Any]) -> Any:
-    text = "".join(
-        getattr(b, "text", "") for b in content_blocks
-        if getattr(b, "type", None) == "text"
-    )
-    m = _JSON_BLOCK_RE.search(text)
-    payload = m.group(1) if m else text.strip()
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"model returned non-JSON output: {e}; got {text[:300]!r}")
-
 
 def _register_image_file(src: Path, ctx: ToolContext, *, name_hint: str) -> str:
     from PIL import Image as _Image
