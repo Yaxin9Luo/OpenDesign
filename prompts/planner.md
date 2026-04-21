@@ -414,7 +414,7 @@ The top level is a flat list of `kind: "section"` nodes (one per page section), 
 1. `switch_artifact_type("landing")` — first, as always.
 2. `propose_design_spec(...)` — full spec with the section tree above. No layers have `bbox` (landing is flow layout).
 3. **SKIP `generate_background`** — landing HTML has no background image layers in v1.0 #8. (Section backgrounds are auto-themed by name: hero/cta/footer get dark variants, features gets a light variant.)
-4. **`generate_image`** — call once per image layer you want inline in a section (hero product shot, feature-card icons). Use the per-style prompt prefix from the chosen `prompts/design-systems/<style>.md`'s "Imagery prompts" section so all images on the page feel stylistically coherent. Each image layer must also appear in the correct section's `children[]` in the DesignSpec (same `layer_id`). Typical counts: 1 hero image + 3-4 feature icons = 4-5 images per landing. **SKIP entirely if the brief is text-only or the user asks "no images."**
+4. **`generate_image`** — call once per image layer you want inline in a section (hero product shot, feature-card icons). Use the per-style prompt prefix from the chosen `prompts/design-systems/<style>.md`'s "Imagery prompts" section so all images on the page feel stylistically coherent. Each image layer must also appear in the correct section's `children[]` in the DesignSpec (same `layer_id`). Typical counts: 1 hero image + 3-4 feature icons = 4-5 images per landing. **SKIP entirely if the brief is text-only or the user asks "no images." FOR PAPER LANDINGS (ingest_document ran): skip NBP for content-section imagery and reference the paper's `ingest_fig_NN` layers instead — see the "Paper landing imagery policy" section below for the full contract. NBP is only used for a hero shot the paper can't provide.**
 5. **SKIP `render_text_layer`** — landing text is emitted directly as native HTML inside sections. No rasterization needed.
 5. `composite` — reads `design_spec.layer_graph` directly, writes `index.html` + `preview.png` (no PSD / SVG). Takes empty args as usual.
 6. `critique` — optional. The critic sees the rendered preview.png (stacked section wireframe) — useful for checking text length / hierarchy, not pixel-perfection.
@@ -435,6 +435,68 @@ Name them consistently (exact match or containing the keyword works — `"hero"`
 **Landing canvas conventions:**
 
 `canvas.w_px` becomes the HTML's max-width; `canvas.h_px` is just metadata (flow layout means actual page height varies). Typical values: `w_px: 1200` for standard, `1440` for wider.
+
+## Paper landing imagery policy — INGESTED FIGURES FIRST (v1.3.1)
+
+When the user's brief came from an attached paper (ingest_document ran
+and registered ≥ 3 `ingest_fig_NN` / `ingest_table_NN` layers), the
+landing page is **academic / research-facing**, NOT a consumer SaaS
+marketing page. Use the paper's actual figures; do NOT default to NBP
+stock icons.
+
+### Hard rules for paper2landing
+
+1. **At least 3 ingested figure layers** must appear in `layer_graph` if
+   the ingest summary showed ≥ 5 available. At least 5 if ≥ 10
+   available. These belong in the content sections — highlights /
+   method / results / showcase — not just a single "teaser" thumbnail.
+2. **Ingested benchmark tables belong in a results section** as
+   `kind: "table"` layers (the renderer produces a real `<table>` with
+   winner-cell bolding). If the paper registered `ingest_table_NN`, it
+   MUST appear on the landing — cropping a screenshot of it instead
+   defeats legibility + accessibility.
+3. **NBP (`generate_image`) is RESERVED for imagery the paper cannot
+   provide**: a hero brand shot, a mood photo, a visual metaphor that
+   wraps the paper's narrative. It is NOT a default for feature cards.
+   - ≤ 1 NBP call for the hero (when a paper doesn't have a flagship
+     cover figure — rare; papers usually do, it's `ingest_fig_01`).
+   - 0 NBP calls for highlights / method / benchmarks / showcase —
+     those get `ingest_fig_NN` layers.
+   - NBP feature icons like "abstract geometric glyph of autoregression"
+     are the **anti-pattern** this rule exists to kill: they erase the
+     paper's actual visual identity.
+
+### Default mapping (paper → landing sections)
+
+| Section role | Typical imagery source |
+|---|---|
+| `hero` | paper's Fig. 1 (architecture / teaser) as an ingest_fig layer; NBP only if Fig. 1 is a pure text figure |
+| `highlights` / `contributions` | 3 ingest_fig layers matching the paper's three headline contributions (system diagram + qualitative example + scaling curve is a canonical mix) |
+| `method` / `approach` | system diagram + training pipeline (both ingest_fig layers) |
+| `results` / `benchmarks` | the ingest_table + 1 ingest_fig of the scaling or ablation plot |
+| `showcase` / `in the wild` | ingest_fig qualitative examples (generated samples, saliency, comparisons) |
+| `cta` / `footer` | text-only; no imagery |
+
+### Design system preferences for paper landings
+
+Paper landings are almost always one of three styles, in order of preference:
+
+- **`editorial`** — magazine-grade serif, restrained palette, rule-framed figures. The default "academic" look — pick this unless the brief says otherwise.
+- **`minimalist`** — Stripe-like clean, hairline borders, sans-serif. Use when the paper is systems / infrastructure / developer-tooling.
+- **`liquid-glass`** — premium media / AI-creative. Use when the paper is generative / creative-ML and the brief explicitly asks for a premium feel.
+
+Avoid `claymorphism`, `neubrutalism`, `glassmorphism` for paper landings unless the brief explicitly asks — they're consumer-product vocabularies that will collide with the paper's academic content.
+
+### Picking from the ingest summary
+
+The ingest tool_result lists up to 20 figure candidates ranked by `(has_caption, is_vector, min_side_px, -page)` with `(page, size, strategy, caption)` each. Use the captions to route each figure into a section:
+
+- Caption contains "architecture" / "pipeline" / "overview" / "framework" → method section or hero.
+- Caption contains "samples" / "examples" / "qualitative" / "case" → showcase section.
+- Caption contains "benchmark" / "comparison" / "ablation" / "scaling" → results section.
+- Caption contains "tokenizer" / "encoder" / "training" → method section.
+
+Prefer figures where the shorter side ≥ 600 px; skip < 400 px figures unless nothing better exists (they're usually sub-component icons).
 
 ## Interactivity (v1.3 — CTA buttons, section nav, reveal-on-scroll)
 

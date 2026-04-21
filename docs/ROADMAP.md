@@ -170,6 +170,21 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
 
 ---
 
+## v1.3.1 — Paper2landing imagery policy ✅ SHIPPED 2026-04-21
+
+First real paper2landing dogfood (run `20260421-201900-cb30b9bd` on longcat-next-2026.pdf, claymorphism) used **5 NBP stock icons vs 1 ingested figure** — a marketing aesthetic, not academic. Root cause: planner prompt said "NBP for hero + feature icons" as the default, with no carve-out for paper landings.
+
+Fix (`prompts/planner.md` landing workflow):
+
+- New **"Paper landing imagery policy"** section parallel to v1.2.2's poster visual-density rules:
+  - ≥ 3 ingested figure layers if ≥ 5 available (≥ 5 if ≥ 10).
+  - Ingested tables MUST appear on the landing as `kind: "table"` (no cropped screenshots).
+  - NBP RESERVED for imagery the paper can't provide; 0 NBP for content sections.
+- Default mapping (paper → landing sections): hero = paper's Fig. 1, method = system diagram + pipeline, results = benchmark table + scaling plot, showcase = qualitative examples.
+- Style preference: **editorial** (default), `minimalist`, or `liquid-glass`. Explicitly avoid claymorphism / neubrutalism / glassmorphism for paper landings.
+
+Verified re-run (`20260421-203226-fc1740c9`, editorial): **0 NBP calls**, **9 paper figures + 1 paper table** across 8 sections (hero + abstract + contributions + method [4 figures] + results + showcase [2 figures] + cta + footer). Wall 6:26, $4.07, pass 0.88 in one iteration.
+
 ## v1.3.0 — Interactive landing pages ✅ SHIPPED 2026-04-21
 
 From static HTML pages to production-grade marketing pages. Four user-visible improvements, all backward compatible:
