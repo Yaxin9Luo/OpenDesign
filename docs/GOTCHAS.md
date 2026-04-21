@@ -4,6 +4,23 @@ Each entry: **Symptom** → **Root cause** → **Fix** → optionally **Detectio
 
 ---
 
+## 2026-04-21 — pymupdf `find_tables()` false positives are unavoidable; trust the VLM reject step
+
+**Symptom**: `page.find_tables()` reports data tables on pages that contain NO tables (e.g. figure panels with bordered sub-regions; math equation arrays; OCR-example screenshots). On `longcat-next-2026.pdf` it finds 15 candidates across 8 pages, of which only 2 are real data tables.
+
+**Root cause**: pymupdf's table localizer tracks horizontal+vertical rule density and gridded bboxes. Paper figures that happen to have inner borders (e.g. a comparison figure with columns of outputs) score as tables. Math systems like `Ai,0 / Ai,1 / ...` vertical arrays register as 2-col tables.
+
+**Fix (already in v1.2 ingest_document)**:
+1. Heuristic filters in `util/pdf.extract_table_candidates`: `min_rows=2, min_cols=2, min_side_pt=60.0`. Cuts 15 → 4 on this paper.
+2. `dedup_tables_against_figures`: drop a table candidate when a same-page vector-figure bbox covers ≥ 70 % of the table bbox. Stops figures that look gridded from being processed twice.
+3. **VLM reject step is the real filter**: Qwen-VL-Max parses each candidate and returns `is_table: false` for non-tabular content (figure collages, math arrays, OCR examples, decorative bands). Don't try to tune (1) tight enough to match (3) — you'll start dropping real tables.
+
+**Detection**: log line `ingest.pdf.reject_table` with `page` + `reason` shows exactly what the VLM rejected. If you see a real table in `reject_table` logs, the filter is too aggressive.
+
+**Anti-pattern**: bumping `min_rows` / `min_cols` until false positives disappear. On this paper, a 1-row data-recipe table (p.18) is already dropped; going tighter drops more real tables.
+
+---
+
 ## 2026-04-20 — Big PDFs via OpenRouter → Anthropic: 20+ min silent hangs or SSL EOF mid-stream
 
 **Symptom**: `ingest_document` on a >15 MB / >30 page PDF via OpenRouter either (a) hangs 20-28 min before timing out with `anthropic.APIConnectionError: Connection error`, or (b) completes after 4-5 min but the connection drops with `httpcore.ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING]` partway through the response stream.

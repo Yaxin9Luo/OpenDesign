@@ -74,6 +74,10 @@ def write_html(
         elif kind == "image" and L.get("src_path"):
             # v1.1 paper2any: ingested PDF figures / user-passthrough images
             body_parts.append(_image_html(L))
+        elif kind == "table" and (L.get("rows") or L.get("headers")):
+            # v1.2 paper2any: structured table from ingest_document →
+            # native <table> on poster/landing.
+            body_parts.append(_table_html(L))
         else:
             body_parts.append(
                 f'  <!-- skipped layer kind={kind!r} id={L.get("layer_id", "?")} -->'
@@ -288,6 +292,81 @@ def _image_html(L: dict[str, Any]) -> str:
         f'height:{int(bbox.get("h", 0))}px;">'
         f'<img src="{src}" alt="{_attr(L.get("name", ""))}" '
         f'style="width:100%;height:100%;object-fit:contain;display:block;"></div>'
+    )
+
+
+def _table_html(L: dict[str, Any]) -> str:
+    """Poster-mode `<table>` layer for v1.2 ingested data tables.
+
+    Emits a semantic `<table>` with `<thead>` / `<tbody>` and inline
+    CSS that renders legibly at poster scale (14-18px font, alt-row
+    striping, dark header). The layer stays absolutely-positioned in
+    the canvas so planner bboxes are respected.
+    """
+    rows = list(L.get("rows") or [])
+    headers = list(L.get("headers") or [])
+    col_rule = list(L.get("col_highlight_rule") or [])
+    if not headers and rows:
+        headers = [str(c) for c in rows[0]]
+        rows = rows[1:]
+    n_cols = max(len(headers), max((len(r) for r in rows), default=0))
+    if n_cols == 0:
+        return f'  <!-- skipped empty table id={L.get("layer_id", "?")} -->'
+    headers = [str(h) for h in headers] + [""] * (n_cols - len(headers))
+    rows = [[str(c) for c in r] + [""] * (n_cols - len(r)) for r in rows]
+
+    bbox = L.get("bbox") or {}
+    caption = L.get("caption") or L.get("title") or ""
+
+    # Resolve winner rows per column for bold highlighting.
+    from ..util.table_png import _compute_winner_rows
+    winner_rows = _compute_winner_rows(rows, col_rule) if col_rule else {}
+
+    head_cells = "".join(f"<th>{_html_escape(h)}</th>" for h in headers)
+    body_rows_html: list[str] = []
+    for r_idx, row in enumerate(rows):
+        cells: list[str] = []
+        for c, val in enumerate(row):
+            is_winner = winner_rows.get(c) == r_idx
+            cls = ' class="ld-table-winner"' if is_winner else ""
+            cells.append(f"<td{cls}>{_html_escape(val)}</td>")
+        body_rows_html.append(f"<tr>{''.join(cells)}</tr>")
+    body_rows = "".join(body_rows_html)
+    fontsize_px = 16 if len(rows) <= 6 else 13 if len(rows) <= 14 else 11
+
+    return (
+        f'  <div class="layer table" '
+        f'data-layer-id="{_attr(L.get("layer_id", ""))}" '
+        f'data-kind="table" '
+        f'data-z-index="{int(L.get("z_index", 0))}" '
+        f'data-layer-name="{_attr(L.get("name", ""))}" '
+        f'data-source="{_attr(L.get("source", ""))}" '
+        f'data-caption="{_attr(caption)}" '
+        f'style="left:{int(bbox.get("x", 0))}px; '
+        f'top:{int(bbox.get("y", 0))}px; '
+        f'width:{int(bbox.get("w", 0))}px; '
+        f'height:{int(bbox.get("h", 0))}px; '
+        f'overflow:auto;">'
+        f'<style>.ld-table-winner{{font-weight:700;}}</style>'
+        f'<table style="width:100%;border-collapse:collapse;'
+        f'font-family:system-ui,sans-serif;font-size:{fontsize_px}px;'
+        f'background:#fff;color:#18181b;">'
+        f'<thead><tr style="background:#1F2A44;color:#fff;">{head_cells}</tr></thead>'
+        f'<tbody>{body_rows}</tbody>'
+        f'</table>'
+        + (f'<div class="caption" style="margin-top:6px;font-size:11px;'
+           f'color:#52525b;">{_html_escape(caption)}</div>' if caption else "")
+        + f'</div>'
+    )
+
+
+def _html_escape(s: str) -> str:
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
     )
 
 
@@ -748,6 +827,18 @@ def _landing_base_css(cw: int) -> str:
         "             outline-offset: 4px; }\n"
         "  /* Drag handle hidden in landing mode — flow layout doesn't drag. */\n"
         "  .ld-landing .ld-drag-handle { display: none !important; }\n"
+        "  /* v1.2 paper2any: ingested table layer. */\n"
+        "  .ld-landing .layer.table { margin: 1.25em 0; overflow-x: auto; }\n"
+        "  .ld-landing .ld-table { width: 100%; border-collapse: collapse;\n"
+        "             font-size: 0.95em; }\n"
+        "  .ld-landing .ld-table thead tr { background: #1F2A44; color: #fff; }\n"
+        "  .ld-landing .ld-table th, .ld-landing .ld-table td {\n"
+        "             padding: 0.5em 0.75em; border-bottom: 1px solid rgba(0,0,0,0.08);\n"
+        "             text-align: left; }\n"
+        "  .ld-landing .ld-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.03); }\n"
+        "  .ld-landing .ld-table .ld-table-winner { font-weight: 700; }\n"
+        "  .ld-landing .layer.table figcaption {\n"
+        "             margin-top: 0.4em; font-size: 0.85em; opacity: 0.7; }\n"
     )
 
 
@@ -788,8 +879,61 @@ def _landing_section_html(section_node: Any, ctx: ToolContext) -> str:
             parts.append(_landing_text_html(child, ctx))
         elif kind == "image" and getattr(child, "src_path", None):
             parts.append(_landing_image_html(child))
+        elif kind == "table" and (getattr(child, "rows", None)
+                                  or getattr(child, "headers", None)):
+            parts.append(_landing_table_html(child))
     parts.append("  </section>")
     return "\n".join(parts)
+
+
+def _landing_table_html(table_node: Any) -> str:
+    """Flow-layout `<table>` inside a landing section. No pixel bbox —
+    the table sizes itself to the section, with CSS-driven typography
+    for legibility. Uses the same header-fill convention as poster."""
+    rows = list(getattr(table_node, "rows", None) or [])
+    headers = list(getattr(table_node, "headers", None) or [])
+    col_rule = list(getattr(table_node, "col_highlight_rule", None) or [])
+    if not headers and rows:
+        headers = [str(c) for c in rows[0]]
+        rows = rows[1:]
+    n_cols = max(len(headers), max((len(r) for r in rows), default=0))
+    if n_cols == 0:
+        return ""
+    headers = [str(h) for h in headers] + [""] * (n_cols - len(headers))
+    rows = [[str(c) for c in r] + [""] * (n_cols - len(r)) for r in rows]
+
+    layer_id = getattr(table_node, "layer_id", "") or ""
+    name = getattr(table_node, "name", "") or layer_id
+    caption = (getattr(table_node, "caption", None)
+               or getattr(table_node, "title", None) or "")
+
+    from ..util.table_png import _compute_winner_rows
+    winner_rows = _compute_winner_rows(rows, col_rule) if col_rule else {}
+
+    head_cells = "".join(f"<th>{_html_escape(h)}</th>" for h in headers)
+    body_rows_html: list[str] = []
+    for r_idx, row in enumerate(rows):
+        cells: list[str] = []
+        for c, val in enumerate(row):
+            is_winner = winner_rows.get(c) == r_idx
+            cls = ' class="ld-table-winner"' if is_winner else ""
+            cells.append(f"<td{cls}>{_html_escape(val)}</td>")
+        body_rows_html.append(f"<tr>{''.join(cells)}</tr>")
+    body_rows = "".join(body_rows_html)
+
+    return (
+        f'    <figure class="layer table" '
+        f'data-layer-id="{_attr(layer_id)}" '
+        f'data-kind="table" '
+        f'data-z-index="{int(getattr(table_node, "z_index", 0) or 0)}" '
+        f'data-layer-name="{_attr(name)}">'
+        f'<table class="ld-table">'
+        f'<thead><tr>{head_cells}</tr></thead>'
+        f'<tbody>{body_rows}</tbody>'
+        f'</table>'
+        + (f'<figcaption>{_html_escape(caption)}</figcaption>' if caption else "")
+        + f'</figure>'
+    )
 
 
 def _landing_image_html(image_node: Any) -> str:

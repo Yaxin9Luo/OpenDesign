@@ -110,8 +110,83 @@ If the user's brief begins with an **`Attached files:`** block (the runner injec
    - Title / subtitle text comes from the paper's title + authors.
    - Section headings + bullets come from `manifest.sections[].summary` / `.key_points`.
    - **Figure image children reference the pre-registered layer_ids** (e.g. `ingest_fig_01`, `ingest_img_<sha8>`) with `kind: "image"` and NO `src_path` (it's already in rendered_layers — composite hydrates it for landing + deck; for poster, it's already ready).
+   - **Tables** ingest as `ingest_table_NN` layers and ship with structured data (`rows` + `headers`). ALWAYS place data tables with `kind: "table"` — the renderer draws a **native PowerPoint table** in decks and a real `<table>` in landing. Do NOT drop tables in as cropped images; that defeats legibility. See the **Table layer** section below.
 6. For poster / deck: still call `generate_image` for any NEW visuals the paper doesn't provide (e.g. a brand hero shot for a marketing deck). Only skip NBP for things you can legitimately passthrough from the paper.
 7. Do NOT re-generate figures via NBP just because you could — that defeats the purpose of passthrough. If the brief says "add a cover hero shot of our logo" but the paper has no logo, THEN call `generate_image`.
+
+## Table layer — v1.2 paper2any
+
+`ingest_document` registers one `rendered_layers[ingest_table_NN]` per
+validated data table with:
+
+- `kind: "table"`
+- `rows: [[str, ...], ...]` — body rows, already VLM-parsed clean
+- `headers: [str, ...]` — header row
+- `caption: str` — table's full caption from the paper
+- `src_path: <png>` — PIL-rendered PNG fallback (poster / PSD paths)
+
+**Reference a table the same way you reference a figure** — by
+`layer_id` in `layer_graph`, `kind: "table"`, with a `bbox` sized
+generously enough for the column count. The composite step hydrates
+`rows` / `headers` / `caption` onto your layer node if you omit them.
+You MAY override `rows` (e.g. pick a subset of the paper's table when
+the full 13-row benchmark won't fit your slide) — whatever you put on
+the layer wins.
+
+Renderer guarantees:
+- **deck**: native PPTX `add_table` shape — editable in PowerPoint / Keynote.
+- **landing**: real `<table>` with header styling and zebra rows.
+- **poster**: PIL-rendered PNG fallback (baked into `src_path`).
+
+### Winner highlighting (`col_highlight_rule`)
+
+Ingest populates `col_highlight_rule` alongside the table data — a
+parallel list (`"max" | "min" | ""` per column). Renderers bold the
+winning row per column in PPTX / HTML and color it green in the PIL
+PNG. You normally pass the layer through unchanged; only override
+`col_highlight_rule` when the brief specifies a custom winning metric
+(e.g. "highlight lowest latency" where ingest guessed `"max"`).
+
+### Picking a subset of a wide table
+
+Papers often ship 13×11 benchmark tables that are unreadable at
+deck scale. For slides, OVERRIDE `rows` and `headers` on the layer
+to show only the cells that matter:
+
+```
+Example: paper's Table 1 has 13 models × 11 metrics. On the results
+slide, set:
+  rows = [
+    ["LongCat-Next", "70.6", "83.1", "86.5", "93.15 / 89.08"],
+    ["BAGEL",        "55.3", "73.1", "80.9", "43.70"],
+    ["NEO-unify",    "68.9",  "—",   "81.5", "91.40 / 75.50"],
+    ["InternVL-U",   "54.7",  "—",   "83.9", "73.80 / 86.00"],
+  ],
+  headers = ["Model", "MMMU", "MathVista", "OCRBench", "LT-EN/ZH"],
+  col_highlight_rule = ["", "max", "max", "max", "max"],
+  caption = "<the paper's original caption>",
+```
+
+Pick: the paper's model + the 3-4 strongest baselines (4 rows) and
+the 4-5 metrics most relevant to your narrative (typically metrics
+where the paper wins). Keep the caption intact so the audience
+knows where the data came from.
+
+### Caption cross-reference
+
+The PPTX `add_table` shape has NO built-in caption. When you place a
+table layer, ALSO add a small `kind: "text"` layer immediately above
+or below it holding the literal caption string (from
+`rendered_layers[ingest_table_NN].caption`, or a shortened version).
+In landing mode the `<figure>` wrapper handles this automatically —
+no extra layer needed.
+
+When the brief is a paper with benchmark / comparison / data tables,
+PREFER putting them on the results or method slides as `kind: "table"`.
+Only fall back to a screenshot-style `kind: "image"` of the same table
+when the ingest manifest did NOT register a matching `ingest_table_NN`
+layer for the thing you want (rare — it means pymupdf missed the
+localization or the VLM rejected it).
 
 ## Per-target mapping heuristics
 

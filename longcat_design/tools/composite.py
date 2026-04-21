@@ -158,6 +158,17 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
                 "kind": "image",
                 "src_path": node.src_path,
             })
+        elif kind == "table":
+            manifest.append({
+                "layer_id": node.layer_id,
+                "name": node.name,
+                "kind": "table",
+                "src_path": node.src_path,
+                "rows": list(node.rows or []),
+                "headers": list(node.headers or []),
+                "col_highlight_rule": list(node.col_highlight_rule or []),
+                "caption": node.caption or "",
+            })
 
     try:
         write_landing_html(spec, html_path, ctx)
@@ -343,23 +354,39 @@ def _hydrate_deck_image_srcs(slides: list[Any], ctx: ToolContext) -> None:
         changed = False
         for child in children:
             kind = getattr(child, "kind", None)
-            if kind not in ("image", "background"):
+            if kind not in ("image", "background", "table"):
                 new_children.append(child)
                 continue
-            if getattr(child, "src_path", None):
+            # Tables carry structured rows/headers too — hydrate those
+            # alongside src_path, same pattern as image aspect_ratio.
+            needs_src = not getattr(child, "src_path", None)
+            needs_rows = (kind == "table"
+                          and not (getattr(child, "rows", None)
+                                   or getattr(child, "headers", None)))
+            if not needs_src and not needs_rows:
                 new_children.append(child)
                 continue
             rec = rendered.get(getattr(child, "layer_id", None))
             if rec and rec.get("src_path"):
+                updates: dict[str, Any] = {}
+                if needs_src:
+                    updates["src_path"] = rec["src_path"]
+                    updates["aspect_ratio"] = (rec.get("aspect_ratio")
+                                               or getattr(child, "aspect_ratio", None))
+                if kind == "table":
+                    updates.setdefault("rows", rec.get("rows") or [])
+                    updates.setdefault("headers", rec.get("headers") or [])
+                    updates.setdefault("col_highlight_rule",
+                                       rec.get("col_highlight_rule") or [])
+                    if rec.get("caption"):
+                        updates["caption"] = rec["caption"]
                 try:
-                    new_child = child.model_copy(update={
-                        "src_path": rec["src_path"],
-                        "aspect_ratio": rec.get("aspect_ratio") or getattr(child, "aspect_ratio", None),
-                    })
+                    new_child = child.model_copy(update=updates)
                     new_children.append(new_child)
                     changed = True
                 except Exception:
-                    child.src_path = rec["src_path"]
+                    for k, v in updates.items():
+                        setattr(child, k, v)
                     new_children.append(child)
             else:
                 new_children.append(child)
@@ -388,23 +415,38 @@ def _hydrate_landing_image_srcs(layer_graph: list[Any], ctx: ToolContext) -> Non
         changed = False
         new_children: list[Any] = []
         for child in children:
-            if getattr(child, "kind", None) != "image":
+            kind = getattr(child, "kind", None)
+            if kind not in ("image", "table"):
                 new_children.append(child)
                 continue
-            if getattr(child, "src_path", None):
+            needs_src = not getattr(child, "src_path", None)
+            needs_rows = (kind == "table"
+                          and not (getattr(child, "rows", None)
+                                   or getattr(child, "headers", None)))
+            if not needs_src and not needs_rows:
                 new_children.append(child)
-                continue  # already has src_path
+                continue  # already has src_path (+ rows for tables)
             rec = rendered.get(getattr(child, "layer_id", None))
             if rec and rec.get("src_path"):
+                updates: dict[str, Any] = {}
+                if needs_src:
+                    updates["src_path"] = rec["src_path"]
+                    updates["aspect_ratio"] = (rec.get("aspect_ratio")
+                                               or child.aspect_ratio)
+                if kind == "table":
+                    updates.setdefault("rows", rec.get("rows") or [])
+                    updates.setdefault("headers", rec.get("headers") or [])
+                    updates.setdefault("col_highlight_rule",
+                                       rec.get("col_highlight_rule") or [])
+                    if rec.get("caption"):
+                        updates["caption"] = rec["caption"]
                 try:
-                    new_child = child.model_copy(update={
-                        "src_path": rec["src_path"],
-                        "aspect_ratio": rec.get("aspect_ratio") or child.aspect_ratio,
-                    })
+                    new_child = child.model_copy(update=updates)
                     new_children.append(new_child)
                     changed = True
                 except Exception:
-                    child.src_path = rec["src_path"]
+                    for k, v in updates.items():
+                        setattr(child, k, v)
                     new_children.append(child)
             else:
                 new_children.append(child)
@@ -520,9 +562,12 @@ def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,
                 "layer_id": L["layer_id"], "name": L["name"], "kind": "background",
                 "png_path": L["src_path"], "bbox": {"x": 0, "y": 0, "w": cw, "h": ch},
             })
-        elif L["kind"] == "image":
+        elif L["kind"] == "image" or L["kind"] == "table":
             # v1.1 paper2any: ingested figures + user-passthrough images are
-            # native-sized PNGs (not full-canvas). Resize to bbox and place.
+            # native-sized PNGs (not full-canvas). v1.2 adds "table" which
+            # reaches the PSD path via its pre-rendered src_path fallback
+            # (HTML uses live <table>; PSD has no table primitive so we
+            # flatten to a pixel layer same as images).
             if png.mode != "RGBA":
                 png = png.convert("RGBA")
             if png.size != (bw, bh):
@@ -533,7 +578,7 @@ def _write_psd(layers: list[dict[str, Any]], cw: int, ch: int,
                 compression=Compression.RLE,
             )
             manifest.append({
-                "layer_id": L["layer_id"], "name": L["name"], "kind": "image",
+                "layer_id": L["layer_id"], "name": L["name"], "kind": L["kind"],
                 "png_path": L["src_path"], "bbox": {"x": bx, "y": by, "w": bw, "h": bh},
             })
         else:
@@ -642,8 +687,11 @@ def _write_preview(layers: list[dict[str, Any]], cw: int, ch: int, out_path: Pat
             if png.size != (cw, ch):
                 png = png.resize((cw, ch), Image.LANCZOS)
             base = Image.alpha_composite(base, png)
-        elif kind == "image":
-            # v1.1 paper2any: native-sized PNG placed at bbox with resize.
+        elif kind == "image" or kind == "table":
+            # image layer  → v1.1 native-sized PNG placed at bbox.
+            # table layer → v1.2 PIL-rendered table PNG (src_path); HTML
+            # renderer uses live <table>, but PSD / SVG / preview paths
+            # just treat it as another image.
             bbox = L["bbox"]
             bx, by, bw, bh = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
             if png.size != (bw, bh):

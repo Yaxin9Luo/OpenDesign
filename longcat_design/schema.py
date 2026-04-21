@@ -65,6 +65,9 @@ LayerKind = Literal[
     "section",       # landing section container (v1.0 #8)
     "image",         # NBP-generated inline image inside a landing section (v1.0 #8.75)
     "slide",         # deck slide container: children hold text/image elements (v1.0 #7)
+    "table",         # v1.2 paper2any: structured data (rows/headers) — renderers
+                     # produce native PPTX / HTML tables instead of cropped images.
+                     # src_path holds a PIL-drawn PNG fallback for PSD/SVG paths.
 ]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
@@ -135,6 +138,21 @@ class LayerNode(BaseModel):
     # any
     src_path: str | None = None
     children: list["LayerNode"] = Field(default_factory=list)
+
+    # v1.2 paper2any — table layers (kind="table") carry structured data
+    # that renderers turn into native PPTX tables / HTML <table> elements.
+    # `headers` is optional (first data row doubles as header when absent).
+    # `caption` sits above or below the table depending on the renderer.
+    # `src_path` is a PIL-rendered PNG fallback used by PSD/SVG paths that
+    # don't have a live-table primitive.
+    # `col_highlight_rule` — one entry per column, "max"/"min"/"" —
+    # renderers bold the winning row per column. Enables "highlight
+    # LongCat-Next's winning metrics" without the planner duplicating
+    # every cell as bold/non-bold.
+    rows: list[list[str]] | None = None
+    headers: list[str] | None = None
+    caption: str | None = None
+    col_highlight_rule: list[str] | None = None
 
 
 class DesignSpec(BaseModel):

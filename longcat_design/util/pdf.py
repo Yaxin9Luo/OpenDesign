@@ -45,6 +45,27 @@ class PdfFigureCandidate:
     xref: int | None                          # PDF xref (raster only)
 
 
+@dataclass(frozen=True)
+class PdfTableCandidate:
+    """A table candidate extracted from a PDF.
+
+    pymupdf `page.find_tables()` is used for **localization only** — its
+    cell-level splits are unreliable on paper layouts (we've observed
+    headers jammed into one cell, math-equation arrays detected as
+    tables, figure diagrams misclassified as tables). Downstream asks a
+    VLM to read the cropped region and return clean structured data
+    (or reject the candidate as "not a data table").
+    """
+    page: int
+    bbox_pt: tuple[float, float, float, float]
+    image_path: Path                          # 300 dpi PNG of the bbox
+    width_px: int
+    height_px: int
+    raw_cells: list[list[str]]                # pymupdf's best-effort split
+    nrows: int
+    ncols: int
+
+
 class ScannedPdfError(RuntimeError):
     """Raised when a PDF has no embedded images AND no vector drawings
     AND almost no extractable text — i.e. a scanned PDF we cannot
@@ -277,6 +298,126 @@ def extract_vector_clusters(
             ))
 
     return records
+
+
+def extract_table_candidates(
+    doc: fitz.Document,
+    out_dir: Path,
+    *,
+    dpi: int = 300,
+    min_rows: int = 2,
+    min_cols: int = 2,
+    min_side_pt: float = 60.0,
+) -> list[PdfTableCandidate]:
+    """Per-page table candidates. pymupdf `page.find_tables()` returns
+    TableFinder objects; we take each one as a LOCALIZATION hint only —
+    cell splits are often wrong, so the VLM parses the crop separately.
+
+    Filters:
+    - drop candidates below `min_rows × min_cols` (often false positives
+      on single-row headers or key-value annotation lists),
+    - drop candidates with bbox side < `min_side_pt` (tiny layout artifacts),
+    - do NOT drop "full-page" candidates here — some papers genuinely
+      have page-spanning tables and the VLM decides from content.
+
+    Each candidate is rendered to a PNG at `dpi` so the VLM gets a
+    high-resolution view of the actual cells + borders.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    records: list[PdfTableCandidate] = []
+
+    for page_num, page in enumerate(doc, start=1):
+        try:
+            finder = page.find_tables()
+        except Exception as e:
+            log_ignore_msg = f"find_tables failed on page {page_num}: {e}"
+            # Swallow per-page — some pages (especially heavily-annotated ones)
+            # trip internal assertions; they aren't fatal for the document.
+            import sys as _sys
+            print(log_ignore_msg, file=_sys.stderr)
+            continue
+
+        for tidx, tbl in enumerate(finder.tables, start=1):
+            rect = fitz.Rect(tbl.bbox)
+            if rect.width < min_side_pt or rect.height < min_side_pt:
+                continue
+            try:
+                raw_cells = tbl.extract() or []
+            except Exception:
+                raw_cells = []
+            nrows = len(raw_cells)
+            ncols = max((len(r) for r in raw_cells), default=0)
+            if nrows < min_rows or ncols < min_cols:
+                continue
+
+            png_path = out_dir / f"p{page_num:03d}_tbl{tidx:02d}.png"
+            pix = page.get_pixmap(clip=rect, dpi=dpi)
+            pix.save(str(png_path))
+
+            # Coerce cells to strings (pymupdf sometimes emits None).
+            norm_cells = [[(c if c is not None else "") for c in row]
+                          for row in raw_cells]
+
+            records.append(PdfTableCandidate(
+                page=page_num,
+                bbox_pt=(round(rect.x0, 2), round(rect.y0, 2),
+                         round(rect.x1, 2), round(rect.y1, 2)),
+                image_path=png_path,
+                width_px=pix.width,
+                height_px=pix.height,
+                raw_cells=norm_cells,
+                nrows=nrows,
+                ncols=ncols,
+            ))
+
+    return records
+
+
+def dedup_tables_against_figures(
+    tables: list[PdfTableCandidate],
+    figures: list[PdfFigureCandidate],
+    *,
+    containment_frac: float = 0.70,
+) -> list[PdfTableCandidate]:
+    """Drop a table candidate when a same-page vector figure bbox covers
+    ≥ `containment_frac` of its bbox — stops "figure that looks like a
+    table" regions from being processed twice (once via caption matching
+    on the figure side, once via VLM table parse).
+
+    Raster figure candidates (no PDF-point bbox) are ignored for dedup.
+    The check is asymmetric: we drop the TABLE, never the figure, because
+    the figure path handles composite visuals better than the table path.
+    """
+    if not tables or not figures:
+        return list(tables)
+
+    # Index figures with bboxes by page.
+    by_page: dict[int, list[PdfFigureCandidate]] = {}
+    for f in figures:
+        if f.bbox_pt is None or f.strategy != "vector":
+            continue
+        by_page.setdefault(f.page, []).append(f)
+
+    keep: list[PdfTableCandidate] = []
+    for t in tables:
+        same_page_figs = by_page.get(t.page, [])
+        tx0, ty0, tx1, ty1 = t.bbox_pt
+        t_area = max(1.0, (tx1 - tx0) * (ty1 - ty0))
+        dropped = False
+        for f in same_page_figs:
+            assert f.bbox_pt is not None  # guard above
+            fx0, fy0, fx1, fy1 = f.bbox_pt
+            ix0 = max(tx0, fx0); iy0 = max(ty0, fy0)
+            ix1 = min(tx1, fx1); iy1 = min(ty1, fy1)
+            if ix1 <= ix0 or iy1 <= iy0:
+                continue
+            overlap = (ix1 - ix0) * (iy1 - iy0)
+            if overlap / t_area >= containment_frac:
+                dropped = True
+                break
+        if not dropped:
+            keep.append(t)
+    return keep
 
 
 def extract_page_text(doc: fitz.Document, max_chars_per_page: int = 4000) -> list[str]:

@@ -52,15 +52,19 @@ from ..util.io import sha256_file
 from ..util.logging import log
 from ..util.pdf import (
     PdfFigureCandidate,
+    PdfTableCandidate,
     ScannedPdfError,
     dedup_raster_vector,
+    dedup_tables_against_figures,
     detect_scanned_pdf,
     extract_embedded_rasters,
     extract_page_text,
+    extract_table_candidates,
     extract_vector_clusters,
     page_count,
     render_page_png,
 )
+from ..util.table_png import render_table_png
 from ..util.vlm import VlmImage, vlm_call_json
 
 
@@ -139,6 +143,67 @@ Rules:
 - Pages: 1-indexed.
 - Empty lists are fine. Don't guess.
 - No extra prose outside the fenced JSON block.
+"""
+
+
+_TABLE_PARSE_PROMPT = """\
+You are a table parser. You will see ONE image cropped from a PDF,
+plus the raw cell text that pymupdf's table finder guessed for the
+same region (the cell splits may be WRONG — trust the image). You
+will also see a short list of table-caption candidates pulled from
+the same paper so you can match the table to its caption.
+
+Your job:
+
+1. Decide whether the image is actually a data table — a grid of
+   rows/columns with comparable values. Diagrams, figure panels,
+   math-equation arrays, OCR example screenshots, text paragraphs,
+   and decorative layout artifacts are NOT data tables.
+
+2. If it is a table, output clean structured data: pick the header
+   row, expand merged cells so every (row, col) has a value, and
+   preserve numeric values as-is (no rounding, no re-formatting).
+   Short dash / em-dash entries (—, -) stay as the literal string "—".
+
+3. Match it to one of the caption candidates if any fits; otherwise
+   return `matched_idx=null` and set a short `title` you extracted
+   from the image.
+
+Output **a single fenced JSON code block, nothing else**:
+
+```json
+{
+  "is_table": <true | false>,
+  "matched_idx": <int index into the caption candidate list, or null>,
+  "title": "<short title or caption; empty string when unknown>",
+  "headers": ["<col1>", "<col2>", ...],
+  "rows": [
+    ["<r1c1>", "<r1c2>", ...],
+    ["<r2c1>", "<r2c2>", ...],
+    ...
+  ],
+  "col_highlight_rule": ["", "max", "max", "min", ...],
+  "reason": "<short explanation>"
+}
+```
+
+Rules:
+- Every row in `rows` must have the same length as `headers` (pad
+  with "—" if necessary). If you are not confident about the header
+  row, leave `headers: []` and put everything in `rows` (first row
+  will be treated as header downstream).
+- **Two-row headers**: if the table has a parent header spanning
+  sub-columns (e.g. "Understanding" over MMMU / MathVista / etc.),
+  flatten into a single row using "Parent / Child" format (e.g.
+  "Understanding / MMMU"). Do NOT emit a two-row header.
+- Do NOT invent rows/columns not visible in the image.
+- If `is_table=false`, set `headers` and `rows` to empty lists.
+- `col_highlight_rule`: same length as `headers`. For each column,
+  emit `"max"` when higher values are better (accuracy, F1, win
+  rate), `"min"` when lower is better (loss, error rate, latency),
+  or `""` for label / non-numeric / ambiguous columns. The
+  downstream renderer bolds the winning row per column — so emitting
+  this honestly for benchmark tables is high leverage.
 """
 
 
@@ -295,6 +360,24 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
             raster=sum(1 for c in candidates if c.strategy == "raster"),
             vector=sum(1 for c in candidates if c.strategy == "vector"))
 
+        # 1b. pymupdf table candidates (localization only; VLM parses
+        # cells). Produced alongside figures — planner picks either a
+        # `kind="image"` figure or a `kind="table"` structured layer.
+        # Dedup against vector figures on same page: if a figure bbox
+        # covers ≥70% of a "table" bbox, it's almost certainly the
+        # figure proper (find_tables occasionally trips on composite
+        # diagrams). Prefer the figure path.
+        table_candidates: list[PdfTableCandidate] = extract_table_candidates(
+            doc, ctx.layers_dir,
+        )
+        pre_dedup = len(table_candidates)
+        table_candidates = dedup_tables_against_figures(
+            table_candidates, candidates,
+        )
+        log("ingest.pdf.table_candidates",
+            file=fp.name, n=len(table_candidates),
+            dropped_by_figure_overlap=pre_dedup - len(table_candidates))
+
         # 2. Page text (lossless, free). Feeds the VLM as text instead
         # of shipping 43 page images — Qwen-VL-Max on DashScope rejects
         # multi-image payloads over ~10 images, and text is denser
@@ -315,7 +398,7 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
     manifest = _extract_structure(page_texts, cover_png, ctx, fp)
     _normalize_manifest_lists(manifest)
 
-    # 3. Caption matching — per candidate, parallelized.
+    # 3. Caption matching — per figure candidate, parallelized.
     registered_layer_ids: list[str] = []
     if candidates:
         matches = _match_captions_parallel(candidates, manifest, ctx)
@@ -326,11 +409,26 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
         log("ingest.pdf.no_candidates", file=fp.name,
             note="pymupdf returned 0 figures; VLM manifest may still be useful")
 
+    # 4. Table parsing — per table candidate, parallelized. VLM reads
+    # the bbox image + pymupdf's raw cell guess and returns clean
+    # structured rows/headers. Rejects diagrams/equations/etc. that
+    # find_tables() misclassified.
+    registered_table_ids: list[str] = []
+    if table_candidates:
+        parsed = _parse_tables_parallel(table_candidates, manifest, ctx)
+        registered_table_ids = _register_tables(
+            candidates=table_candidates, parsed=parsed, ctx=ctx, pdf_path=fp,
+        )
+
+    all_registered = registered_layer_ids + registered_table_ids
     return {
         "file": str(fp), "type": "pdf", "manifest": manifest,
-        "registered_layer_ids": registered_layer_ids,
+        "registered_layer_ids": all_registered,
+        "registered_figure_ids": registered_layer_ids,
+        "registered_table_ids": registered_table_ids,
         "summary": f"{manifest.get('title', '?')} — "
                    f"{len(registered_layer_ids)} figure(s), "
+                   f"{len(registered_table_ids)} table(s), "
                    f"{len(manifest.get('sections', []))} section(s)",
     }
 
@@ -554,6 +652,240 @@ def _register_candidates(
         registered.append(layer_id)
 
     log("ingest.pdf.register",
+        kept=len(registered),
+        dropped=len(candidates) - len(registered))
+    return registered
+
+
+# ───────────────────────── Table parsing ───────────────────────────────
+
+def _parse_tables_parallel(
+    candidates: list[PdfTableCandidate],
+    manifest: dict[str, Any],
+    ctx: ToolContext,
+) -> dict[int, dict[str, Any]]:
+    """Run VLM parse per table candidate in a thread pool.
+
+    Returns a dict: candidate idx → {is_table, headers, rows, title,
+    matched_idx, caption_text, reason}. Callers use it to decide
+    whether to register the candidate as a `kind="table"` layer.
+    """
+    results: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=_CAPTION_MATCH_PARALLELISM) as ex:
+        futures = {
+            ex.submit(_parse_one_table, i, cand, manifest, ctx): i
+            for i, cand in enumerate(candidates)
+        }
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                results[i] = fut.result()
+            except Exception as e:
+                log("ingest.pdf.table_parse_fail",
+                    cand_idx=i, error=str(e))
+                results[i] = {
+                    "is_table": False, "headers": [], "rows": [],
+                    "title": "", "matched_idx": None,
+                    "caption_text": "", "reason": f"parse failed: {e}",
+                }
+    return results
+
+
+def _parse_one_table(
+    cand_idx: int,
+    candidate: PdfTableCandidate,
+    manifest: dict[str, Any],
+    ctx: ToolContext,
+) -> dict[str, Any]:
+    # Filter caption candidates to same page ± 1 (tables sometimes
+    # caption on the following page for bottom-of-page tables). Include
+    # entries with missing/unknown `page` so appendix tables the VLM
+    # failed to page-number aren't silently excluded from the pool.
+    all_tables = list(manifest.get("tables", []))
+    near: list[tuple[int, dict[str, Any]]] = []
+    for i, t in enumerate(all_tables):
+        raw_page = t.get("page")
+        if raw_page is None:
+            near.append((i, t))
+            continue
+        try:
+            pnum = int(raw_page)
+        except (TypeError, ValueError):
+            near.append((i, t))
+            continue
+        if abs(pnum - candidate.page) <= 1:
+            near.append((i, t))
+    pool = near if near else list(enumerate(all_tables))
+    local_to_global = {local_i: global_i for local_i, (global_i, _) in enumerate(pool)}
+
+    cap_lines = []
+    for local_i, (_, tbl) in enumerate(pool):
+        cap = (tbl.get("caption") or "").replace("\n", " ")[:240]
+        cap_lines.append(f"  [{local_i}] (p.{tbl.get('page', '?')}) {cap}")
+    cap_block = "\n".join(cap_lines) or "  (no caption candidates on this page)"
+
+    # Show the VLM pymupdf's best-effort cells, truncated. Don't send
+    # the full raw cells when they're huge — we trust the image more.
+    raw_preview: list[str] = []
+    for row in candidate.raw_cells[:12]:
+        raw_preview.append(
+            " | ".join(str(c)[:80].replace("\n", " ⏎ ") for c in row)
+        )
+    raw_block = "\n".join(raw_preview) or "  (pymupdf extracted no cells)"
+
+    user_text = (
+        f"Table candidate from page {candidate.page} "
+        f"(pymupdf saw {candidate.nrows}×{candidate.ncols} cells).\n\n"
+        f"pymupdf raw-cell preview (may be wrong — trust the image):\n"
+        f"{raw_block}\n\n"
+        f"Caption candidates near this page:\n{cap_block}\n\n"
+        "Return the JSON described in the system prompt."
+    )
+
+    result = vlm_call_json(
+        settings=ctx.settings,
+        model=ctx.settings.ingest_model,
+        system=_TABLE_PARSE_PROMPT,
+        user_text=user_text,
+        images=[VlmImage.from_path(candidate.image_path)],
+        max_tokens=4096,
+    )
+
+    local_idx = result.get("matched_idx")
+    global_idx = None
+    caption_text = str(result.get("title", "")).strip()
+    if isinstance(local_idx, int) and local_idx in local_to_global:
+        global_idx = local_to_global[local_idx]
+        caption_text = str(all_tables[global_idx].get("caption", "")) or caption_text
+
+    rows = result.get("rows") or []
+    headers = result.get("headers") or []
+    col_rule = result.get("col_highlight_rule") or []
+    # Light sanitation: coerce to str, drop empty trailing rows.
+    rows = [[str(c) if c is not None else "" for c in row] for row in rows]
+    headers = [str(c) if c is not None else "" for c in headers]
+    col_rule = [str(c) if c is not None else "" for c in col_rule]
+    # Normalize rule length to match header count (pad with "" / truncate).
+    if headers:
+        n = len(headers)
+        col_rule = col_rule[:n] + [""] * max(0, n - len(col_rule))
+    while rows and not any(c.strip() for c in rows[-1]):
+        rows.pop()
+
+    return {
+        "is_table": bool(result.get("is_table", False)),
+        "headers": headers,
+        "rows": rows,
+        "col_highlight_rule": col_rule,
+        "title": caption_text,
+        "matched_idx": global_idx,
+        "caption_text": caption_text,
+        "reason": str(result.get("reason", ""))[:200],
+    }
+
+
+def _register_tables(
+    *,
+    candidates: list[PdfTableCandidate],
+    parsed: dict[int, dict[str, Any]],
+    ctx: ToolContext,
+    pdf_path: Path,
+) -> list[str]:
+    """Register VLM-validated tables as `kind="table"` layers in
+    `ctx.state["rendered_layers"]`. Rejects go to `reject_fake` logs.
+
+    The PSD/SVG fallback PNG (a cleanly re-drawn table image) is
+    generated lazily by the renderer via `util.table_png`, so we only
+    need to persist the structured rows/headers here.
+    """
+    registered: list[str] = []
+    next_idx = 1
+
+    for cand_idx, cand in enumerate(candidates):
+        info = parsed.get(cand_idx, {})
+        if not info.get("is_table", False):
+            log("ingest.pdf.reject_table",
+                page=cand.page, reason=info.get("reason", ""))
+            try:
+                cand.image_path.unlink()
+            except OSError:
+                pass
+            continue
+
+        rows = info.get("rows") or []
+        headers = info.get("headers") or []
+        col_rule = info.get("col_highlight_rule") or []
+        if not rows and not headers:
+            log("ingest.pdf.reject_table",
+                page=cand.page, reason="empty rows+headers")
+            try:
+                cand.image_path.unlink()
+            except OSError:
+                pass
+            continue
+
+        layer_id = f"ingest_table_{next_idx:02d}"
+        next_idx += 1
+
+        # Draw a clean PIL table PNG from the VLM-parsed rows — this
+        # becomes the `src_path` fallback for poster/PSD/SVG paths that
+        # don't have live-table primitives. (PPTX + HTML ignore
+        # src_path and use rows/headers directly.)
+        final_png = ctx.layers_dir / f"img_{layer_id}.png"
+        # Bundled Noto fonts — CJK-capable; render_table_png falls back
+        # to system fonts when these aren't found.
+        fonts_dir = ctx.settings.fonts_dir
+        noto_bold = fonts_dir / "NotoSansSC-Bold.otf"
+        noto_regular = noto_bold  # project only bundles a bold Noto SC
+        try:
+            render_table_png(
+                rows=rows, headers=headers, out_path=final_png,
+                width_px=cand.width_px, max_height_px=cand.height_px,
+                font_path=noto_regular if noto_regular.exists() else None,
+                bold_font_path=noto_bold if noto_bold.exists() else None,
+                col_highlight_rule=col_rule,
+            )
+        except Exception as e:
+            log("ingest.pdf.table_render_fail",
+                layer_id=layer_id, error=str(e))
+            # Fall back to the source bbox crop.
+            try:
+                if cand.image_path.resolve() != final_png.resolve():
+                    shutil.move(str(cand.image_path), str(final_png))
+            except OSError:
+                final_png = cand.image_path
+
+        # Clean up the source bbox PNG if it's distinct from final_png
+        # (we successfully drew a fresh table).
+        if cand.image_path.exists() and cand.image_path.resolve() != final_png.resolve():
+            try:
+                cand.image_path.unlink()
+            except OSError:
+                pass
+
+        ctx.state["rendered_layers"][layer_id] = {
+            "layer_id": layer_id,
+            "name": f"table_{next_idx - 1}",
+            "kind": "table",
+            "z_index": 5,
+            "bbox": None,
+            "src_path": str(final_png),        # bbox PNG fallback
+            "aspect_ratio": _aspect_from_dims(cand.width_px, cand.height_px),
+            "image_size": f"{cand.width_px}x{cand.height_px}",
+            "sha256": sha256_file(final_png),
+            "source": "ingested_pdf",
+            "source_file": str(pdf_path),
+            "source_page": cand.page,
+            "caption": info.get("caption_text", ""),
+            # structured data:
+            "rows": rows,
+            "headers": headers,
+            "col_highlight_rule": col_rule,
+            "title": info.get("title", ""),
+        }
+        registered.append(layer_id)
+
+    log("ingest.pdf.register_tables",
         kept=len(registered),
         dropped=len(candidates) - len(registered))
     return registered

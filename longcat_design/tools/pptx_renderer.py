@@ -79,6 +79,8 @@ def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
             _add_picture(slide, child, slide_w, slide_h)
         elif kind == "text":
             _add_text_frame(slide, child, slide_w, slide_h)
+        elif kind == "table":
+            _add_table(slide, child, slide_w, slide_h)
         # silently skip unknown kinds; planner enforces vocab
 
 
@@ -126,6 +128,118 @@ def _add_picture(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
         getattr(node, "bbox", None), slide_w, slide_h,
     )
     slide.shapes.add_picture(src, left, top, width=width, height=height)
+
+
+def _add_table(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
+    """Render a `kind="table"` layer as a native PowerPoint table.
+
+    Expects `node.rows: list[list[str]]` and optional `node.headers:
+    list[str]`. When `headers` is empty, the first row of `rows` is
+    promoted to the header. When `rows` is empty we bail out silently
+    (planner is expected to not reference empty tables, but defensive).
+
+    Sizing:
+    - bbox width/height set the table's outer frame.
+    - Row heights are even; header row is slightly taller.
+    - Column widths are proportional to the max string length seen in
+      that column — rough but prevents one wide column from collapsing
+      everything else.
+    - Font size auto-shrinks based on row count to keep cells legible
+      at deck scale (floor 10pt, ceiling 18pt).
+
+    Optional: `node.col_highlight_rule: list[str]` — per-column "max"
+    / "min" / "". When set, the winning row per column is bolded.
+    """
+    rows = getattr(node, "rows", None) or []
+    headers = list(getattr(node, "headers", None) or [])
+    col_rule = list(getattr(node, "col_highlight_rule", None) or [])
+    if not rows and not headers:
+        return
+
+    # Promote first row if headers empty.
+    if not headers and rows:
+        headers = [str(c) for c in rows[0]]
+        rows = rows[1:]
+
+    # Normalize all rows to header width (pad / truncate).
+    n_cols = max(len(headers), max((len(r) for r in rows), default=0))
+    if n_cols == 0:
+        return
+    headers = [str(h) for h in headers] + [""] * (n_cols - len(headers))
+    headers = headers[:n_cols]
+    rows = [
+        [str(c) for c in r] + [""] * (n_cols - len(r))
+        for r in rows
+    ]
+    rows = [r[:n_cols] for r in rows]
+
+    # Normalize rule list length.
+    if col_rule:
+        col_rule = col_rule[:n_cols] + [""] * max(0, n_cols - len(col_rule))
+
+    # Winner map for bold highlighting. Import here to avoid cycles.
+    from ..util.table_png import _compute_winner_rows
+    winner_rows = _compute_winner_rows(rows, col_rule)
+
+    n_rows = len(rows) + 1  # +1 for header
+    left, top, width, height = _bbox_to_emu(
+        getattr(node, "bbox", None), slide_w, slide_h,
+    )
+
+    shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
+    table = shape.table
+
+    # Column widths proportional to max string length in column.
+    total_w = sum(col.width for col in table.columns)
+    col_weights = []
+    for c in range(n_cols):
+        cells = [headers[c]] + [row[c] for row in rows]
+        max_len = max((len(str(v)) for v in cells), default=1)
+        col_weights.append(max(1, min(max_len, 30)))
+    total_weight = sum(col_weights)
+    for c, col in enumerate(table.columns):
+        col.width = Emu(int(total_w * col_weights[c] / total_weight))
+
+    # Font-size autoscale: smaller when the table has many rows.
+    body_pt = 18 if n_rows <= 6 else 14 if n_rows <= 12 else 11
+    header_pt = body_pt + 1
+
+    _fill_table_row(table, 0, headers, font_pt=header_pt,
+                    is_header=True, winner_cols=set())
+    for r_idx, row in enumerate(rows, start=1):
+        # Data row idx in the rows list is r_idx - 1.
+        winning_cols = {c for c, win_r in winner_rows.items()
+                        if win_r == r_idx - 1}
+        _fill_table_row(table, r_idx, row, font_pt=body_pt,
+                        is_header=False, winner_cols=winning_cols)
+
+
+def _fill_table_row(table: Any, r: int, values: list[str],
+                    *, font_pt: int, is_header: bool,
+                    winner_cols: set[int] | None = None) -> None:
+    winner_cols = winner_cols or set()
+    for c, val in enumerate(values):
+        cell = table.cell(r, c)
+        cell.text = ""  # clear default
+        tf = cell.text_frame
+        para = tf.paragraphs[0]
+        para.alignment = PP_ALIGN.CENTER if is_header else PP_ALIGN.LEFT
+        run = para.add_run()
+        run.text = val
+        font = run.font
+        font.size = Pt(font_pt)
+        # Bold for header row OR for the winning data cell per column.
+        font.bold = is_header or (c in winner_cols)
+        if is_header:
+            font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            # Fill header cell with a dark accent (python-pptx solid-fill API).
+            from pptx.oxml.ns import qn
+            tcPr = cell._tc.get_or_add_tcPr()
+            for existing in tcPr.findall(qn("a:solidFill")):
+                tcPr.remove(existing)
+            from lxml import etree
+            fill = etree.SubElement(tcPr, qn("a:solidFill"))
+            etree.SubElement(fill, qn("a:srgbClr"), val="1F2A44")
 
 
 def _add_text_frame(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
@@ -201,7 +315,10 @@ def render_slide_preview_png(slide_node: Any, slide_w: int, slide_h: int,
 
     for child in children:
         kind = getattr(child, "kind", None)
-        if kind in ("background", "image"):
+        if kind in ("background", "image", "table"):
+            # Tables use their pre-rendered src_path (PIL-drawn PNG) —
+            # ingest_document baked it. PPTX itself holds a live table
+            # shape; this preview just needs a raster for the thumbnail.
             _paste_image(img, child, slide_w, slide_h, scale)
         elif kind == "text":
             _draw_text(img, child, slide_w, slide_h, scale, ctx)
