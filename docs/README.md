@@ -2,13 +2,14 @@
 
 This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
 
-> **Status (2026-04-21)**: **v1.2 paper2any shipped**. Full 3-artifact coverage (poster + landing + deck) × full paper → artifact pipeline. 11 tools wired, smoke 16/16 green.
+> **Status (2026-04-21)**: **v1.2 paper2any shipped + v1.2.4 polish**. Full 3-artifact coverage (poster + landing + deck) × full paper → artifact pipeline. 11 tools wired, smoke 16/16 green.
 >
 > **v1.2 milestones shipped this cycle**:
 > - [ce50f2a](https://github.com/Yaxin9Luo/OpenDesign/commit/ce50f2a) — pymupdf-native figure extraction + Qwen-VL-Max ingest (replaces Claude-Sonnet vision locator).
 > - [da664a5](https://github.com/Yaxin9Luo/OpenDesign/commit/da664a5) — `kind="table"` LayerKind → native PPTX `add_table` / HTML `<table>` / PIL-drawn PNG with bold-winner column highlights.
 > - [a08bbb9](https://github.com/Yaxin9Luo/OpenDesign/commit/a08bbb9) — poster visual-density rules in planner + critic prompts (≥4 figures for paper posters; text-wall layouts flagged as blocker).
 > - [349c899](https://github.com/Yaxin9Luo/OpenDesign/commit/349c899) — composite aspect-preserve (contain-fit for images, re-render-at-bbox for tables).
+> - **v1.2.4** — deterministic text-overlap detector (catches title descender ↔ subtitle cap-height crashes at composite time, before the critic round) + figure↔text cross-reference enforcement in planner + critic prompts (assign display numbers in reading order; every placed `ingest_fig_NN` / `ingest_table_NN` must be cited as `(Fig. N)` / `(Table N)` in at least one text layer).
 >
 > End-to-end verification on the 43-page Longcat-Next paper: poster critique **0.62 → 0.86**, landing **pass 0.92**, deck **pass 0.88** with 8 bold-winner cells on a 15×12 editable PPTX table. See [ROADMAP.md § Shipped](ROADMAP.md#shipped).
 

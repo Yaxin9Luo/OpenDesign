@@ -116,12 +116,21 @@ When the planner still under-specs a bbox, the composite layer now degrades grac
 
 Smoke **16/16** green. Tool count unchanged at 11.
 
+### v1.2.4 — text-overlap detector + figure cross-reference enforcement (2026-04-21)
+
+Closed two of the four parked paper2any polish items in one pass.
+
+- **Composite text-overlap detector** (`longcat_design/tools/composite.py`) — new `_detect_text_overlaps` + `_effective_text_extent` helpers compute each `kind: "text"` layer's glyph-inclusive vertical footprint (`max(bbox.h, font_size_px × 1.20)`) and flag every colliding pair. Emits `composite.text_overlap_warning` log events AND appends a ⚠ line to the tool_result summary so the planner sees the collision on the next turn without waiting for a full critique pass. Caught the cached `L_title`↔`L_sub` descender crash on the 2026-04-21 longcat-next run (y_overlap=16 px).
+- **Figure ↔ text cross-reference detector** (`_placed_ingest_display_map` + `_detect_missing_figure_xrefs`) — assigns display numbers (Fig. 1 / Table 1 / …) in placed-layer reading order, then checks every text layer's `.text` for `Fig. N` / `Figure N` / `Table N` literals (case-insensitive, period-optional). Orphan figures surface in the composite tool_result + log.
+- **Planner prompt** (`prompts/planner.md`) gains two poster-workflow rules: "Text-layer vertical rhythm" (descender clearance geometry + stacked-layer spacing formula + mixed-script concrete template) and "Figure ↔ text cross-reference" (display-number scheme + citation patterns + `edit_layer` fix recipe).
+- **Critic rubric** (`prompts/critic.md`) adds typography `−0.15` per text-text bbox collision pair (all posters, not just paper) AND visual-density `−0.10` per orphan figure (capped at −0.30) with `major` severity.
+
+Both detectors are deterministic — they run BEFORE the critic so the planner can self-correct in one iteration instead of burning a critic round. Non-paper posters skip the cross-reference check (no placed `ingest_*` layers → empty display map → early return).
+
 ### Remaining paper2any gaps (parked for v1.3+)
 
 - `.docx` / `.pptx` ingestion (needs `python-docx` / `python-pptx` readers).
 - Multi-paper fusion (cross-paper figure reuse + ingest cache).
-- Figure↔text cross-reference in poster body ("as shown in Fig. 2" auto-inserted).
-- Poster title/subtitle overlap bug (text-layer layout, unrelated to ingest).
 - Scanned-PDF OCR fallback (currently raises `ScannedPdfError`).
 
 ---

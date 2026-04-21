@@ -6,6 +6,27 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-21 — v1.2.4 deterministic text-overlap + figure-xref detectors in composite
+
+**Decision**: Close the planner↔critic loop in ONE turn for two recurring paper-poster failure modes by running deterministic detectors inside `composite` and appending their findings to the tool_result summary (the planner reads it on the next turn). Two checks:
+
+1. **Text-overlap detector** (`_detect_text_overlaps` + `_effective_text_extent`) — compute glyph-inclusive extent `max(bbox.h, font_size_px × 1.20)` for every `kind: "text"` layer, flag every colliding pair, emit `composite.text_overlap_warning` log + ⚠ summary line. Catches the canonical `L_title` descender ↔ `L_sub` cap-height crash (real case from the 2026-04-21 longcat-next run: title at y=100 h=200 fs=180 → effective footprint y=316; sub at y=300 → 16 px collision).
+2. **Figure ↔ text cross-reference detector** (`_placed_ingest_display_map` + `_detect_missing_figure_xrefs`) — assign display numbers to placed `ingest_fig_NN` / `ingest_table_NN` layers in reading order (first-placed = Fig. 1 on the poster, even if it was paper Fig. 7), scan every text layer's `.text` for `Fig. N` / `Figure N` / `Table N` (case-insensitive, period optional), list orphans in the summary. Non-paper posters skip entirely (empty display map → early return).
+
+Planner + critic prompts gain matching rules so expectation (prompt) and enforcement (detector + critic) stay aligned.
+
+**Alternatives considered**:
+1. **Only extend the critic rubric, no detector.** Rejected: wastes a critic iteration on a mechanical check. Deterministic geometry catches the issue in ≪ 1 ms + $0 instead of a full critic round + LLM call.
+2. **Auto-fix the collision at composite time** (shift the lower layer's y). Rejected: silently mutates the planner's DesignSpec. The planner should learn to emit correct bboxes; surfacing the warning in tool_result teaches the loop without hiding the error.
+3. **Use the paper's figure numbers** (`ingest_fig_01` → Fig. 1 regardless of placement order). Rejected: the poster is a new narrative arc, not a paper reproduction — the first figure the viewer sees should be "Fig. 1" in the poster's reading order. Paper figure numbers live in the caption text for reference.
+4. **Extract display numbers by parsing "Fig. N" out of text layers**. Rejected: requires solving an NER task and degrades to "no cross-refs found" when the planner omits citations. Assigning in reading order matches how a designer would actually do it.
+
+**Rationale**: Both detectors run on every composite and close the planner↔critic loop by giving the planner actionable diagnostics in the same observation it used to produce a critic-flagged poster. The `composite.text_overlap_warning` log event also becomes self-supervision data for future prompt tuning (grep trajectories for frequent collision patterns, refine the vertical-rhythm rule).
+
+**Revisit when**: (a) planner citations drift to patterns like "见图 2" / "參考 Fig. 2" → extend the regex or move to an NLU check; (b) CJK title descender characteristics differ enough from Latin that the `1.20` multiplier is wrong → split the multiplier per script.
+
+---
+
 ## 2026-04-21 — v1.2.1 composite aspect-preserve for image + table layers (commit `349c899`)
 
 **Decision**: Treat the planner's `bbox.w / bbox.h` ratio as a *desired placement*, not a *forced output aspect*. In `composite.py`, image layers contain-fit (letterbox-style) via new `_aspect_fit_contain(src_size, dst_size) -> (nw, nh, off_x, off_y)` across `_write_preview` + `_write_psd` + `_write_svg` (SVG uses the native `preserveAspectRatio="xMidYMid meet"` attribute). Table layers **re-render at the planner's exact bbox dims at composite time** — call `render_table_png(rows=…, headers=…, width_px=bw, max_height_px=bh, col_highlight_rule=…)` instead of resizing the pre-baked PNG. A new `composite.bbox_aspect_warning` log fires when bbox aspect deviates ≥ 2× from source aspect, for planner-prompt tuning data.

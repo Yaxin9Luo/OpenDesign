@@ -35,6 +35,163 @@ from ..util.table_png import render_table_png
 # we keep the old "stretch to fit" behavior (imperceptible squeeze).
 _ASPECT_MISMATCH_WARN_RATIO = 2.0
 
+# Descender-clearance multiplier for text layers. A rasterized Latin glyph
+# including descenders occupies ~1.10–1.20 × font_size_px vertically. If a
+# planner declares `bbox.h = font_size_px` the descender spills ~20 % below
+# the bbox bottom, crashing into any layer directly beneath. Effective
+# vertical footprint = max(bbox.h, font_size_px × this multiplier).
+_TEXT_DESCENDER_MULTIPLIER = 1.20
+
+
+def _effective_text_extent(layer: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    """Return (x, y, w, h_effective) — the glyph-inclusive vertical footprint
+    of a `kind: "text"` layer, or None if bbox/font_size missing.
+
+    `bbox.h` is the planner's intent; real rasterized height floors at
+    `font_size_px × _TEXT_DESCENDER_MULTIPLIER` so descender collisions
+    between stacked text layers surface as real overlaps."""
+    if layer.get("kind") != "text":
+        return None
+    bbox = layer.get("bbox")
+    if not bbox:
+        return None
+    try:
+        bx = int(bbox.get("x", 0))
+        by = int(bbox.get("y", 0))
+        bw = int(bbox.get("w", 0))
+        bh = int(bbox.get("h", 0))
+    except (TypeError, ValueError):
+        return None
+    fs = layer.get("font_size_px") or 0
+    try:
+        fs = int(fs)
+    except (TypeError, ValueError):
+        fs = 0
+    descender_h = int(fs * _TEXT_DESCENDER_MULTIPLIER) if fs > 0 else 0
+    return bx, by, bw, max(bh, descender_h)
+
+
+def _rects_overlap(a: tuple[int, int, int, int],
+                   b: tuple[int, int, int, int]) -> tuple[int, int] | None:
+    """Return (x_overlap_px, y_overlap_px) if rects a and b intersect, else None."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x_ov = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    y_ov = max(0, min(ay + ah, by + bh) - max(ay, by))
+    if x_ov > 0 and y_ov > 0:
+        return x_ov, y_ov
+    return None
+
+
+def _placed_ingest_display_map(
+    layers: list[dict[str, Any]],
+) -> dict[str, tuple[str, int]]:
+    """Map placed ingest figure / table layer_ids to (`"fig"` | `"table"`, N).
+
+    Display numbers follow the order each `ingest_fig_NN` / `ingest_table_NN`
+    appears in the sorted layer list (same order the poster reads
+    top-to-bottom once z_index is respected). The 01/02/… suffix from the
+    ingest step is intentionally NOT reused as the display number — the
+    paper's Fig. 7 might be poster Fig. 2 if that's the order the planner
+    chose to lay them out.
+    """
+    out: dict[str, tuple[str, int]] = {}
+    fig_n = 0
+    tbl_n = 0
+    for L in layers:
+        lid = L.get("layer_id") or ""
+        kind = L.get("kind")
+        if kind == "image" and lid.startswith("ingest_fig_"):
+            fig_n += 1
+            out[lid] = ("fig", fig_n)
+        elif kind == "table" and lid.startswith("ingest_table_"):
+            tbl_n += 1
+            out[lid] = ("table", tbl_n)
+    return out
+
+
+def _detect_missing_figure_xrefs(
+    layers: list[dict[str, Any]],
+    spec: Any,
+) -> list[str]:
+    """Return layer_ids of placed `ingest_fig_NN` / `ingest_table_NN` that no
+    text layer cross-references via `(Fig. N)` / `(Table N)` literal.
+
+    Skips entirely for non-paper posters (no placed ingest layers). A layer
+    counts as cross-referenced when ANY text layer's `.text` contains the
+    literal `Fig. N` / `Figure N` / `Table N` pattern (case-insensitive,
+    period-optional) for its display number. This is the poster-body's
+    "as shown in Fig. 2" reference that signals the viewer where to look.
+    """
+    display_map = _placed_ingest_display_map(layers)
+    if not display_map:
+        return []
+
+    import re
+
+    haystack_parts: list[str] = []
+    for L in layers:
+        if L.get("kind") != "text":
+            continue
+        t = L.get("text") or ""
+        if t:
+            haystack_parts.append(t)
+    # Pull from the authoritative DesignSpec too — covers cases where
+    # render_text_layer hasn't yet populated `text` onto rendered_layers
+    # but the planner's layer_graph has it.
+    for node in list(getattr(spec, "layer_graph", None) or []):
+        if getattr(node, "kind", None) != "text":
+            continue
+        t = getattr(node, "text", None) or ""
+        if t:
+            haystack_parts.append(t)
+    haystack = "\n".join(haystack_parts)
+
+    misses: list[str] = []
+    for layer_id, (kind, n) in display_map.items():
+        if kind == "fig":
+            pattern = rf"\b(?:fig(?:ure)?\.?)\s*{n}\b"
+        else:
+            pattern = rf"\btable\.?\s*{n}\b"
+        if not re.search(pattern, haystack, re.IGNORECASE):
+            misses.append(layer_id)
+    return misses
+
+
+def _detect_text_overlaps(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Detect glyph-inclusive bbox collisions between poster text layers.
+
+    Emits one `composite.text_overlap_warning` log event per colliding pair
+    and returns the list for inclusion in the `obs_ok` summary — which the
+    planner reads on the next turn, so the collision feeds back without
+    waiting for a full critique pass.
+    """
+    text_layers = [
+        (L, _effective_text_extent(L))
+        for L in layers
+        if L.get("kind") == "text"
+    ]
+    text_layers = [(L, ext) for L, ext in text_layers if ext is not None]
+    warnings: list[dict[str, Any]] = []
+    for i in range(len(text_layers)):
+        la, ea = text_layers[i]
+        for j in range(i + 1, len(text_layers)):
+            lb, eb = text_layers[j]
+            ov = _rects_overlap(ea, eb)
+            if ov is None:
+                continue
+            _x_ov, y_ov = ov
+            entry = {
+                "layer_a": la.get("layer_id"),
+                "layer_b": lb.get("layer_id"),
+                "y_overlap_px": int(y_ov),
+                "font_size_a": int(la.get("font_size_px") or 0),
+                "font_size_b": int(lb.get("font_size_px") or 0),
+            }
+            warnings.append(entry)
+            log("composite.text_overlap_warning", **entry)
+    return warnings
+
 
 def _aspect_fit_contain(
     src_size: tuple[int, int],
@@ -143,6 +300,9 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     except Exception as e:
         return obs_error(f"preview render failed: {e}")
 
+    text_overlap_warnings = _detect_text_overlaps(sorted_layers)
+    xref_misses = _detect_missing_figure_xrefs(sorted_layers, spec)
+
     artifacts = CompositionArtifacts(
         psd_path=str(psd_path),
         svg_path=str(svg_path),
@@ -153,11 +313,34 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     ctx.state["composition"] = artifacts
     log("composite.done",
         psd=str(psd_path), svg=str(svg_path), html=str(html_path),
-        preview=str(preview_path), layers=len(sorted_layers))
+        preview=str(preview_path), layers=len(sorted_layers),
+        text_overlaps=len(text_overlap_warnings),
+        figure_xref_misses=len(xref_misses))
+
+    summary = (
+        f"Composed {len(sorted_layers)} layers into PSD + SVG + HTML + preview "
+        f"({cw}×{ch}px)"
+    )
+    if text_overlap_warnings:
+        pairs = ", ".join(
+            f"{w['layer_a']}↔{w['layer_b']} (y_ov={w['y_overlap_px']}px)"
+            for w in text_overlap_warnings[:5]
+        )
+        summary += (
+            f"\n⚠ {len(text_overlap_warnings)} text-layer collision(s): {pairs}. "
+            "Fix via edit_layer: widen bbox.h ≥ font_size_px × 1.2 or shift the "
+            "lower layer's y down."
+        )
+    if xref_misses:
+        ids = ", ".join(xref_misses[:5])
+        summary += (
+            f"\n⚠ {len(xref_misses)} placed ingest figure(s)/table(s) not "
+            f"cross-referenced in body text: {ids}. Add '(Fig. N)' / '(Table N)' "
+            "citations to a nearby caption or body layer."
+        )
 
     return obs_ok(
-        f"Composed {len(sorted_layers)} layers into PSD + SVG + HTML + preview "
-        f"({cw}×{ch}px)",
+        summary,
         artifacts=[str(psd_path), str(svg_path), str(html_path), str(preview_path)],
         next_actions=["call critique to self-review", "or call finalize"],
     )

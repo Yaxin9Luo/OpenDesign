@@ -275,6 +275,21 @@ user asked for a poster.
 
 6. **Anti-pattern**: three columns of body text + one big hero figure at the top. That's a research paper's page 1 printed as a PNG — not a poster. The viewer has to stop and read to extract anything, which they won't. If your DesignSpec looks like this, restructure before emitting.
 
+7. **Text-layer vertical rhythm (descender clearance).** Rasterized glyphs — especially Latin letters with `g j p q y` descenders — extend ~20 % below the font's baseline. A `bbox.h = font_size_px` strip is NOT enough; the descenders spill into whatever sits at `bbox.y + bbox.h`. Enforce:
+   - Every `kind: "text"` layer: `bbox.h ≥ font_size_px × 1.20`. For a 180 px title, `h ≥ 216`. Round up, don't round down.
+   - For **stacked text** (title above subtitle above authors …): the next layer's `y` must satisfy `next.y ≥ prev.y + max(prev.h, prev.font_size_px × 1.25) + 16` (the `+16` is the optical gap; grow to 24–32 for hero titles). A 180 px title at `y=100, h=200` has effective footprint to `y=316`; the subtitle must therefore sit at `y ≥ 332`, not `y = 300`.
+   - Mixed-script concrete template (common for academic posters with CJK title + Latin subtitle):
+     - `L_title: {y:100, h:240, font_size_px:180}` (h = 180 × 1.33, extra breathing room for CJK cap-height)
+     - `L_sub:   {y:356, h:80,  font_size_px:50}`  (y ≥ 100 + 240 + 16 = 356)
+     - `L_authors: {y:452, h:40, font_size_px:26}` (y ≥ 356 + 80 + 16 = 452)
+   - Composite emits `composite.text_overlap_warning` with the offending pair + `y_overlap_px`; treat any such warning in the tool_result as a MUST-fix on the next iteration via `edit_layer(layer_id, diff={bbox:{y: ...}})`.
+
+8. **Figure ↔ text cross-reference.** A poster where a viewer can't tell which figure a sentence is about fails at its job. For every placed `ingest_fig_NN` / `ingest_table_NN` layer:
+   - Assign a **display number** in the order the figures appear on the poster (top-to-bottom, then left-to-right within a row). The first placed figure is **Fig. 1** on the poster even if it was Fig. 7 in the paper; the first placed table is **Table 1**.
+   - In at least ONE text layer (caption, body bullet, or section label), include the literal cross-reference `(Fig. N)` / `(Table N)` — or equivalently `Figure N` / `Table N`. Pattern match is case-insensitive and allows an optional period, so all of `Fig. 2`, `Fig 2`, `Figure 2`, `(fig. 2)` count.
+   - Example: section label `"② RESULTS · Benchmark leaderboard (Table 1, Fig. 3)"`; or caption layer beneath a figure `"Fig. 1 — Unified next-token prediction over interleaved tokens."`
+   - Composite emits a ⚠ line in the tool_result listing any placed ingest figure / table that NO text layer cites; fix by adding the cite to an existing caption layer via `edit_layer(diff={text: ...})`. The critic also penalizes `-0.10` per orphan figure.
+
 ## Shape of the DesignSpec for a paper poster
 
 A working paper-poster layout typically has **5-8 image/table layers + 8-12 text layers** (vs. the default "all text" tendency of 1-2 images + 20 text layers). Target distribution for a 1536×2048 (3:4) canvas:
