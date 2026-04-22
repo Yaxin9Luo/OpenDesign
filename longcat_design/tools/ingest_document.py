@@ -387,7 +387,29 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultReco
             file_entry["height"] = s.get("height")
         files_payload.append(file_entry)
 
-        for fid in figure_ids:
+        # v2.3.6 — cap the planner-facing figure catalog at
+        # _PLANNER_FIG_CATALOG_CAP (20). Papers with sub-panels easily
+        # produce 80+ figures; dumping the full list into the tool_result
+        # summary blew Kimi's reasoning budget before tool_use could fire
+        # (observed on 2026-04-22 dogfood runs — poster + landing hit
+        # max_turns on turn 2 with zero DesignSpec emissions). Ranking
+        # uses the existing heuristic (caption presence > vector > size
+        # > page number), so the survivors are the best candidates for
+        # poster / landing / deck layout.
+        ranked = _rank_figure_ids_for_planner(figure_ids, rendered)
+        top_fids = ranked[:_PLANNER_FIG_CATALOG_CAP]
+        n_truncated = len(figure_ids) - len(top_fids)
+        file_entry["n_figures_shown"] = len(top_fids)
+        if n_truncated > 0:
+            file_entry["n_figures_truncated"] = n_truncated
+            file_entry["catalog_note"] = (
+                f"{n_truncated} lower-ranked figures omitted from this "
+                "summary; all are reachable by their layer_id "
+                "(ingest_fig_NN or ingest_fig_NN_<label>) via the "
+                "rendered_layers registry."
+            )
+
+        for fid in top_fids:
             rec = rendered.get(fid) or {}
             figures_payload.append({
                 "layer_id": fid,
