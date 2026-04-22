@@ -212,6 +212,7 @@ Output **a single fenced JSON code block, nothing else**:
   "is_table": <true | false>,
   "matched_idx": <int index into the caption candidate list, or null>,
   "title": "<short title or caption; empty string when unknown>",
+  "short_title": "<≤15 chars, ≤3 words; empty if not a table>",
   "headers": ["<col1>", "<col2>", ...],
   "rows": [
     ["<r1c1>", "<r1c2>", ...],
@@ -224,6 +225,10 @@ Output **a single fenced JSON code block, nothing else**:
 ```
 
 Rules:
+- `short_title` is a terse label (≤ 15 chars, ≤ 3 words) for tight
+  bboxes where the full `title` / caption won't fit. Summarize the
+  table's SUBJECT, not its number: e.g. "Benchmarks", "Ablations",
+  "消融实验". Match paper language. Empty string when `is_table=false`.
 - Every row in `rows` must have the same length as `headers` (pad
   with "—" if necessary). If you are not confident about the header
   row, leave `headers: []` and put everything in `rows` (first row
@@ -256,6 +261,7 @@ Output **a single fenced JSON code block, nothing else**:
   "matched_idx": <int index into the candidate list, or null>,
   "confidence": <float 0.0–1.0>,
   "is_real_figure": <true | false>,
+  "short_caption": "<≤15 chars, ≤3 words; empty if not a real figure>",
   "reason": "<short explanation>"
 }
 ```
@@ -271,6 +277,11 @@ Rules:
   `is_real_figure=true`. Downstream will keep it with an empty caption.
 - Prefer confidence ≥ 0.7 when you're sure; otherwise be honest and
   use a lower value.
+- `short_caption` is a terse label (≤ 15 chars, ≤ 3 words — think
+  poster footer where space is tight: "Architecture", "Scaling
+  curves", "Ablation"). It summarizes what the image SHOWS, NOT the
+  figure number. Match the paper's language (EN/中文). Empty string
+  when `is_real_figure=false`.
 """
 
 
@@ -367,6 +378,7 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultReco
                 "source_ref": rec.get("source_ref"),
                 "image_size": rec.get("image_size"),
                 "caption": rec.get("caption"),
+                "caption_short": rec.get("caption_short"),
                 "sha256": rec.get("sha256"),
             })
         for tid in table_ids:
@@ -380,6 +392,7 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultReco
                     len((rec.get("rows") or [[]])[0])
                 ),
                 "caption": rec.get("caption") or rec.get("title"),
+                "caption_short": rec.get("caption_short"),
             })
 
     return obs_ok({
@@ -726,6 +739,9 @@ def _match_one_caption(
         "is_real_figure": bool(result.get("is_real_figure", True)),
         "reason": str(result.get("reason", ""))[:200],
         "caption_text": caption_text,
+        # v2.3 — VLM-generated ≤15-char label for tight poster/deck slots.
+        # Clipped defensively; empty string on fake figures or missing field.
+        "short_caption": str(result.get("short_caption", "") or "")[:40],
     }
 
 
@@ -782,6 +798,9 @@ def _register_candidates(
             "source_file": str(pdf_path),
             "source_page": cand.page,
             "caption": match.get("caption_text", ""),
+            # v2.3 — VLM's ≤15-char label for tight bboxes; planner picks
+            # between `caption` (full) and `caption_short` based on slot size.
+            "caption_short": match.get("short_caption", ""),
             "extract_strategy": cand.strategy,   # for debugging
             "caption_confidence": match.get("confidence", 0.0),
         }
@@ -916,6 +935,9 @@ def _parse_one_table(
         "title": caption_text,
         "matched_idx": global_idx,
         "caption_text": caption_text,
+        # v2.3 — ≤15-char label for deck/poster slots where the full
+        # table caption won't fit. Clipped defensively.
+        "short_title": str(result.get("short_title", "") or "")[:40],
         "reason": str(result.get("reason", ""))[:200],
     }
 
@@ -1013,6 +1035,9 @@ def _register_tables(
             "source_file": str(pdf_path),
             "source_page": cand.page,
             "caption": info.get("caption_text", ""),
+            # v2.3 — ≤15-char label for tight table slots (tables share the
+            # "caption_short" key with figures so renderers can read one field).
+            "caption_short": info.get("short_title", ""),
             # structured data:
             "rows": rows,
             "headers": headers,
