@@ -329,7 +329,7 @@ Attachments are cleared automatically after the next non-slash turn; use `:detac
 
 | Extension | Handling | Notes |
 |---|---|---|
-| `.pdf` | pymupdf native: `doc.extract_image(xref)` for embedded rasters at author-uploaded resolution; `get_drawings()` clustered + rendered at 300 dpi for vector diagrams; `find_tables()` for table localization. Qwen-VL-Max (via `util/vlm.py`) only for structure extraction + caption matching + fake-figure filtering + table cell parsing. | ≤ 80 pages, ≤ 24 MB per file. Larger → split or wait for v1.3+ chunking. Scanned PDFs raise `ScannedPdfError` (no OCR in v1.2). |
+| `.pdf` | pymupdf native: `doc.extract_image(xref)` for embedded rasters at author-uploaded resolution; `get_drawings()` clustered + rendered at 300 dpi for vector diagrams; `find_tables()` for table localization. Qwen-VL-Max (via `util/vlm.py`) only for structure extraction + caption matching + fake-figure filtering + table cell parsing. | ≤ 80 pages, ≤ 40 MB per file (raised from 24 MB in v2.3 — image-heavy papers like BAGEL routinely land in the 25-35 MB range, and dropping below the cap via page rasterization destroys pymupdf's embedded-figure extraction). Larger → split. Scanned PDFs auto-fall-back to Qwen-VL OCR (no longer raises). |
 | `.md` / `.markdown` / `.txt` | Raw text passthrough + `![alt](./image.png)` refs resolved + copied into `ctx.layers_dir` | Relative paths only; URLs / data: are skipped |
 | `.png` / `.jpg` / `.jpeg` / `.webp` | `shutil.copy2` into `ctx.layers_dir` + register as passthrough layer | Single-image bundle (logo, brand shot, reference photo) |
 

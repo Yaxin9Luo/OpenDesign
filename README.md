@@ -173,7 +173,7 @@ uv run python -m longcat_design.cli
 ```
 
 Supported inputs:
-- **PDF** (pymupdf native figure extraction via `page.get_images()` + `doc.extract_image(xref)` for embedded rasters; `get_drawings()` + proximity clustering @ 300 dpi for vector diagrams; `page.find_tables()` for data-table localization. VLM = Qwen-VL-Max via OpenRouter for structure extraction + caption matching + fake-figure filtering).
+- **PDF** (pymupdf native figure extraction via `page.get_images()` + `doc.extract_image(xref)` for embedded rasters; `get_drawings()` + proximity clustering @ 300 dpi for vector diagrams; `page.find_tables()` for data-table localization. VLM = Qwen-VL-Max via OpenRouter for structure extraction + caption matching + fake-figure filtering). Size cap: ≤ 80 pages, ≤ 40 MB per file — do not pre-rasterize image-heavy papers to "shrink" them under the cap, that kills embedded-figure extraction and forces the planner onto NBP fallback.
 - **Scanned PDF** — auto-detected via `detect_scanned_pdf`; falls back to per-page Qwen-VL OCR at 200 dpi, 6 workers in parallel. Figure extraction is skipped (scanned pages are single rasters); structure extraction runs as normal on the OCR'd text.
 - **DOCX** (Word) — `python-docx` reads Heading 1/2/Title paragraphs → section tree, `doc.part.rels` yields embedded images as `ingest_fig_NN`. No VLM call needed.
 - **PPTX** (PowerPoint) — each slide becomes one section (title placeholder → heading, body placeholders → summary + key_points), picture shapes become `ingest_fig_NN`.

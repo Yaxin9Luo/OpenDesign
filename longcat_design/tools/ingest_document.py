@@ -71,7 +71,7 @@ from ..util.vlm import VlmImage, vlm_call_json
 # Max PDF bytes we accept in one call (belt-and-suspenders — pymupdf
 # itself can open almost anything, but ingest touches every page and
 # we want to fail fast on pathological inputs rather than spin).
-_MAX_PDF_BYTES = 24 * 1024 * 1024  # 24 MB
+_MAX_PDF_BYTES = 40 * 1024 * 1024  # 40 MB
 _MAX_PDF_PAGES = 80
 
 _MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
