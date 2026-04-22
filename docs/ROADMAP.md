@@ -293,6 +293,74 @@ Model routing insight: **Kimi K2.6 works fine on landing/deck (simple flow layou
 
 ---
 
+## v2.4 — NEXT: prompt-enhancer + font library + image-manipulable output (planned 2026-04-23+)
+
+Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurgeon landing, TinyML-agent-memory deck). All three problems surfaced from the same observation: **quality of generation is dominated by brief quality, not planner capability**. Opus 4.7 already produces 0.88–0.92 reward outputs when the brief is tight; it silently regresses when the brief is sloppy.
+
+### v2.4.1 — **Prompt Enhancer agent** (the big one)
+
+**Why**: Across 3 dogfood runs the author (acting as human-in-the-loop prompt enhancer) delivered identical reward-level outputs by (a) expanding a one-line user intent into a 3k-char multi-section brief, (b) injecting artifact-type-aware imagery discipline, (c) adding style-prefix + palette hex, (d) pre-flighting ingest and detecting the "rasterize-to-shrink kills embedded-figure extraction" failure mode. We should encode that expertise into an agent stage so the system works for users who don't know these rules.
+
+**Shape**: new `PromptEnhancer` stage that runs BEFORE `planner.start`. Input: raw user message + attachment list. Output: structured enhanced brief + artifact-type decision + per-section figure-placement hints. Behaves like a specialized reasoning model with its own system prompt (not a new tool — more like a `before_planner` hook).
+
+**System-prompt / skill must encode these lessons**:
+
+1. **Ingest-first discipline.** Always call `ingest_document` first. After it returns, gate the plan on `total_figures > 0` (unless artifact is a no-paper poster / free-form design). If 0 figures, either (a) surface the error to the user with a concrete fix ("PDF is rasterized — supply original embedded-image PDF"), or (b) fall back to a brief variant that restricts content sections to table + NBP only.
+2. **Paper figures are primary; NBP is decorative.** Method / results / capabilities / qualitative sections MUST reference `ingest_fig_*` layer IDs. NBP `generate_image` is restricted to (a) hero/cover ambient background, (b) subtle decorative accents between sections when no paper figure fits. Never NBP-substitute a scientific figure.
+3. **Tables: real rows or none.** When requesting an HTML or native-PPTX `<table>`, the brief must require "concrete cell values transcribed from the PDF; omit the table entirely if transcription fails." Empty `rows=[]` placeholders are forbidden.
+4. **Equations: KaTeX display math.** For papers, include `$$...$$` blocks for the central objective / loss / attribution / surgery / key-theorem equations. Renderer injects KaTeX vendor bundle automatically — enhancer only needs to request the content.
+5. **Style-prefix verbatim.** Any NBP call must repeat the same palette + mood prose as a style prefix (enforced by the brief), so all generated images read as one coherent piece.
+6. **Palette + typography with concrete hex / font-name, not prose.** "Editorial minimalist" is useless; "`#141414` ink on `#FAFAF7` cream with `#7F1D1D` single accent; `NotoSerifSC-Bold` title / `NotoSansSC-Bold` body" is actionable.
+7. **Artifact-type ↔ table-kind routing.** Deck → native PPTX table. Landing → HTML `<table class='benchmark-table'>`. Poster → native table. Enhancer must infer or confirm artifact type first, then pick the right table directive.
+8. **Length discipline is artifact-specific.** Research-talk decks: declare explicit slide count (10 / 12 / 16). Paper landings: "unlimited length, info density > brevity, expand rather than compress." Marketing landings: "short and punchy, < 5 sections." Posters: single-page fixed canvas.
+9. **Callback / narrative coherence.** For decks, call out "echo the cover's motif in the closing slide." For landings, reuse the hero's accent color only in CTAs + 1-2 highlight spans — never decoratively.
+10. **Pre-flight warnings.** If input PDF > 30 MB, warn the user that pre-rasterizing (ghostscript, print-to-PDF) will destroy `page.get_images()` extraction; recommend uploading the original PDF instead.
+11. **Per-section outline > freestyle.** The enhanced brief should contain a numbered section-by-section outline, each section declaring (a) role, (b) expected content, (c) expected imagery kind (`ingest_fig_*` / HTML `<table>` / KaTeX math / NBP ambient / text-only). Opus 4.7 follows explicit outlines 100% of the time; it improvises badly when given vague briefs.
+12. **Negative constraints.** Always list "never substitute NBP for X / never leave empty placeholders / never pre-rasterize" explicitly — negative rules bite harder than positive ones in brief-following.
+
+**Deliverables**:
+- `longcat_design/agents/prompt_enhancer.py` — the stage, reuses `LLMBackend` with Opus 4.7 default
+- `prompts/prompt_enhancer.md` — the system-prompt/skill encoding the 12 rules above
+- `runner.py` wiring — run enhancer before `planner.start`, log `prompt.enhance.request/done` events
+- `--skip-enhancer` CLI flag for users who want raw pass-through
+- Three regression fixtures replaying the 2026-04-22 dogfood briefs (BAGEL, LLMSurgeon, TinyML deck) — assert enhancer produces a brief containing all required directives
+
+**Risk**: adds a ~20–40 s latency per run and ~$0.30–0.80 cost. Must be opt-outable for power users.
+
+### v2.4.2 — Font library expansion
+
+**Why**: Today only `NotoSansSC-Bold` + `NotoSerifSC-Bold` are bundled ([config.py:101](../longcat_design/config.py:101)). Users routinely want more weight / style variety (regular, medium, display, mono, decorative).
+
+**Scope**:
+- Add 6–8 more OFL-licensed families under `assets/fonts/`: NotoSansSC-Regular, NotoSerifSC-Regular, NotoSansMono, Inter (regular + bold), a display serif (e.g. Playfair Display), a modern sans (e.g. IBM Plex Sans). All OFL or SIL license.
+- Extend `Settings.fonts` dict + `default_text_font` / `default_title_font` to a family-registry pattern: resolve family → weight → style → file.
+- PSD writer + SVG embedder + PPTX renderer all need to honor the new registry.
+- Brief-level: typography block can declare `body_font: "Inter-Regular"` and resolve via registry.
+
+**Size impact**: bundled `.whl` grows from ~40 MB to ~80 MB. Acceptable — one-time download.
+
+### v2.4.3 — Interactive image manipulation in output
+
+**Why**: Current outputs (PPTX / PSD / HTML) have images at fixed positions and sizes. Users — especially on landing pages — want to drag-reposition and resize images post-generation without going back through the agent loop.
+
+**Scope by artifact**:
+- **Landing (HTML)**: wrap every `kind: "image"` in a `<div class="draggable-resizable">` with minimal vanilla-JS (`interact.js` or equivalent, ~50 KB) that adds pointer drag + corner-handle resize, persisting position/size to `localStorage`. Optional export: "Save adjusted layout" downloads a `layout.json` that the agent can re-ingest.
+- **PPTX**: already editable in PowerPoint natively — no work needed.
+- **PSD**: already editable in Photoshop natively — no work needed.
+- **Poster PNG**: skip — flat raster, by definition not draggable. Designers export to PSD for editing.
+
+**Sub-scope**: a "Designer preview" mode (`longcat-design preview <run-id>`) that opens the landing `index.html` in a local server with draggable/resizable layer overlays + a "Lock positions" toggle.
+
+**Risk**: interact.js drag handles can conflict with section-level scroll-snap. Contain handles inside section bounds; disable drag on mobile viewport (< 768 px).
+
+### v2.4 verification plan
+
+- Re-run BAGEL landing with enhancer on + off — measure brief character length, reward delta, paper-figure usage ratio
+- Re-run LLMSurgeon landing with new Playfair Display title font
+- Interactive drag-resize smoke-test on LLMSurgeon landing in Safari + Chrome
+
+---
+
 ## v1.4 — Real PSD type layer
 
 **Why**: Designer UX improvement. v1.0 PSD has named pixel layers (designer can move/resize/reorder but can't double-click to edit text). Real PSD type layers close the gap.
