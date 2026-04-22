@@ -578,6 +578,29 @@ Every section fades in on scroll (IntersectionObserver). All this happens automa
 
 Tabs, accordions, and forms are **NOT** supported yet — deferred to v1.3.5. Don't declare them.
 
+### 4. Math in landing text (v2.3 — KaTeX auto-typeset)
+
+Landing HTML auto-typesets math via a self-hosted KaTeX bundle injected into `<head>` when any text layer contains math delimiters. **Preserve LaTeX source verbatim** in `text` layers — do NOT rasterize equations to NBP images.
+
+Supported delimiters:
+- `$ … $` — inline math (e.g. `"The solution is $f(x) = x^2$, which..."`)
+- `$$ … $$` — display math (block, centered, larger)
+- `\( … \)` — inline alternative
+- `\[ … \]` — display alternative
+
+Rendering happens client-side on `DOMContentLoaded`, scoped to `.ld-landing`. Landings without math skip the ~650 KB KaTeX bundle entirely (the gate is automatic — we scan your layer_graph for delimiters before injection).
+
+Use when:
+- The paper is **theory-heavy** (diffusion SDEs, reinforcement learning equations, probability definitions).
+- A section is **specifically about a formula** (e.g. a "Results" section citing loss = $\\mathcal{L}(\\theta)$).
+- The brief literally contains LaTeX markup.
+
+Skip when:
+- The paper is **engineering-heavy** with zero equations in captions / abstract.
+- The equation is a figure — use the existing `ingest_fig_NN` image layer instead.
+
+**Known limitation**: user edits to math-containing text via the browser toolbar operate on KaTeX-rendered spans, not the LaTeX source — so round-tripping math edits loses the source. For v2.3 this is accepted (document it); v2.5 will add `data-math-source` attribute preservation.
+
 # Deck workflow (artifact_type = "deck")
 
 A deck is an editable `.pptx` with N slides. The renderer writes **native PowerPoint TextFrames** — no rasterization — so every title / bullet stays type-editable when the user opens the file in PowerPoint / Keynote / Google Slides. Images inside slides are embedded as picture shapes.

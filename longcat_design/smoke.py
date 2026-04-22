@@ -719,7 +719,10 @@ def check_landing_mode() -> None:
             {"layer_id": "S3", "name": "pricing", "kind": "section", "z_index": 3,
              "children": [
                  {"layer_id": "P1", "name": "pricing_title", "kind": "text", "z_index": 1,
-                  "text": "Free forever. Bring your own API keys.",
+                  # v2.3 — embed inline + display math so the KaTeX path gets
+                  # exercised in smoke. Free-form strings, no rendering happens
+                  # at write time; KaTeX is client-side JS.
+                  "text": "Pricing model: cost is $O(n)$ per token; total budget $$B = n \\cdot c$$",
                   "font_family": "NotoSerifSC-Bold", "font_size_px": 40,
                   "align": "center", "effects": {"fill": "#0f172a"}},
              ]},
@@ -782,6 +785,12 @@ def check_landing_mode() -> None:
         "cta data-kind":          'data-kind="cta"',
         "semantic footer":        '<footer class="ld-section"',
         "interactive JS":         'IntersectionObserver',
+        # v2.3 — KaTeX injected when math delimiters present in any text layer
+        "katex stylesheet":       '<style id="ld-katex-css">',
+        "katex init":             'renderMathInElement',
+        "katex font data URI":    'data:font/woff2;base64',
+        "inline math preserved":  'cost is $O(n)$',
+        "display math preserved": 'B = n \\cdot c',
     }
     for label, needle in required_markers.items():
         if needle not in html_text:

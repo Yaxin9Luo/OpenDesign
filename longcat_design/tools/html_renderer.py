@@ -691,10 +691,20 @@ def write_landing_html(
     style = (getattr(ds, "style", None) or "minimalist").lower()
     accent_override = getattr(ds, "accent_color", None) if ds else None
     style_css = _load_design_system_css(style, ctx, accent_override)
+
+    # v2.3 — KaTeX auto-typeset when any text layer contains math
+    # delimiters. Gate ensures non-math landings stay lean (~645 KB
+    # savings per landing without math).
+    katex_block = _inline_katex(ctx) if _has_math(layer_graph) else ""
+    log("html.landing.katex",
+        injected=bool(katex_block),
+        bytes=len(katex_block))
+
     head = _landing_head_block(cw, font_face_css, title,
                                run_id=getattr(ctx, "run_id", "") or "",
                                style_name=style,
-                               style_css=style_css)
+                               style_css=style_css,
+                               katex_block=katex_block)
 
     # v1.3 — detect sections + CTA. Last section with variant=="footer"
     # is auto-upgraded to <footer> outside <main> for accessibility.
@@ -787,7 +797,8 @@ def _walk_text_chars(nodes: list, ctx: ToolContext) -> dict[str, set[str]]:
 
 def _landing_head_block(cw: int, font_face_css: str, title: str,
                         run_id: str = "", style_name: str = "minimalist",
-                        style_css: str = "") -> str:
+                        style_css: str = "",
+                        katex_block: str = "") -> str:
     run_id_meta = (
         f'<meta name="ld-run-id" content="{_attr(run_id)}">\n' if run_id else ""
     )
@@ -810,7 +821,116 @@ def _landing_head_block(cw: int, font_face_css: str, title: str,
         f"\n  /* --- design-system: {style_name} --- */\n"
         + style_css + "\n"
         "</style>\n"
-        "</head>\n"
+        # v2.3 — KaTeX bundle injected here (empty string when no math detected
+        # in the layer_graph; self-contained <style>+<script> when inlined).
+        + katex_block
+        + "</head>\n"
+    )
+
+
+_KATEX_DELIMITERS = ("$", "$$", "\\(", "\\[")
+
+
+def _has_math(layer_graph: list[Any]) -> bool:
+    """Scan the landing layer tree for KaTeX delimiters in text content.
+    Returns True if ANY text layer (top-level or inside a section.children)
+    contains `$…$`, `$$…$$`, `\\(…\\)`, or `\\[…\\]`. Used to gate the ~645 KB
+    KaTeX injection so landings without math stay lean."""
+    def scan(nodes: list[Any]) -> bool:
+        for n in nodes:
+            if getattr(n, "kind", None) == "text":
+                t = getattr(n, "text", None) or ""
+                if any(d in t for d in _KATEX_DELIMITERS):
+                    return True
+            children = getattr(n, "children", None) or []
+            if scan(children):
+                return True
+        return False
+    return scan(layer_graph)
+
+
+def _inline_katex(ctx: ToolContext) -> str:
+    """Return inline `<style>` + `<script>` blocks that ship a self-contained
+    KaTeX 0.16.9 bundle (CSS + core JS + auto-render). Fonts are base64-inlined
+    as data: URIs so the landing HTML stays portable (no CDN, no external files).
+
+    Only woff2 font refs are kept; the CSS's fallback `url(...woff)` /
+    `url(...ttf)` declarations for each font face are stripped, since every
+    modern browser supports woff2. Saves ~50 % of the CSS + font bytes vs
+    keeping the fallbacks.
+
+    Vendor files live at `assets/vendor/katex/`:
+      - katex.min.css        (23 KB)
+      - katex.min.js         (277 KB)
+      - auto-render.min.js   (3 KB)
+      - fonts/*.woff2        (16 × ~15 KB ≈ 268 KB)
+
+    Total inline addition: ~645 KB per landing that contains math. Landings
+    without math skip this entirely (gated at call site via `_has_math`).
+    """
+    import base64 as _b64
+    import re as _re
+
+    vendor = ctx.settings.repo_root / "assets" / "vendor" / "katex"
+    css_path = vendor / "katex.min.css"
+    core_js_path = vendor / "katex.min.js"
+    auto_js_path = vendor / "auto-render.min.js"
+    fonts_dir = vendor / "fonts"
+    if not (css_path.exists() and core_js_path.exists() and auto_js_path.exists()):
+        log("html.landing.katex.vendor_missing", path=str(vendor))
+        return ""
+
+    css = css_path.read_text(encoding="utf-8")
+
+    # Remove woff + ttf fallback src entries to cut weight. KaTeX CSS uses
+    # the `src: url(woff2) format("woff2"),url(woff)...` syntax. Drop
+    # everything from `,url(fonts/.../*.woff)` or `,url(fonts/.../*.ttf)`
+    # through the next `)` — keeping only the woff2 src.
+    css = _re.sub(r',\s*url\(fonts/[^)]+\.woff\)\s*format\("woff"\)', "", css)
+    css = _re.sub(r',\s*url\(fonts/[^)]+\.ttf\)\s*format\("truetype"\)', "", css)
+
+    # Inline each remaining `url(fonts/xxx.woff2)` as a data: URI so the
+    # rendered landing HTML doesn't need the vendor dir on disk.
+    def _replace_font(m: "_re.Match[str]") -> str:
+        fname = m.group(1)
+        fp = fonts_dir / fname
+        if not fp.exists():
+            log("html.landing.katex.font_missing", file=fname)
+            return m.group(0)  # leave as-is; browser will 404 but not crash
+        b64 = _b64.b64encode(fp.read_bytes()).decode("ascii")
+        return f'url(data:font/woff2;base64,{b64})'
+    css = _re.sub(r"url\(fonts/([^)]+\.woff2)\)", _replace_font, css)
+
+    core_js = core_js_path.read_text(encoding="utf-8")
+    auto_js = auto_js_path.read_text(encoding="utf-8")
+
+    # `renderMathInElement` init runs ONCE on DOMContentLoaded. Scoped to
+    # `.ld-landing` so the edit-toolbar modal + nav stay untouched. Display
+    # delimiter $$…$$ must come before inline $…$ so KaTeX parses greedy-first.
+    init_js = (
+        'if (window.renderMathInElement) {\n'
+        '  document.addEventListener("DOMContentLoaded", function () {\n'
+        '    try {\n'
+        '      renderMathInElement(document.querySelector(".ld-landing") || document.body, {\n'
+        '        delimiters: [\n'
+        '          {left: "$$", right: "$$", display: true},\n'
+        '          {left: "\\\\[", right: "\\\\]", display: true},\n'
+        '          {left: "$", right: "$", display: false},\n'
+        '          {left: "\\\\(", right: "\\\\)", display: false}\n'
+        '        ],\n'
+        '        throwOnError: false,\n'
+        '        strict: "ignore"\n'
+        '      });\n'
+        '    } catch (e) { console.warn("KaTeX render failed:", e); }\n'
+        '  });\n'
+        '}'
+    )
+
+    return (
+        f'<style id="ld-katex-css">{css}</style>\n'
+        f'<script>{core_js}</script>\n'
+        f'<script>{auto_js}</script>\n'
+        f'<script>{init_js}</script>\n'
     )
 
 
