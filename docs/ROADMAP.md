@@ -196,11 +196,46 @@ From static HTML pages to production-grade marketing pages. Four user-visible im
 
 `apply_edits` round-trip preserves CTAs with `href` + `variant` intact via `data-*` attributes (CTAs are `contenteditable=false` so the edit toolbar can't silently mutate link text). Smoke expanded to a 5-section fixture (hero + features + pricing + cta + footer) asserting 19 HTML markers + full round-trip; suite stays 18/18.
 
+## v2.0 — Training-data pipeline ✅ SHIPPED 2026-04-22 (PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1))
+
+**The mission closes the loop**: the project is now both a product (OSS design agent) and an explicit training-data producer for the Longcat-Next layered-generation model. Every user run doubles as a distillation sample. Three commits, all on main:
+
+### v2.0 — `DistillTrajectory` schema + multi-provider LLM backend ([30cab95](https://github.com/Yaxin9Luo/OpenDesign/commit/30cab95))
+
+- **v2 trajectory schema**: `DistillTrajectory` (pure model decisions + lean tool results + episode reward) replaces v1 `Trajectory` (product/debug/training hybrid). 144 KB → 44 KB per equivalent run (70% size drop). Top-level `final_reward` + `terminal_status` (`pass` / `revise` / `fail` / `max_turns` / `abort`) consumable by offline RL trainers directly.
+- **New tool contract**: `ToolResultRecord` replaces `ToolObservation`; `obs_ok(payload)` / `obs_error(message, category, payload)` — **no more `summary` / `next_actions` / `artifacts` kwargs**. These "hint fields" were removed at the tool layer (not just stripped from JSON) to eliminate train↔deploy distribution shift in RL. Workflow contract lives entirely in `prompts/planner.md` now.
+- **`StepType` slimmed** to `{input, reasoning, tool_call, tool_result, finalize}` (dropped `thought` / `artifact_switch` / `design_spec` / `critique` — recoverable from tool_call args + tool_result payload). `AgentTraceStep` drops `timestamp` / `spec_snapshot` / `observation` too.
+- **`ThinkingBlockRecord`** captures extended-thinking verbatim with `signature` (Anthropic) or empty (OpenAI-compat). Both plain + redacted blocks preserved for faithful replay.
+- **Multi-provider LLM backend** (`longcat_design/llm_backend.py`): `LLMBackend` Protocol + `AnthropicBackend` + `OpenAICompatBackend`. **9 protocol differences normalized** (reasoning field, tool calling, system prompt placement, vision blocks, stop reason vocab, thinking control, interleaved beta, cache telemetry, replay constraints). Planner + critic have zero provider-aware branches.
+- **Default planner + critic → `moonshotai/kimi-k2.6`** (OpenRouter). Kimi costs ~$3.58/run with 12 reasoning steps captured in full plaintext (vs Claude Opus 4.7 at ~$8-12/run with ~80% thinking redacted). Claude is one env var away: `PLANNER_MODEL=anthropic/claude-opus-4.7`. Mix-and-match (e.g. planner on Claude + critic on DeepSeek-R1) works out of the box.
+
+### v2.1 — Versioned intermediate artifacts ([c264545](https://github.com/Yaxin9Luo/OpenDesign/commit/c264545))
+
+**Closes the gap left by v2.0**: v2 trajectory captured every model decision but the artifacts those decisions produced still lived in clobber-prone fixed paths. DPO pairs (rejected vs chosen) + layered-gen SFT (per-layer edit history) need this state preserved.
+
+- `out/runs/<run_id>/composites/iter_NN/{poster.html,psd,svg,preview.png}` — every composite call writes into its own subdirectory; prior iterations preserved.
+- `out/runs/<run_id>/final/` — **relative symlinks** to the latest iter, refreshed atomically after every successful composite. Product consumers use stable `final/` paths; versioning is invisible.
+- Layer PNGs gain `.vN.png` suffix (`text_L1_title.v1.png` → `.v2.png` on `edit_layer` re-render). Prior versions stay on disk.
+- Tool result payloads chain via `version` / `relative_path` / `supersedes_sha256` (absent on v1). Composite payload gains `iteration` + `{preview,html,pptx}_relative_path` + `supersedes_preview_sha256` for DPO pair extraction.
+- `ToolContext.next_layer_version(layer_id)` + `ctx.next_composite_iter()` helpers drive the bumping.
+- Smoke #19 verifies revise-loop preservation + `supersedes_sha256` chain integrity — suite now **19/19**.
+
+### v2.2 — SFT jsonl exporter ([eeb6490](https://github.com/Yaxin9Luo/OpenDesign/commit/eeb6490))
+
+`scripts/export_sft_jsonl.py` flattens a directory of v2 trajectories into OpenAI-compat SFT jsonl — **one record per assistant turn** (planner or critic). Each record is self-contained: full message history up to the turn, the turn's `reasoning_content` + `tool_calls` (OpenAI shape), the tool catalog, per-turn `usage`, episode `final_reward` + `terminal_status`. CLI filters by `--min-reward / --source / --actor / --provider / --terminal-status`. Apply-edits trajectories auto-skipped (no model decisions).
+
+---
+
 ## Deferred to v1.3.5
 
 - **Tab groups** (new `kind: "tabs"` container + per-tab `LayerNode` children)
 - **Accordions** (`kind: "accordion"`)
 - **Email capture / newsletter forms** — needs backend endpoint policy, not v1.x scope
+
+## Deferred to v2.3
+
+- **DPO pair exporter** (`scripts/export_dpo_jsonl.py`) — mirror of SFT exporter but pairs `composites/iter_N-1/preview.png` (rejected, critic revise verdict) with `iter_N/preview.png` (chosen, critic pass verdict). All substrate data on disk thanks to v2.1; just needs the flattener.
+- **Per-layer SFT exporter** — DistillTrajectory captures the model's layer-by-layer decisions + layer `.vN.png` chain captures the visual evolution. Useful for training layered-gen models that predict one layer at a time.
 
 ---
 

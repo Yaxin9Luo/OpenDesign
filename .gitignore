@@ -40,3 +40,12 @@ Paper2Any/
 # ---- Claude Code local state ----
 .claude/
 dataset/
+
+# ---- Private workspace / scratch ----
+docs/.obsidian/
+docs/MEETING-*.md
+# iCloud-sync duplicates (macOS creates ` 2.py` / ` 3.py` when a file is synced
+# while Python is reading it — never commit these, they diverge from canonical).
+* [0-9].py
+# One-off scratch file left at repo root; harmless but not product surface.
+/design

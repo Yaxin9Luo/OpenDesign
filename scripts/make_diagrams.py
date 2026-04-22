@@ -187,7 +187,7 @@ def diagram_agent_architecture(out_path: Path) -> None:
     d = ImageDraw.Draw(im)
 
     _title(d, W, "LongcatDesign · Agent Architecture",
-           "Anthropic SDK + handwritten tool loop · no LangGraph / CrewAI")
+           "LLMBackend abstraction (Kimi K2.6 default · Claude via env var) · handwritten tool loop · no LangGraph / CrewAI")
 
     # ── Band 1: entry column (left) ──────────────────────────────────────
     user = Box(100, 220, 260, 72, "User", "CLI terminal", fill=FILL_ACCENT_SOFT)
@@ -204,7 +204,7 @@ def diagram_agent_architecture(out_path: Path) -> None:
     # ── Band 2: planner + critic (center) ────────────────────────────────
     planner = Box(520, 280, 380, 110,
                   "PlannerLoop",
-                  "planner.py · Claude Opus 4.7\nhandwritten tool_use loop",
+                  "planner.py · LLMBackend\n(Kimi K2.6 / Claude / any OpenAI-compat)",
                   fill=FILL_ACCENT_SOFT,
                   title_pt=28, subtitle_pt=15)
     critic = Box(520, 440, 380, 80,
@@ -234,7 +234,7 @@ def diagram_agent_architecture(out_path: Path) -> None:
         ("fetch_brand_asset", "v1 stub"),
         ("composite", "PSD+SVG+HTML | HTML | PPTX"),
         ("critique", "self-review"),
-        ("finalize", "serialize Trajectory"),
+        ("finalize", "serialize DistillTrajectory"),
     ]
     card_w, card_h = 480, 62
     col_gap, row_gap = 24, 16
@@ -300,7 +300,7 @@ def diagram_agent_architecture(out_path: Path) -> None:
         out_boxes.append(b)
         _arrow(d, b.cx, rail_y, b.cx, b.y)
 
-    _footer(d, W, H, "Source of truth: longcat_design/planner.py + runner.py · 11 tools registered in tools/__init__.py")
+    _footer(d, W, H, "Source of truth: planner.py + runner.py + llm_backend.py · 11 tools in tools/__init__.py · v2 DistillTrajectory schema")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     im.save(out_path, "PNG", optimize=True)
