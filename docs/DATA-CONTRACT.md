@@ -410,6 +410,68 @@ Critique-driven preference pairs. Currently rare (only emitted when a critique i
 - **Lower the critic threshold** to force more revise verdicts (set `score ≥ 0.85` for pass).
 - **Use the rerender command** (when v0.1 lands — see [ROADMAP.md](ROADMAP.md)) — manual edits become preference pairs.
 
+### Exporting trajectories to SFT jsonl
+
+The script `scripts/export_sft_jsonl.py` flattens a directory of
+`DistillTrajectory` files into OpenAI-Chat-Completions-compatible
+jsonl — **one record per assistant turn**. Each record is self-
+contained: system prompt + message history so far + available tools,
+plus the target output (this turn's `reasoning_content` + `tool_calls`)
+plus episode metadata (reward, terminal_status, source).
+
+```bash
+uv run python scripts/export_sft_jsonl.py --out dataset/sft.jsonl
+
+# Filters:
+#   --source agent_run|apply_edits|any    (default: agent_run)
+#   --actor planner|critic|both           (default: both)
+#   --provider anthropic|openai_compat|any (default: any)
+#   --min-reward 0.7                      (skip low-quality runs)
+#   --terminal-status pass|revise|fail|...
+```
+
+Record shape (see [scripts/export_sft_jsonl.py](../scripts/export_sft_jsonl.py)
+docstring for full layout):
+
+```json
+{
+  "run_id": "...",
+  "turn_idx": 3,
+  "actor": "planner",
+  "model": "moonshotai/kimi-k2.6",
+  "provider": "openai_compat",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "reasoning_content": "...", "tool_calls": [...]},
+    {"role": "tool", "tool_call_id": "...", "content": "..."}
+  ],
+  "target": {
+    "reasoning_content": "...",
+    "content": null,
+    "tool_calls": [{"id": "...", "type": "function",
+                    "function": {"name": "...", "arguments": "..."}}]
+  },
+  "tools": [...],
+  "metadata": {
+    "terminal_status": "pass",
+    "final_reward": 0.89,
+    "turn_stop_reason": "tool_use",
+    "turn_usage": {"input":N, "output":N, "cache_read":N, "cache_create":N},
+    "thinking_budget": 10000,
+    "trajectory_source": "agent_run"
+  }
+}
+```
+
+Critic turns are emitted as separate records with `actor="critic"`,
+`tools=[]`, and `target.content` = the full CritiqueResult JSON
+(verdict + score + issues + rationale). The critic's vision input is
+not re-serialized into the record (would bloat the jsonl with base64
+image data); instead a pointer to `out/runs/<run_id>/final/preview.png`
+is placed in the user message so the SFT trainer can reconstruct the
+image block if vision SFT is desired.
+
 ### Lane 6 — Extended-thinking CoT (v1)
 
 ```
