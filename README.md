@@ -74,15 +74,15 @@ All text is a separate, named, editable element — including Chinese. The poste
 LongcatDesign uses [uv](https://docs.astral.sh/uv/) for environment + dependency management. Install uv once (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
 
 ```bash
-git clone https://github.com/Yaxin9Luo/longcat-design.git
-cd longcat-design
+git clone https://github.com/Yaxin9Luo/OpenDesign.git
+cd OpenDesign
 uv sync                    # creates .venv, installs deps from uv.lock, editable-installs the package
-cp .env.example .env       # fill in GEMINI_API_KEY + (OPENROUTER_API_KEY OR ANTHROPIC_API_KEY)
+cp .env.example .env       # fill in GEMINI_API_KEY + OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
 ```
 
 > **macOS note:** if `uv run` fails with `ModuleNotFoundError: longcat_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
-### Smoke test (no API, ~5 sec, 16 checks)
+### Smoke test (no API, ~5 sec, 19 checks)
 
 ```bash
 uv run python -m longcat_design.smoke
@@ -116,6 +116,38 @@ uv run python -m longcat_design.cli run "10 张投资者 pitch deck：奶茶品�
 ```
 
 Outputs land in `out/runs/<run_id>/` (per-artifact — `poster.pptx` + `slides/` + `preview.png` for deck; `index.html` + `preview.png` for landing; `poster.psd/svg/html` + `layers/` for poster). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
+
+### Switching models (planner + critic)
+
+All LLM access goes through [`longcat_design/llm_backend.py`](longcat_design/llm_backend.py), a provider-agnostic abstraction with two implementations: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / Qwen / vLLM-served / anything OpenAI-compatible).
+
+**Default**: both planner and critic use `moonshotai/kimi-k2.6` — cheap, agentic, reasoning not redacted. One `OPENROUTER_API_KEY` covers all providers below.
+
+Switch via env vars (set in `.env` or export before running):
+
+| Scenario | Env vars |
+|---|---|
+| Claude across the board | `PLANNER_MODEL=anthropic/claude-opus-4.7` + `CRITIC_MODEL=anthropic/claude-opus-4.7` |
+| DeepSeek-R1 planner | `PLANNER_MODEL=deepseek/deepseek-r1` |
+| Qwen3 Max Thinking | `PLANNER_MODEL=qwen/qwen3-max-thinking` |
+| Heterogeneous (Claude plans, DeepSeek critiques) | `PLANNER_MODEL=anthropic/claude-opus-4.7` + `CRITIC_MODEL=deepseek/deepseek-r1` |
+| Self-hosted vLLM | `OPENAI_COMPAT_BASE_URL=http://localhost:8000/v1` + `OPENAI_COMPAT_API_KEY=dummy` + `PLANNER_MODEL=Qwen/Qwen3-Max-Thinking` |
+| Force provider when auto-detection is wrong | `PLANNER_PROVIDER=openai_compat` (choices: `auto` / `anthropic` / `openai_compat`) |
+| Cheaper runs | `PLANNER_THINKING_BUDGET=2000` or `=0` (disable thinking) |
+
+Provider auto-detection: model ids starting with `anthropic/` or `claude-` route to Anthropic backend; everything else goes OpenAI-compat. See [.env.example](.env.example) for the full list of knobs.
+
+Inspect what's active:
+
+```bash
+uv run python -c "
+from longcat_design.config import load_settings
+s = load_settings()
+print(f'planner: {s.planner_model} ({s.planner_provider})')
+print(f'critic:  {s.critic_model} ({s.critic_provider})')
+print(f'thinking: planner={s.planner_thinking_budget} critic={s.critic_thinking_budget}')
+"
+```
 
 ### Paper → poster / landing / deck (v1.2 paper2any, shipped)
 
