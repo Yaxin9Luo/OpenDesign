@@ -2,7 +2,25 @@
 
 This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
 
-> **Status (2026-04-22)**: **v2 training-data pipeline shipped** (PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1)), layered on top of v1.3 interactive academic landings. The project now IS both a product (OSS design agent) AND a training-data producer for layered design generation — every run is simultaneously a design artifact and a distillation-ready `DistillTrajectory` JSON. 11 tools wired, smoke **19/19 green**.
+> **Status (2026-04-22)**: **v2 training-data pipeline + v2.3 paper2any Tier-1 polish shipped** (PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1) + 5 follow-up commits on main). The project IS both a product (OSS design agent) AND a training-data producer for layered design generation — every run is simultaneously a design artifact AND a distillation-ready `DistillTrajectory` JSON. 11 tools wired, smoke **20/20 green**.
+>
+> **v2.3 paper2any Tier-1 fixes** (5 sequential commits, each with independent smoke + dogfood):
+> - [1368422](https://github.com/Yaxin9Luo/OpenDesign/commit/1368422) — **deck speaker notes**: `LayerNode.speaker_notes` → `slide.notes_slide.notes_text_frame`. Decks are now presentation-ready, not handouts.
+> - [bb3aec8](https://github.com/Yaxin9Luo/OpenDesign/commit/bb3aec8) — **short caption**: VLM returns `short_caption ≤ 15 chars` alongside the full one; planner picks per-bbox (tight poster footer → short, wide landing `<figcaption>` → full).
+> - [b3a4e21](https://github.com/Yaxin9Luo/OpenDesign/commit/b3a4e21) — **`--template` flag**: 5 bundled academic canvas presets (neurips-portrait, cvpr-landscape, icml-portrait, a0-portrait, a0-landscape). Injected via brief prologue; no schema change.
+> - [ce759d8](https://github.com/Yaxin9Luo/OpenDesign/commit/ce759d8) — **KaTeX for landing**: self-hosted 645 KB bundle under `assets/vendor/katex/` (CSS + core + auto-render + 20 woff2 fonts base64-inlined). Gated on `_has_math()` so non-math landings skip entirely. `$…$` / `$$…$$` / `\(…\)` / `\[…\]` all auto-typeset.
+> - [4a77830](https://github.com/Yaxin9Luo/OpenDesign/commit/4a77830) — **sub-figure extraction**: VLM detects panel bboxes in composite figures (Fig 2 with a/b/c/d); Pillow-cropped panels register as `ingest_fig_NN_<label>` so planner can place each panel independently. Parent layer stays in catalog too.
+>
+>> **v2.3 combined dogfood** (2026-04-22, longcat-next-2026.pdf, Claude Opus 4.7 via `PLANNER_MODEL=anthropic/claude-opus-4.7`):
+>
+> | Artifact | Terminal | Reward | Wall | Cost | Notes |
+> |---|---|---|---|---|---|
+> | Landing | **pass** | **0.88** | 6:50 | $3.96 | Editorial style; math preserved; KaTeX bundle injected (648 KB, 9.8 MB HTML) |
+> | Deck | **pass** | **0.88** | 10:47 | $9.45 | 18/18 content slides got speaker_notes; native PPTX |
+> | Poster | fail | 0.68 | 11:00 | $10.41 | `--template neurips-portrait` canvas applied; revise loop degraded 0.86 → 0.68 (pre-existing poster-loop flaw, parked v2.4) |
+>
+> **Model-routing insight**: prior Kimi K2.6 runs hit `max_turns` on all 3 artifacts (47 K chars of reasoning-loop bbox arithmetic). Claude Opus 4.7 completes within 1-2 critique iterations. The v2 `LLMBackend` abstraction paid off at dogfood time — one env var flipped planner + critic from Kimi to Claude with zero code change.
+
 >
 > **v2 milestones shipped this cycle**:
 > - [30cab95](https://github.com/Yaxin9Luo/OpenDesign/commit/30cab95) — v2 `DistillTrajectory` schema (lean, 44 KB per run vs v1's 144 KB — no summary / next_actions hints that would cause train↔deploy distribution shift) + new `ToolResultRecord` tool contract + multi-provider LLM backend (`llm_backend.py` with `AnthropicBackend` + `OpenAICompatBackend`). Default planner + critic switched to **Kimi K2.6** (plaintext reasoning, ~$3.58/run); Claude one env var away. 9 protocol differences normalized in one abstraction layer.

@@ -6,6 +6,72 @@ Format: each entry has **Decision** (one-line), **Alternatives considered**, **R
 
 ---
 
+## 2026-04-22 — v2.3 dogfood: figure-catalog cap + Kimi-vs-Claude model routing
+
+**Decision**: Cap the planner-facing figure catalog at 20 entries in the `ingest_document` tool_result summary ([4d8f58d](https://github.com/Yaxin9Luo/OpenDesign/commit/4d8f58d)), AND document that **paper posters should default to Claude Opus 4.7 as planner** while simpler artifacts (landing / deck) can use Kimi K2.6.
+
+**Evidence from triple dogfood on longcat-next-2026.pdf** (all on v2.3.5 stack):
+
+| Run | Model | Terminal | Cost | Steps | Critiques |
+|---|---|---|---|---|---|
+| Poster (initial) | Kimi K2.6 | **max_turns** | $1.46 | 5 | 0 |
+| Landing (initial) | Kimi K2.6 | **max_turns** | $1.28 | 5 | 0 |
+| Deck (initial) | Kimi K2.6 | **max_turns** | $2.01 | 8 | 0 |
+| Poster (post-cap) | Kimi K2.6 | **max_turns** | $1.99 | 5 | 0 |
+| Poster (Claude) | Claude Opus 4.7 | fail (revise regressed) | $10.41 | 85 | 2 |
+| Landing (Claude) | Claude Opus 4.7 | **pass 0.88** | $3.96 | 18 | 1 |
+| Deck (Claude) | Claude Opus 4.7 | **pass 0.88** | $9.45 | 33 | 1 |
+
+**Two independent causes isolated during dogfood**:
+
+1. **Catalog overflow (v2.3.5 regression)** — sub-figure extraction doubled the figure count (45 → ~85 per longcat-next ingest). The `figures_payload` dict shipped all of them to the planner summary. With 85 × ~6 fields each, the summary alone was ~5K tokens, which combined with the rest of the planner prompt pushed Kimi past its effective reasoning budget before tool_use could emit. Fix is straightforward: apply the existing `_PLANNER_FIG_CATALOG_CAP = 20` constant (previously defined but unused) via the existing `_rank_figure_ids_for_planner` heuristic. Registry still holds all 80+ layers; the cap is only on the summary. New `n_figures_truncated` + `catalog_note` fields tell the planner how to reach lower-ranked layers by layer_id.
+
+2. **Model behavior on bbox geometry** — even after the catalog cap, Kimi K2.6 still hit max_turns on the poster brief. Trajectory inspection showed a single reasoning block of **47 798 characters** iterating bbox arithmetic: `"640×520... 640×540... 640×580... Min side 520 < 600. This violates the rule but fits everything..."`. Kimi was trying to algebraically solve the visual-density constraints (≥ 600 px short side, ≥ 45 % image area, etc.) instead of picking approximate bboxes and letting the critic revise. Claude Opus 4.7 on the same brief completes the poster in 7 turns (prefab layout + revise) — it picks a layout and commits.
+
+**Alternatives considered for the model routing**:
+1. **Strip poster geometry constraints from the prompt** — rejected: the v1.2.2 visual-density rules are the reason paper posters stopped looking like "research paper page 1 printed as PNG". Removing them regresses output quality for any model.
+2. **Loosen thinking_budget per role** — rejected: increasing budget to 16K / 32K still hit the loop, and burns tokens without changing model behavior.
+3. **Add a "pick approximate bboxes — don't solve perfectly" line to the prompt** — tried in brief text, Kimi still iterated. The instruction doesn't override the pattern.
+4. **Route per-artifact at runtime** based on `artifact_type` — deferred: adds coupling between runner and model config. Current path (user sets `PLANNER_MODEL` per run) is simpler and explicit.
+
+**Poster revise-loop regression** (Claude, 0.86 → 0.68 across 85 steps) is a separate pre-existing bug — the edit_layer loop between iter_1 and iter_2 produced worse output than iter_1. Parked as a `v2.4` follow-up (not a v2.3 regression).
+
+**Rationale**: The cap fix prevents the latent catalog-overflow bug on ANY planner model (good hygiene). Model routing is conveyed via README + DECISIONS so users know to set `PLANNER_MODEL=anthropic/claude-opus-4.7` for paper posters. The `LLMBackend` abstraction (v2.0) paid off precisely at this moment: flipping planner + critic from Kimi to Claude was one env var with zero code change.
+
+**Revisit when**:
+- A cheaper model handles bbox constraints without reasoning loops → default flips back to Kimi for poster too.
+- Poster revise loop fix lands (v2.4) → remove the "parked" caveat above.
+- New VLM ingest produces >200 figure layers on long papers → tune `_PLANNER_FIG_CATALOG_CAP` up from 20.
+
+---
+
+## 2026-04-22 — v2.3 paper2any polish: 5 Tier-1 gaps, step-by-step
+
+**Decision**: Ship 5 independent improvements in 5 sequential commits so each lands on main with its own smoke + dogfood, rather than bundling into one large PR. The 5 were picked from 10+ real dogfood runs where academic users would stall:
+
+1. **Deck speaker notes** (`LayerNode.speaker_notes` → `slide.notes_slide.notes_text_frame`). Decks without notes are handouts, not talks.
+2. **Short caption** (VLM returns both full + `short_caption ≤ 15 chars`). Paper captions are 80+ chars; poster footers fit ~15. Now both options exist; planner picks per bbox.
+3. **Poster templates** (`--template neurips-portrait | cvpr-landscape | icml-portrait | a0-portrait | a0-landscape`). Users knew venue dims but had to type them every time.
+4. **KaTeX for landing** (self-hosted 645 KB bundle; gated on `_has_math()` so non-math landings are unaffected). Papers with equations rendered as gibberish before.
+5. **Sub-figure extraction** (VLM detects composite-figure panel bboxes; Pillow crops each panel into `ingest_fig_NN_<label>`). Paper's Fig 2(c) referenced in body copy had no way to be placed individually.
+
+**Alternatives considered (cross-cutting)**:
+1. **Bundle into one large v2.3 PR** — rejected: prevents bisection, ties 5 unrelated verifications together.
+2. **Add `parent_layer_id` field to `LayerNode`** for sub-panels — rejected: the `ingest_fig_NN_<label>` naming convention already expresses the parent link, planner reads it, trajectories stay smaller. Breadcrumb remains on `rendered_layers` record only.
+3. **Template as hard `DesignSpec.template` field** — rejected: keeps the v2 `DistillTrajectory` clean of input-side hints. Template is conveyed via brief prologue (same mechanism as `--from-file`), planner still writes `canvas` explicitly.
+4. **KaTeX via CDN** — rejected: parity with Noto font vendoring (42 MB in-repo); offline-resilient; self-contained HTML. Trade-off: ~645 KB inline per math-containing landing. `_has_math()` scan gates the injection.
+5. **KaTeX woff + ttf fallback srcs** — stripped. All modern browsers support woff2; cuts bundle weight ~45%.
+
+**Rationale**: Each change is individually small (2-6 hours) and each solves a concrete blocker we've watched stall real users. The step-by-step cadence (not one bundled PR) means a regression in sub-figure extraction doesn't threaten the speaker-notes fix or the template registry. Smoke went from 19/19 to 20/20 (added `check_sub_figure_registration` — synthesizes a composite PNG, asserts each panel's crop matches its source color).
+
+**Revisit when**:
+- (1) Deck: speaker notes feel too long / too short → tune planner prompt word-count guidance.
+- (3) Template: users frequently override canvas in free-text (suggests the preset is wrong for their venue) → expand `POSTER_TEMPLATES`.
+- (4) KaTeX: `_has_math()` scan misses delimiters (e.g. `\begin{equation}` environments) → widen regex or detect at render time inside text layers.
+- (5) Sub-figure: planner over- or under-uses sub-panels vs parent (visible from trajectory audit) → adjust the "when to use" prompt.
+
+---
+
 ## 2026-04-21 — v1.3.1 paper landings: ingested figures > NBP stock icons
 
 **Decision**: Add a "Paper landing imagery policy" section to `prompts/planner.md` that flips the default imagery source for **paper-sourced** landings: when `ingest_document` registered ≥ 3 figure layers, the planner MUST prefer `ingest_fig_NN` layers in content sections (highlights / method / results / showcase); NBP (`generate_image`) is reserved for imagery the paper cannot provide (hero brand shots only, and usually not even that since papers ship Fig. 1 as a viable hero). Ingested benchmark tables MUST land as `kind: "table"` layers rendering a real HTML `<table>` with winner-cell bolding — NOT as cropped screenshots.

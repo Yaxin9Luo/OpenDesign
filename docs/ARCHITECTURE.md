@@ -172,8 +172,10 @@ Design-Agent/                      # directory name preserved from v0 for stabil
 │   │                              #   ArtifactType (POSTER / DECK / LANDING)
 │   │                              #   LayerKind (background / text / brand_asset / group /
 │   │                              #              section / image / slide / table / cta)
-│   │                              #   DesignSpec · LayerNode · CompositionArtifacts
-│   │                              #   AgentTraceStep · CritiqueResult · Trajectory
+│   │                              #   DesignSpec · LayerNode (+ speaker_notes v2.3.1,
+│   │                              #     href/variant v1.3, rows/headers/caption_short v2.3.2)
+│   │                              #   DistillTrajectory · ToolResultRecord ·
+│   │                              #     TrainingMetadata · ThinkingBlockRecord (v2 schema)
 │   ├── runner.py                  # PipelineRunner — per-turn orchestration
 │   ├── planner.py                 # PlannerLoop — tool-use loop (max_tokens=16384)
 │   ├── critic.py                  # Critic — branches POSTER vision / LANDING+DECK text-only

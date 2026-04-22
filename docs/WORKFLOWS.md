@@ -139,6 +139,12 @@ switch_artifact_type("poster")
 
 Canvas: typically 3:4 (`1536×2048`) or 4:3 (`2048×1536`) for print; `1920×1080` for screen. Output is commercial-printable because text stays as editable vector in SVG + named pixel layers in PSD.
 
+**v2.3.3 `--template` flag** — skip typing venue dims:
+```
+longcat-design run --from-file paper.pdf --template neurips-portrait "poster brief..."
+```
+5 bundled presets: `neurips-portrait` / `cvpr-landscape` / `icml-portrait` / `a0-portrait` / `a0-landscape`. Resolves to a canvas dict (w_px / h_px / dpi / aspect_ratio) injected via brief prologue. Case-insensitive; unknown names fail fast before any API cost.
+
 ### Landing (`artifact_type = "landing"`)
 
 Self-contained HTML one-pager with 6 bundled design systems + inline NBP or ingested imagery. **v1.3** adds CTA layers, auto-generated top nav, reveal-on-scroll, and semantic `<header>/<main>/<footer>`.
@@ -173,6 +179,8 @@ switch_artifact_type("landing")
 - Last section whose `variant == "footer"` is auto-upgraded to semantic `<footer>` outside `<main>` (apply-edits round-trip also scans for it).
 - An inline vanilla JS IIFE runs `IntersectionObserver` reveal-on-scroll (`[data-reveal]` → `.is-revealed`) + smooth `scrollIntoView` on `<a href="#...">` + active-nav tracking. Respects `prefers-reduced-motion`.
 
+**v2.3.4 KaTeX math** — `$…$` / `$$…$$` / `\(…\)` / `\[…\]` in any text layer auto-typeset client-side via self-hosted KaTeX 0.16.9. Gated on a `_has_math()` scan of the layer_graph — landings without math skip the ~645 KB bundle entirely. Preserve LaTeX markup verbatim in `text` layers; do NOT rasterize equations as images. Known limitation: in-browser edits to math-containing text operate on KaTeX-rendered spans, not the LaTeX source (v2.5 will add `data-math-source` preservation).
+
 Design system picker (via `prompts/planner.md` loudness cheat sheet):
 
 | Style | Loudness | Brief vibe |
@@ -199,7 +207,8 @@ switch_artifact_type("deck")
       canvas: { w_px: 1920, h_px: 1080 },  # 16:9 default
       composition_notes: "<style-prefix for imagery coherence>",
       layer_graph: [
-        slide { children: [background, text (title), text (body), image (src_path: null)] },
+        slide { children: [background, text (title), text (body), image (src_path: null)],
+                speaker_notes: "<talking points + timing + Q&A — v2.3.1>" },
         ...
       ]
     }
@@ -208,6 +217,8 @@ switch_artifact_type("deck")
   → critique (text-only, slide-tree rubric) → pass / revise / fail
   → finalize
 ```
+
+**v2.3.1 speaker notes** — each `kind: "slide"` LayerNode can carry `speaker_notes: str | None`. Populates `slide.notes_slide.notes_text_frame.text` so PowerPoint / Keynote presenter view shows the notes. Guidelines: ≤ 200 words per slide, skip cover / thank-you / divider, match language to slide body.
 
 **Typography ranges** (enforced by `prompts/critic-deck.md`):
 

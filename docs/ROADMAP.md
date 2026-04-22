@@ -226,6 +226,60 @@ From static HTML pages to production-grade marketing pages. Four user-visible im
 
 ---
 
+## v2.3 — Paper2any Tier-1 product fixes ✅ SHIPPED 2026-04-22
+
+Five independent improvements, each surfacing from 10+ real dogfood runs. Shipped as 5 separate commits on main — each with its own smoke + dogfood — so regressions bisect cleanly. Paper2any now usable for academic users at the recommend-to-a-labmate bar.
+
+### v2.3.1 — Deck speaker notes ([1368422](https://github.com/Yaxin9Luo/OpenDesign/commit/1368422))
+
+`LayerNode.speaker_notes: str | None` (slide-only). PPTX renderer populates `slide.notes_slide.notes_text_frame.text` from planner-drafted talking points + timing cues + Q&A prompts. Decks are now presentation-ready, not just handouts. Planner prompt guides "≤ 200 words, skip cover/thank-you/divider slides, match slide body language".
+
+### v2.3.2 — Short caption ([bb3aec8](https://github.com/Yaxin9Luo/OpenDesign/commit/bb3aec8))
+
+VLM ingest returns both full caption AND `short_caption ≤ 15 chars` ("Architecture", "Scaling curves", "Ablation"). Same for tables (`short_title`). Registered as `rendered_layers[fig].caption_short` + `caption_short` key on table records; exposed in the `figures` / `tables` payload to the planner. No schema change — free-form key. Planner picks per-bbox: full caption for landing `<figcaption>` (plenty of room), short for poster footer / deck caption slots.
+
+### v2.3.3 — Poster templates ([b3a4e21](https://github.com/Yaxin9Luo/OpenDesign/commit/b3a4e21))
+
+`longcat-design run --template NAME` resolves 5 bundled canvas presets:
+
+| Template | Canvas | Aspect | Use |
+|---|---|---|---|
+| `neurips-portrait` | 1536×2048 @300dpi | 3:4 | NeurIPS / CVPR / ICLR portrait |
+| `cvpr-landscape` | 2048×1536 @300dpi | 4:3 | CVPR landscape |
+| `icml-portrait` | 1536×2048 @300dpi | 3:4 | ICML portrait |
+| `a0-portrait` | 2378×3366 @300dpi | 1:√2 | ISO A0 portrait (EU/CN venues) |
+| `a0-landscape` | 3366×2378 @300dpi | √2:1 | ISO A0 landscape |
+
+Injected via brief prologue (same mechanism as `--from-file`) — planner sees a `Template: <name>` block with the resolved canvas dict, writes it onto `DesignSpec.canvas` verbatim unless free-text overrides. No schema change. Case-insensitive + hyphen/underscore tolerant name resolution.
+
+### v2.3.4 — KaTeX for landing ([ce759d8](https://github.com/Yaxin9Luo/OpenDesign/commit/ce759d8))
+
+Self-hosted KaTeX 0.16.9 bundle under `assets/vendor/katex/`: CSS + core JS + auto-render + 20 woff2 fonts (base64-inlined as `data:` URIs so the landing HTML stays portable with zero CDN dependency). Delimiters supported: `$…$` (inline), `$$…$$` (display), `\(…\)`, `\[…\]`. Gated on a `_has_math()` scan of the layer_graph — landings without math skip the ~645 KB bundle entirely. Rendering runs client-side on `DOMContentLoaded`, scoped to `.ld-landing` so the edit toolbar is untouched. 5 new markers in smoke: `<style id="ld-katex-css">`, `renderMathInElement`, `data:font/woff2`, inline + display math preservation.
+
+### v2.3.5 — Sub-figure extraction ([4a77830](https://github.com/Yaxin9Luo/OpenDesign/commit/4a77830))
+
+VLM caption-matching prompt gains `sub_panels: [{label, bbox, caption, short_caption}]` return field. `_register_sub_panels` Pillow-crops each panel out of the parent PNG and registers as `ingest_fig_NN_<label>` (e.g. `ingest_fig_02_a`) — naming convention carries the parent relationship, no `parent_layer_id` schema field. Parent layer stays in the catalog too, so the planner can place either the composite view OR individual panels. New smoke check `check_sub_figure_registration` synthesizes a 2-panel 600×300 composite, verifies both crops + parent breadcrumb + correct pixel colors. Suite now **20/20**.
+
+### v2.3.6 — Planner figure-catalog cap ([4d8f58d](https://github.com/Yaxin9Luo/OpenDesign/commit/4d8f58d))
+
+**Regression discovered via v2.3 triple dogfood** on longcat-next-2026.pdf: v2.3.5 doubled the ingest figure catalog from ~45 to ~85 (parent + sub-panels). Dumping all 85 into the planner tool_result summary overwhelmed Kimi K2.6's reasoning budget — **3 consecutive Kimi runs hit `terminal_status=max_turns` with 0 DesignSpec emissions** ($1.46 + $1.28 + $2.01 in losses).
+
+Fix: apply the existing `_PLANNER_FIG_CATALOG_CAP = 20` constant (previously defined but unused) via the existing `_rank_figure_ids_for_planner` heuristic (caption > vector > size > page). Registry still holds all 80+ layers; the cap is only on the summary dict the planner reads. New `n_figures_truncated` + `catalog_note` fields tell the planner how to reach lower-ranked layers by layer_id.
+
+### v2.3 combined dogfood verification (longcat-next-2026.pdf, Claude Opus 4.7)
+
+Kimi K2.6 after the v2.3.6 cap fix still hit max_turns — root cause turned out to be **Kimi's model-level over-reasoning on complex poster geometry**, not catalog size. Single trajectory had 47,798 characters of reasoning iterating bbox arithmetic (`"640×520... 640×540... 640×580..."`) before exhausting budget without emitting `propose_design_spec`. Re-routed to Claude Opus 4.7 via `PLANNER_MODEL=anthropic/claude-opus-4.7` — same code paths, different SDK (the v2 `LLMBackend` abstraction paying off at production-use time). Results:
+
+| Artifact | Terminal | Reward | Wall | Cost | Trace Steps | Notes |
+|---|---|---|---|---|---|---|
+| **Landing** | **pass** | **0.88** | 6:50 | $3.96 | 18 (1 critique) | Math preserved in text; KaTeX injected (648 KB bundle, 9.8 MB HTML); editorial style |
+| **Deck** | **pass** | **0.88** | 10:47 | $9.45 | 33 (1 critique) | **18 of 18 content slides got speaker_notes** populated (planner auto-drafted) |
+| **Poster** | fail | 0.68 | 11:00 | $10.41 | 85 (2 critiques) | `--template neurips-portrait` → 1536×2048 canvas applied ✓; revise loop degraded 0.86 → 0.68 across 85 edit-layer steps (pre-existing poster-revise-loop flaw, not v2.3-introduced; parked for v2.4) |
+
+Model routing insight: **Kimi K2.6 works fine on landing/deck (simple flow layouts) but stalls on paper posters (complex 2D bbox geometry).** Claude Opus 4.7 is the production planner for paper2poster until a cheaper model handles constraint satisfaction. Documented in [DECISIONS.md § 2026-04-22](DECISIONS.md).
+
+---
+
 ## Deferred to v1.3.5
 
 - **Tab groups** (new `kind: "tabs"` container + per-tab `LayerNode` children)
