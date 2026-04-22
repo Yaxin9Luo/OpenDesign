@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/18] imports")
+    print("[1/20] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/18] tool registry")
+    print("[2/20] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +81,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/18] pydantic schema round-trip (v2)")
+    print("[3/20] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +205,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/18] fonts")
+    print("[4/20] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +225,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/18] composite (no API)")
+    print("[5/20] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +326,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/18] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/20] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     out_dir = REPO_ROOT / "out" / "smoke"
 
@@ -397,7 +397,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/18] chat session save/load")
+    print("[7/20] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -459,7 +459,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/18] edit_layer (no API)")
+    print("[8/20] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -584,7 +584,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/18] apply-edits round-trip (no API)")
+    print("[9/20] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -660,7 +660,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/18] landing mode (no API)")
+    print("[10/20] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -834,7 +834,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/18] design-system styles (no API)")
+    print("[11/20] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -935,7 +935,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/18] landing with images (no API)")
+    print("[12/20] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1051,7 +1051,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/18] deck mode (no API)")
+    print("[13/20] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1231,7 +1231,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/18] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/20] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1310,7 +1310,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/18] ingest_document markdown (no API)")
+    print("[15/20] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1366,7 +1366,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/18] ingest_document image (no API)")
+    print("[16/20] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1416,7 +1416,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/18] ingest_document docx (no API)")
+    print("[17/20] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -1477,7 +1477,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/18] ingest_document pptx (no API)")
+    print("[18/20] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -1533,6 +1533,104 @@ def check_ingest_document_pptx() -> None:
         f"2 slide(s), 1 figure ({figure_ids[0]})")
 
 
+def check_sub_figure_registration() -> None:
+    """v2.3 sub-figure extraction: VLM detects multi-panel composite figures
+    and we Pillow-crop each panel into its own `ingest_fig_NN_<label>` layer.
+    Tests the registration helper directly (no API) with a synthetic
+    2-panel composite PNG + a stub VLM response.
+
+    Asserts:
+    - 2 panel entries → 2 new rendered_layers records (parent stays)
+    - Each panel's crop file exists on disk with correct dims
+    - parent_layer_id breadcrumb set on children
+    - Layer_id naming convention `ingest_fig_NN_<label>` holds
+    """
+    print("[19/20] sub-figure extraction (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.ingest_document import _register_sub_panels
+
+    out_dir = REPO_ROOT / "out" / "smoke_sub_figs"
+    layers_dir = out_dir / "layers"
+    if out_dir.exists():
+        import shutil
+        shutil.rmtree(out_dir)
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Synthesize a composite parent: 600×300 image split into two
+    # horizontal halves (panel a on left, panel b on right).
+    parent_path = layers_dir / "img_ingest_fig_01.png"
+    composite_img = Image.new("RGB", (600, 300), (255, 255, 255))
+    # Left half red, right half blue — easy to eyeball crop correctness
+    left = Image.new("RGB", (300, 300), (200, 60, 60))
+    right = Image.new("RGB", (300, 300), (60, 100, 200))
+    composite_img.paste(left, (0, 0))
+    composite_img.paste(right, (300, 0))
+    composite_img.save(parent_path, "PNG")
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-subfig")
+    # Pre-stage the parent so sub-panel registration can check collisions
+    ctx.state["rendered_layers"]["ingest_fig_01"] = {
+        "layer_id": "ingest_fig_01", "kind": "image", "name": "figure_1",
+        "src_path": str(parent_path),
+    }
+
+    panels = [
+        {"label": "a", "bbox": [0, 0, 300, 300],
+         "caption": "Left panel (text input)", "short_caption": "Text"},
+        {"label": "b", "bbox": [300, 0, 600, 300],
+         "caption": "Right panel (image input)", "short_caption": "Image"},
+    ]
+    created = _register_sub_panels(
+        parent_layer_id="ingest_fig_01",
+        parent_path=parent_path,
+        parent_caption="Composite — text + image inputs",
+        panels=panels,
+        ctx=ctx,
+        pdf_path=Path("/fake/paper.pdf"),
+        source_page=3,
+    )
+
+    if created != ["ingest_fig_01_a", "ingest_fig_01_b"]:
+        _fail(f"sub-panel layer_ids wrong: {created}")
+
+    for sub_id, expected_color, expected_caption in [
+        ("ingest_fig_01_a", (200, 60, 60), "Text"),
+        ("ingest_fig_01_b", (60, 100, 200), "Image"),
+    ]:
+        rec = ctx.state["rendered_layers"].get(sub_id)
+        if rec is None:
+            _fail(f"sub-panel {sub_id} not registered")
+        if rec.get("parent_layer_id") != "ingest_fig_01":
+            _fail(f"{sub_id} missing parent_layer_id breadcrumb")
+        if rec.get("extract_strategy") != "sub_panel":
+            _fail(f"{sub_id} extract_strategy wrong: {rec.get('extract_strategy')!r}")
+        if rec.get("caption_short") != expected_caption:
+            _fail(f"{sub_id} caption_short wrong: {rec.get('caption_short')!r}")
+        crop_path = Path(rec["src_path"])
+        if not crop_path.exists() or crop_path.stat().st_size == 0:
+            _fail(f"{sub_id} crop file missing or empty: {crop_path}")
+        with Image.open(crop_path) as im:
+            w, h = im.size
+            if (w, h) != (300, 300):
+                _fail(f"{sub_id} crop dims wrong: {w}×{h}, expected 300×300")
+            # Center pixel should match the panel color (parent split in half)
+            px = im.getpixel((150, 150))
+            # Drop alpha if present
+            if isinstance(px, tuple) and len(px) >= 3:
+                px = px[:3]
+            if px != expected_color:
+                _fail(f"{sub_id} center pixel {px} != expected {expected_color}")
+
+    _ok(f"sub-panel registration: 2 panels cropped + registered "
+        f"({len(created)} layers, parent breadcrumb intact, crops correct)")
+
+
 def check_versioning_no_api() -> None:
     """v2.2 versioning: revise loops + edit_layer must NOT clobber prior
     intermediate state. Asserts:
@@ -1542,7 +1640,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[19/19] versioning + revise-loop preservation (no API)")
+    print("[20/20] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -1679,12 +1777,13 @@ def main() -> int:
     check_ingest_document_image()
     check_ingest_document_docx()
     check_ingest_document_pptx()
+    check_sub_figure_registration()
     check_versioning_no_api()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
           "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
-          "out/smoke_ingest_docx/, out/smoke_ingest_pptx/")
+          "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/")
     return 0
 
 

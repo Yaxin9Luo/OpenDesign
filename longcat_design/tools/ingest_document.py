@@ -262,6 +262,12 @@ Output **a single fenced JSON code block, nothing else**:
   "confidence": <float 0.0–1.0>,
   "is_real_figure": <true | false>,
   "short_caption": "<≤15 chars, ≤3 words; empty if not a real figure>",
+  "sub_panels": [
+    {"label": "a", "bbox": [x0, y0, x1, y1],
+     "caption": "<full panel caption, empty if unknown>",
+     "short_caption": "<≤15 chars>"},
+    ...
+  ],
   "reason": "<short explanation>"
 }
 ```
@@ -282,6 +288,18 @@ Rules:
   curves", "Ablation"). It summarizes what the image SHOWS, NOT the
   figure number. Match the paper's language (EN/中文). Empty string
   when `is_real_figure=false`.
+- `sub_panels` — detect multi-panel composite figures. Common
+  patterns: labels (a)(b)(c)(d), top-left (A) top-right (B), 2×2
+  grids, horizontal row-strips. For EACH panel, return its bbox as
+  **pixel coordinates within the image you were given** (top-left
+  origin, [x0, y0, x1, y1]), plus its own `caption` + `short_caption`.
+  - Return an empty list `[]` when the image is a single panel (most
+    figures — architecture diagrams, single plots, single screenshots).
+  - Only populate when you're confident it's truly a composite. Err on
+    the side of empty list — spurious sub-panel bboxes waste layers.
+  - 2-4 panels is typical; >6 panels is rare — don't invent granularity.
+  - Each panel's `short_caption` describes JUST that panel (e.g. panel
+    (a) might be "Text input", (b) "Image input", (c) "Joint").
 """
 
 
@@ -733,6 +751,30 @@ def _match_one_caption(
         global_idx = local_to_global[local_idx]
         caption_text = str(all_figs[global_idx].get("caption", ""))
 
+    # v2.3 — sub-panel detection (multi-panel composite figures).
+    # Validate each panel's shape defensively; drop malformed entries
+    # so a bad VLM response can't crash registration.
+    sub_panels_raw = result.get("sub_panels") or []
+    sub_panels: list[dict[str, Any]] = []
+    if isinstance(sub_panels_raw, list):
+        for i, panel in enumerate(sub_panels_raw):
+            if not isinstance(panel, dict):
+                continue
+            bbox = panel.get("bbox")
+            if not (isinstance(bbox, list) and len(bbox) == 4
+                    and all(isinstance(v, (int, float)) for v in bbox)):
+                continue
+            x0, y0, x1, y1 = [int(v) for v in bbox]
+            if x1 <= x0 or y1 <= y0:
+                continue  # degenerate
+            label = str(panel.get("label", chr(ord("a") + i)) or chr(ord("a") + i))[:4]
+            sub_panels.append({
+                "label": label,
+                "bbox": [x0, y0, x1, y1],
+                "caption": str(panel.get("caption", "") or "")[:500],
+                "short_caption": str(panel.get("short_caption", "") or "")[:40],
+            })
+
     return {
         "matched_idx": global_idx,
         "confidence": float(result.get("confidence", 0.0) or 0.0),
@@ -742,7 +784,108 @@ def _match_one_caption(
         # v2.3 — VLM-generated ≤15-char label for tight poster/deck slots.
         # Clipped defensively; empty string on fake figures or missing field.
         "short_caption": str(result.get("short_caption", "") or "")[:40],
+        # v2.3 — sub-panel detection (empty list for single-panel figures)
+        "sub_panels": sub_panels,
     }
+
+
+def _register_sub_panels(
+    *,
+    parent_layer_id: str,
+    parent_path: Path,
+    parent_caption: str,
+    panels: list[dict[str, Any]],
+    ctx: ToolContext,
+    pdf_path: Path,
+    source_page: int | None,
+) -> list[str]:
+    """Crop each VLM-detected sub-panel out of the parent figure PNG and
+    register as its own `rendered_layers` entry. Returns the list of newly
+    created layer_ids (empty list when `panels` is empty or all panels
+    fail validation).
+
+    The sub-panel layer_id is `{parent}_{label}` (e.g. `ingest_fig_02_a`)
+    so the naming convention carries the parent relationship without
+    needing a new schema field. Failed crops (bbox outside source, Pillow
+    error) are skipped silently with a log event.
+    """
+    if not panels:
+        return []
+
+    from PIL import Image as _Image
+
+    try:
+        parent_img = _Image.open(parent_path)
+        parent_img.load()  # force decode so we can close the file handle
+    except Exception as e:
+        log("ingest.pdf.sub_panel.open_fail",
+            parent=parent_layer_id, error=str(e))
+        return []
+
+    pw, ph = parent_img.size
+    registered: list[str] = []
+    for panel in panels:
+        label = panel.get("label", "")
+        x0, y0, x1, y1 = panel["bbox"]
+        # Clamp bbox to image bounds defensively.
+        x0 = max(0, min(x0, pw - 1))
+        y0 = max(0, min(y0, ph - 1))
+        x1 = max(x0 + 1, min(x1, pw))
+        y1 = max(y0 + 1, min(y1, ph))
+        if (x1 - x0) < 20 or (y1 - y0) < 20:
+            log("ingest.pdf.sub_panel.too_small",
+                parent=parent_layer_id, label=label,
+                bbox=[x0, y0, x1, y1])
+            continue
+
+        sub_layer_id = f"{parent_layer_id}_{label}"
+        # Avoid collisions if the VLM returned dup labels.
+        if sub_layer_id in ctx.state["rendered_layers"]:
+            continue
+
+        sub_path = ctx.layers_dir / f"img_{sub_layer_id}.png"
+        try:
+            crop = parent_img.crop((x0, y0, x1, y1))
+            crop.save(sub_path, "PNG", optimize=True)
+        except Exception as e:
+            log("ingest.pdf.sub_panel.crop_fail",
+                parent=parent_layer_id, label=label, error=str(e))
+            continue
+
+        cw = x1 - x0
+        ch = y1 - y0
+        ctx.state["rendered_layers"][sub_layer_id] = {
+            "layer_id": sub_layer_id,
+            "name": f"{parent_layer_id}_{label}",
+            "kind": "image",
+            "z_index": 5,
+            "bbox": None,
+            "src_path": str(sub_path),
+            "aspect_ratio": _aspect_from_dims(cw, ch),
+            "image_size": f"{cw}x{ch}",
+            "sha256": sha256_file(sub_path),
+            "source": "ingested_pdf",
+            "source_file": str(pdf_path),
+            "source_page": source_page,
+            "caption": panel.get("caption", "") or parent_caption,
+            "caption_short": panel.get("short_caption", ""),
+            "extract_strategy": "sub_panel",
+            "caption_confidence": 0.8,   # VLM-provided bboxes we trust more than auto-cluster
+            # naming convention — no schema field; planner reads the `_a`/`_b`
+            # suffix + `extract_strategy="sub_panel"` marker.
+            "parent_layer_id": parent_layer_id,
+        }
+        registered.append(sub_layer_id)
+
+    try:
+        parent_img.close()
+    except Exception:
+        pass
+
+    log("ingest.pdf.sub_panel.register",
+        parent=parent_layer_id,
+        requested=len(panels), kept=len(registered))
+    return registered
 
 
 def _register_candidates(
@@ -805,6 +948,22 @@ def _register_candidates(
             "caption_confidence": match.get("confidence", 0.0),
         }
         registered.append(layer_id)
+
+        # v2.3 — sub-panel layers. For each VLM-detected panel, Pillow-crop
+        # the parent PNG at the panel bbox and register as its own
+        # `ingest_fig_NN_<label>` layer so the planner can place panels
+        # independently. The parent layer remains usable for "show the
+        # whole composite"; the panels are additive catalog entries.
+        sub_panel_ids = _register_sub_panels(
+            parent_layer_id=layer_id,
+            parent_path=final_path,
+            parent_caption=match.get("caption_text", ""),
+            panels=match.get("sub_panels", []),
+            ctx=ctx,
+            pdf_path=pdf_path,
+            source_page=cand.page,
+        )
+        registered.extend(sub_panel_ids)
 
     log("ingest.pdf.register",
         kept=len(registered),
