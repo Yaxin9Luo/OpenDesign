@@ -245,6 +245,30 @@ at a conference. Treat the paper's figures and tables as the
 **primary** content, and the text as labels / captions that explain
 what the viewer is already seeing.
 
+## Canvas presets — `--template` (v2.3)
+
+When the brief is prefixed with a `Template: <name>` block (the runner
+injects this when `--template` was passed on the CLI), the planner
+MUST use that block's `canvas` dict on `DesignSpec.canvas` verbatim —
+don't override `w_px` / `h_px` / `dpi` / `aspect_ratio` unless the
+free-text brief explicitly says otherwise. The template is the user's
+declared conference / venue format; drifting off it breaks the output
+on the venue's poster board.
+
+Bundled templates:
+
+| Template | Canvas | Aspect | Use |
+|---|---|---|---|
+| `neurips-portrait` | 1536×2048 @300dpi | 3:4 | NeurIPS / CVPR / ICLR default portrait |
+| `cvpr-landscape` | 2048×1536 @300dpi | 4:3 | CVPR landscape poster hall |
+| `icml-portrait` | 1536×2048 @300dpi | 3:4 | ICML portrait (same dims as NeurIPS) |
+| `a0-portrait` | 2378×3366 @300dpi | 1:√2 | ISO A0 portrait (European/Chinese venues) |
+| `a0-landscape` | 3366×2378 @300dpi | √2:1 | ISO A0 landscape |
+
+When no `Template:` block is present, pick a canvas based on the brief
+text (e.g. "横版" → landscape; "A0" → one of the A0 presets) or fall
+back to 1536×2048 (3:4) as the safe academic default.
+
 ## Hard rules when the brief is a paper
 
 These apply when `ingest_document` returned ≥ 3 figure layers AND the

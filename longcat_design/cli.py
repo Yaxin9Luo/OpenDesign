@@ -64,6 +64,16 @@ def main(argv: list[str] | None = None) -> int:
               "on these files FIRST, then use the extracted structure "
               "(title / sections / figures) to drive the DesignSpec."),
     )
+    run_p.add_argument(
+        "--template",
+        metavar="NAME",
+        default=None,
+        help=("Poster canvas preset — e.g. 'neurips-portrait' "
+              "(1536×2048 @300dpi), 'cvpr-landscape', 'icml-portrait', "
+              "'a0-portrait', 'a0-landscape'. When set, the resolved "
+              "canvas (w_px / h_px / dpi / aspect_ratio) is injected "
+              "into the brief prologue so the planner uses it."),
+    )
 
     # apply-edits (round-trip edited HTML)
     ae_p = subparsers.add_parser(
@@ -91,7 +101,11 @@ def main(argv: list[str] | None = None) -> int:
         return run_chat(resume_id=resume_id)
 
     if args.subcommand == "run":
-        return _run_oneshot(args.brief, getattr(args, "from_file", []) or [])
+        return _run_oneshot(
+            args.brief,
+            getattr(args, "from_file", []) or [],
+            template=getattr(args, "template", None),
+        )
 
     if args.subcommand == "apply-edits":
         return _run_apply_edits(args.html, args.out_dir)
@@ -100,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
-def _run_oneshot(brief: str, from_file: list[str]) -> int:
+def _run_oneshot(brief: str, from_file: list[str],
+                 *, template: str | None = None) -> int:
     """One-shot mode — single brief (+ optional attachments) → single trajectory."""
     # v1.1: resolve --from-file attachments into Path objects and validate early.
     attachments: list[Path] = []
@@ -114,9 +129,19 @@ def _run_oneshot(brief: str, from_file: list[str]) -> int:
             return 2
         attachments.append(p)
 
+    # v2.3 — validate template name early so a typo fails before any API cost.
+    if template is not None:
+        from .config import resolve_template, available_templates
+        if resolve_template(template) is None:
+            names = " / ".join(available_templates())
+            print(f"  error: unknown template {template!r}. "
+                  f"Available: {names}", file=sys.stderr)
+            return 2
+
     settings = load_settings()
     runner = PipelineRunner(settings)
-    traj, traj_path = runner.run(brief, attachments=attachments)
+    traj, traj_path = runner.run(brief, attachments=attachments,
+                                  template=template)
 
     # v2 trajectory carries no product paths. Locate run dir from the
     # trajectory file's sibling structure. v2.2 versioning: composites

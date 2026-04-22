@@ -32,7 +32,8 @@ class PipelineRunner:
         self.settings = settings
 
     def run(self, brief: str,
-            attachments: list[Path] | None = None) -> tuple[DistillTrajectory, Path]:
+            attachments: list[Path] | None = None,
+            template: str | None = None) -> tuple[DistillTrajectory, Path]:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
@@ -42,11 +43,14 @@ class PipelineRunner:
         # v1.1: inject an "Attached files" prologue into the brief so the
         # planner knows to call `ingest_document` FIRST. We don't change the
         # planner signature — attachments travel as part of the brief text.
+        # v2.3: same mechanism for --template — a "Template:" block with the
+        # resolved canvas lands in the prologue BEFORE attachments.
         attachments = list(attachments or [])
-        effective_brief = _apply_attachment_prologue(brief, attachments)
+        effective_brief = _apply_template_prologue(brief, template)
+        effective_brief = _apply_attachment_prologue(effective_brief, attachments)
 
         log("run.start", run_id=run_id, brief_chars=len(effective_brief),
-            attachments=len(attachments))
+            attachments=len(attachments), template=template or "(none)")
         wall_start = time.monotonic()
 
         ctx = ToolContext(
@@ -181,3 +185,29 @@ def _apply_attachment_prologue(brief: str, attachments: list[Path]) -> str:
         "rendered_layers — reference them by layer_id in your layer_graph."
     )
     return "\n".join(lines) + "\n\n---\n\n" + brief
+
+
+def _apply_template_prologue(brief: str, template: str | None) -> str:
+    """Prefix the brief with a 'Template:' block resolving a registered poster
+    template to its canvas preset (w_px / h_px / dpi / aspect_ratio / color_mode).
+
+    The planner sees this as explicit input (same mechanism as attachments),
+    reads the resolved dims, and emits them on `DesignSpec.canvas` unchanged
+    unless the free-text user brief overrides. Template is validated at the
+    CLI before we get here, so an unknown name silently becomes a no-op
+    (defensive — don't fail the whole run on a template typo).
+    """
+    from .config import resolve_template
+    canvas = resolve_template(template) if template else None
+    if canvas is None:
+        return brief
+    # Compact one-line serialization so the planner can scan quickly.
+    canvas_str = ", ".join(f"{k}={v!r}" for k, v in canvas.items())
+    block = (
+        f"Template: {template}\n"
+        f"  canvas: {canvas_str}\n"
+        f"\nThis is a registered academic-poster preset — USE THIS CANVAS "
+        f"verbatim on your `DesignSpec.canvas` unless the free-text brief "
+        f"explicitly overrides specific dims."
+    )
+    return block + "\n\n---\n\n" + brief

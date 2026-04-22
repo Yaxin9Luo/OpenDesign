@@ -201,3 +201,56 @@ def _parse_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+# ───────────────────────── Poster templates (v2.3) ─────────────────────
+# Canonical canvas presets for academic poster venues. Users pass
+# `--template <name>` at the CLI and the runner injects the resolved
+# canvas into the brief prologue (like the `Attached files:` block for
+# ingest). No DesignSpec schema change — `canvas` stays a dict; template
+# is an input-side convenience, not an output-side concept.
+#
+# Dimensions at 300 DPI for print-ready output. Add new entries here as
+# new venues surface in dogfood. Free to override any individual field
+# (w_px / h_px / dpi / aspect_ratio) — the dict shape matches
+# DesignSpec.canvas verbatim.
+POSTER_TEMPLATES: dict[str, dict[str, object]] = {
+    "neurips-portrait": {
+        "w_px": 1536, "h_px": 2048, "dpi": 300,
+        "aspect_ratio": "3:4", "color_mode": "RGB",
+    },
+    "cvpr-landscape": {
+        "w_px": 2048, "h_px": 1536, "dpi": 300,
+        "aspect_ratio": "4:3", "color_mode": "RGB",
+    },
+    "icml-portrait": {
+        "w_px": 1536, "h_px": 2048, "dpi": 300,
+        "aspect_ratio": "3:4", "color_mode": "RGB",
+    },
+    # ISO A0 at 300 DPI: 841 mm × 1189 mm ≈ 9933 × 14043 px (too heavy
+    # for most planners). We use a 1:√2 preset at 1/4 linear scale that
+    # still prints crisply on a standard A0 plotter.
+    "a0-portrait": {
+        "w_px": 2378, "h_px": 3366, "dpi": 300,
+        "aspect_ratio": "1:1.414", "color_mode": "RGB",
+    },
+    "a0-landscape": {
+        "w_px": 3366, "h_px": 2378, "dpi": 300,
+        "aspect_ratio": "1.414:1", "color_mode": "RGB",
+    },
+}
+
+
+def resolve_template(name: str | None) -> dict[str, object] | None:
+    """Return the canvas dict for a registered template name, or None
+    if `name` is None / unknown. Case-insensitive + hyphen-or-underscore
+    tolerant so `--template A0_Portrait` works."""
+    if not name:
+        return None
+    key = name.strip().lower().replace("_", "-")
+    return POSTER_TEMPLATES.get(key)
+
+
+def available_templates() -> list[str]:
+    """Sorted list of registered template names — used by CLI --help."""
+    return sorted(POSTER_TEMPLATES.keys())
