@@ -1,39 +1,40 @@
-# Data Contract — Trajectory schema
+# Data Contract — Trajectory schema (v2)
 
-> **⚠️ POST-PIVOT NOTICE (2026-04-18)**
->
-> Since the [2026-04-18 pivot to LongcatDesign](DECISIONS.md#2026-04-18--pivot-rebrand-as-longcatdesign-reposition-as-open-source-claude-design-alternative), the trajectory schema is **no longer the primary product pitch**. It's now **internal session state** — used for chat-session persistence (`:save` / `:load`), undo/redo of layer edits, and project resume.
->
-> The schema is preserved intact because (a) the full session-capture machinery is already built and works, and (b) if the Longcat-Next team wants to flip a feature flag and harvest trajectories from real user sessions for training-data purposes, the infrastructure is ready with no refactor.
->
-> The 5-SFT-lane extraction described below still works as written. It's just not what we lead with in the README.
->
-> See [VISION.md](VISION.md) for the current product pitch and [V1-MVP-PLAN.md](V1-MVP-PLAN.md) for what ships in v1.0.
+> **⚠️ v2 REWRITE (2026-04-22)** — `Trajectory` is replaced by **`DistillTrajectory`**, a lean training-data-only format. NO backward compat with v0/v1 trajectories — old JSON files are deleted, not migrated. See [DECISIONS.md § 2026-04-22](DECISIONS.md) for rationale.
+
+The single source of truth is [`longcat_design/schema.py`](../longcat_design/schema.py). This doc explains the *meaning* of each field and the downstream training tasks it supports. **If this doc disagrees with `schema.py`, the code wins — fix the doc.**
 
 ---
 
-> **Historical framing (pre-pivot):** The trajectory IS the product. Everything else (PSD, SVG, preview) is a derivable artifact. The trajectory is the structured record that turns one Design-Agent run into 5 distinct training pairs for Longcat-Next.
+## What changed in v2
 
-The single source of truth is [`design_agent/schema.py`](../design_agent/schema.py). This doc explains the *meaning* of each field and the downstream training tasks it supports. **If this doc disagrees with `schema.py`, the code wins — fix the doc.**
+The legacy `Trajectory` was a **product/debug + training data + demo** hybrid. Per the audit (real 144 KB v1 trajectory):
+- ~40% was `design_spec` + `layer_graph` (engineering state, **already** present inside the planner's `propose_design_spec` tool_call args)
+- ~13% was `next_actions` (hint prose that, in RL, would cause shortcut learning at deploy time)
+- ~17% was descriptive `summary` strings (log noise)
+- ~7% was `composition.{psd,svg,preview}_path` (host-machine paths)
+
+v2 strips all of the above. Trajectory is now **purely model decisions + lean tool results + episode reward**, suitable as-is for mid-training SFT and RL post-training. A real v2 trajectory of equivalent complexity is ~40 KB (70% smaller than v1).
+
+The product-side artifacts (HTML / PSD / PPTX / preview) still live on disk under `out/runs/<run_id>/` for inspection — they're just **not referenced from the trajectory JSON**.
 
 ---
 
 ## Top-level shape
 
 ```python
-class Trajectory(BaseModel):
-    run_id: str                                # sortable: YYYYMMDD-HHMMSS-shortuuid
-    created_at: datetime
-    brief: str                                 # the literal user input, untouched
-    design_spec: DesignSpec                    # the planner's plan (Stage 1)
-    layer_graph: list[LayerNode]               # the final, post-critique layers (Stage 4)
-    agent_trace: list[AgentTraceStep]          # every assistant turn + tool call/result (Stage 2-3)
-    critique_loop: list[CritiqueResult]        # one entry per critique iteration (Stage 3)
-    composition: CompositionArtifacts          # paths to PSD/SVG/preview + manifest
-    metadata: dict                             # cost, tokens, wall time, model versions
+class DistillTrajectory(BaseModel):
+    run_id: str                              # sortable: YYYYMMDD-HHMMSS-shortuuid
+    brief: str                               # the literal user input
+    agent_trace: list[AgentTraceStep]        # model decisions + lean tool results
+    final_reward: float | None               # = critique score on pass; None on abort/max_turns
+    terminal_status: Literal[                # episode outcome label for offline RL
+        "pass", "revise", "fail", "max_turns", "abort",
+    ]
+    metadata: TrainingMetadata               # model IDs, token counts, thinking config
 ```
 
-A real trajectory.json is ~40-60 KB. Layer image files are referenced by path (not embedded), keeping the JSON itself queryable.
+**Deliberately absent**: `design_spec`, `layer_graph`, `composition`, `critique_loop`, `created_at`, file paths. design_spec is recoverable from the latest `propose_design_spec` tool_call args; layer info from rendering tool_calls; critique results from the `critique` tool_result payload; product files from `out/runs/<run_id>/`.
 
 ## Chat session outer shape (v1.0 #4)
 
@@ -173,7 +174,78 @@ Polymorphism by `kind` is intentional — keeps the schema flat and SFT-friendly
 
 ---
 
-## AgentTraceStep — the byte-exact replayable turn log
+## AgentTraceStep — the byte-exact replayable turn log (v2)
+
+```python
+StepType = Literal[
+    "input",        # user brief — exactly one per trajectory
+    "reasoning",    # extended-thinking blocks (planner OR critic)
+    "tool_call",    # planner emits a tool_use block
+    "tool_result",  # environment returns a ToolResultRecord (lean)
+    "finalize",     # terminal marker
+]
+
+class AgentTraceStep(BaseModel):
+    step_idx: int
+    actor: Literal["user", "planner", "tool", "critic"]
+    type: StepType
+    # Only on tool_call:
+    tool_use_id: str | None
+    tool_name: str | None
+    tool_args: dict | None                       # full input as the model emitted
+    # Only on tool_result:
+    tool_result: ToolResultRecord | None
+    # Only on reasoning:
+    thinking_blocks: list[ThinkingBlockRecord] | None
+    # Only on input / finalize:
+    text: str | None
+    # On assistant-emitting steps:
+    model: str | None
+    stop_reason: str | None
+    usage: dict[str, int] | None  # {input, output, cache_read, cache_create}
+```
+
+**Removed in v2** (recoverable elsewhere):
+- `thought` step type → planner's between-tool prose isn't real CoT; the actual reasoning is in `reasoning` blocks. Discarded.
+- `artifact_switch` step type → recoverable from `switch_artifact_type` tool_call.
+- `design_spec` step type → recoverable from `propose_design_spec` tool_args.
+- `critique` step type → full result lives in `critique` tool_result.payload.
+- `timestamp` field → not needed for distillation.
+- `spec_snapshot` field → duplicate of tool_args.
+- `observation` field → replaced by lean `tool_result`.
+- `input_tokens`/`output_tokens`/`cache_*` separate fields → merged into `usage` dict.
+
+## ToolResultRecord — lean tool result (v2)
+
+```python
+class ToolResultRecord(BaseModel):
+    status: Literal["ok", "error"]
+    error_message: str | None = None      # full text on error, NEVER truncated
+    error_category: ErrorCategory | None  # validation / safety_filter / api /
+                                          # timeout / not_found / unsupported_format
+                                          # / parse_error / unknown
+    payload: dict[str, Any]               # success state OR diagnostic
+```
+
+**Per-tool payload shape** (success):
+
+| Tool | payload |
+|---|---|
+| `switch_artifact_type` | `{type, switched}` |
+| `propose_design_spec` | `{artifact_type, n_layers, canvas, is_revision}` |
+| `generate_background` / `generate_image` | `{layer_id, sha256, width, height}` |
+| `render_text_layer` | `{layer_id, sha256}` (+ optional `font_fallback`) |
+| `edit_layer` | `{layer_id, sha256, fields_changed}` |
+| `composite` | `{artifact_type, preview_sha256, psd_sha256?, svg_sha256?, html_sha256?, pptx_sha256?, n_layers, canvas, text_overlap_warnings, xref_misses}` |
+| `critique` | full `CritiqueResult.model_dump()` — `{iteration, verdict, score, issues, rationale}` |
+| `ingest_document` | `{n_files, n_figures, n_tables, files, figures, tables}` (figures = list of `{layer_id, source_page, image_size, caption, sha256}`) |
+| `finalize` | `{}` |
+
+**Why no `next_actions` / `summary` / `artifacts`**: every tool used to emit hint prose ("call X next") and a descriptive summary string. In SFT this works as teacher forcing, but at RL deploy time the policy would have learned to listen to hints rather than the workflow. The hints are removed *at the tool level* (not just stripped from JSON) so train↔deploy distribution stays identical. The workflow contract in `prompts/planner.md` is the single source of "what to do next."
+
+## Legacy doc continues below (the runtime models DesignSpec / LayerNode / CritiqueResult / CompositionArtifacts still exist in schema.py for use by tools and the critic — they just don't appear in the trajectory JSON anymore)
+
+## Legacy AgentTraceStep — pre-v2 reference
 
 ```python
 class AgentTraceStep(BaseModel):
@@ -338,6 +410,68 @@ Critique-driven preference pairs. Currently rare (only emitted when a critique i
 - **Lower the critic threshold** to force more revise verdicts (set `score ≥ 0.85` for pass).
 - **Use the rerender command** (when v0.1 lands — see [ROADMAP.md](ROADMAP.md)) — manual edits become preference pairs.
 
+### Exporting trajectories to SFT jsonl
+
+The script `scripts/export_sft_jsonl.py` flattens a directory of
+`DistillTrajectory` files into OpenAI-Chat-Completions-compatible
+jsonl — **one record per assistant turn**. Each record is self-
+contained: system prompt + message history so far + available tools,
+plus the target output (this turn's `reasoning_content` + `tool_calls`)
+plus episode metadata (reward, terminal_status, source).
+
+```bash
+uv run python scripts/export_sft_jsonl.py --out dataset/sft.jsonl
+
+# Filters:
+#   --source agent_run|apply_edits|any    (default: agent_run)
+#   --actor planner|critic|both           (default: both)
+#   --provider anthropic|openai_compat|any (default: any)
+#   --min-reward 0.7                      (skip low-quality runs)
+#   --terminal-status pass|revise|fail|...
+```
+
+Record shape (see [scripts/export_sft_jsonl.py](../scripts/export_sft_jsonl.py)
+docstring for full layout):
+
+```json
+{
+  "run_id": "...",
+  "turn_idx": 3,
+  "actor": "planner",
+  "model": "moonshotai/kimi-k2.6",
+  "provider": "openai_compat",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "reasoning_content": "...", "tool_calls": [...]},
+    {"role": "tool", "tool_call_id": "...", "content": "..."}
+  ],
+  "target": {
+    "reasoning_content": "...",
+    "content": null,
+    "tool_calls": [{"id": "...", "type": "function",
+                    "function": {"name": "...", "arguments": "..."}}]
+  },
+  "tools": [...],
+  "metadata": {
+    "terminal_status": "pass",
+    "final_reward": 0.89,
+    "turn_stop_reason": "tool_use",
+    "turn_usage": {"input":N, "output":N, "cache_read":N, "cache_create":N},
+    "thinking_budget": 10000,
+    "trajectory_source": "agent_run"
+  }
+}
+```
+
+Critic turns are emitted as separate records with `actor="critic"`,
+`tools=[]`, and `target.content` = the full CritiqueResult JSON
+(verdict + score + issues + rationale). The critic's vision input is
+not re-serialized into the record (would bloat the jsonl with base64
+image data); instead a pointer to `out/runs/<run_id>/final/preview.png`
+is placed in the user message so the SFT trainer can reconstruct the
+image block if vision SFT is desired.
+
 ### Lane 6 — Extended-thinking CoT (v1)
 
 ```
@@ -457,3 +591,6 @@ Don't break old trajectories. The dataset is the asset.
 | 2026-04-19 | `LayerKind += "section"` (v1.0 #8, landing) and `"image"` (v1.0 #8.75, inline NBP imagery). `LayerNode.bbox` relaxed to `Optional` (landing flow-layout). `CompositionArtifacts.html_path` added (v1.0 #6). All `CompositionArtifacts` paths made Optional. `DesignSpec.design_system: DesignSystem \| None` added (landing-only, v1.0 #8.5). `IssueCategory += "copy", "content"` (v1.0 #8.5-fix). | Backward-compat: old poster trajectories load cleanly; landing is additive. Version unchanged. |
 | 2026-04-20 | `LayerKind += "slide"` (v1.0 #7, deck). `CompositionArtifacts.pptx_path` added. `TrajectoryRef.pptx_path` previously reserved, now populated for DECK runs. | Backward-compat: additive. Old trajectories without `pptx_path` default to None. Version unchanged. |
 | 2026-04-20 | **v0 → v1** (training-data capture). New `ThinkingBlockRecord` model. `AgentTraceStep` gains optional `thinking_blocks`, `stop_reason`, `cache_read_input_tokens`, `cache_creation_input_tokens`. `StepType += "reasoning"` for planner + critic extended-thinking blocks captured via `interleaved-thinking-2025-05-14` beta. `metadata` gains `planner_thinking_budget`, `critic_thinking_budget`, `interleaved_thinking`. **Bump: `version` v0→v1.** | Backward-compat: all new `AgentTraceStep` fields optional with default `None`; old v0 trajectories load unchanged. Branch on `metadata["version"]` in downstream loaders when thinking-field presence matters. |
+| 2026-04-22 | **v1 → v2** (lean trajectory). `Trajectory` → `DistillTrajectory`. Top-level `design_spec` / `layer_graph` / `composition` / `critique_loop` / `created_at` removed (info recoverable from `agent_trace`). `ToolObservation` → `ToolResultRecord` (drops `summary` / `next_actions` / `artifacts`; gains `error_message` / `error_category` / lean `payload`). `StepType` slimmed to `{input, reasoning, tool_call, tool_result, finalize}` (drops `thought` / `artifact_switch` / `design_spec` / `critique`). `AgentTraceStep` drops `timestamp` / `spec_snapshot` / `observation`; merges 4 token fields into `usage` dict. New `TrainingMetadata` strict model replaces `metadata: dict`. New top-level `final_reward` + `terminal_status` for offline RL. `next_actions` removed at the tool layer, not just stripped — eliminates train↔deploy distribution shift. **Bump: `version` v1→v2.** | **NO backward compat.** Old v0/v1 trajectories must be re-generated. Trajectory size drops ~70% (144 KB → 44 KB on equivalent run). |
+| 2026-04-22 | **Multi-provider backend**. New `LLMBackend` Protocol abstracts Anthropic + OpenAI-compat (Kimi/DeepSeek/Doubao/vLLM) under the same trajectory format. `ThinkingBlockRecord.signature` is empty when produced by OpenAI-compat (no signature mechanism); `ThinkingBlockRecord.is_redacted` is always False for OpenAI-compat. Default planner switched to `moonshotai/kimi-k2.6`. Trajectory schema unchanged — only the producer changes. | Backward-compat: schema field semantics unchanged; downstream consumers needing to filter by provider should use `metadata.planner_model` / `metadata.critic_model` (e.g. `startswith("moonshotai/")` vs `startswith("claude-")` / `startswith("anthropic/")`). |
+| 2026-04-22 | **Intermediate-artifact versioning**. Layer renderers + composite no longer overwrite prior outputs. New `tool_result.payload` fields on render/edit/composite results: `version` (int, 1-indexed), `relative_path` (str, relative to `<run_dir>/`), `supersedes_sha256` (str, sha of prior version, absent on first write). Composite payload also gains `iteration` (int) + `{preview,html,pptx}_relative_path`. Disk layout: `out/runs/<run_id>/composites/iter_NN/<files>` (versioned snapshots) + `out/runs/<run_id>/final/<files>` (relative symlinks to latest iter) + `out/runs/<run_id>/layers/<prefix>_<id>.vN.png` (versioned layer renders). | Backward-compat: trajectory schema unchanged. Old trajectories without `version` / `relative_path` / `supersedes_sha256` keys load fine — these fields are inside the polymorphic `tool_result.payload` dict so absent-key access returns None. Product consumers (cli / chat / apply-edits) read through `final/` symlinks; the versioning is invisible to user flows. |

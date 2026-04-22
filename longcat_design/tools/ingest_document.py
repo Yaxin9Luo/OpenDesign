@@ -47,7 +47,7 @@ from typing import Any
 import fitz  # pymupdf
 
 from ._contract import ToolContext, obs_error, obs_ok
-from ..schema import ToolObservation
+from ..schema import ToolResultRecord
 from ..util.io import sha256_file
 from ..util.logging import log
 from ..util.pdf import (
@@ -274,25 +274,24 @@ Rules:
 """
 
 
-def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     raw = args.get("file_paths")
     if not raw or not isinstance(raw, list):
         return obs_error(
             "ingest_document needs 'file_paths': list[str]",
-            next_actions=["pass an array of absolute or ~-prefixed paths"],
+            category="validation",
         )
 
     summaries: list[dict[str, Any]] = []
-    artifact_paths: list[str] = []
 
     for fp_str in raw:
         fp = Path(str(fp_str)).expanduser()
         if not fp.is_absolute():
             fp = fp.resolve()
         if not fp.exists():
-            return obs_error(f"file not found: {fp}")
+            return obs_error(f"file not found: {fp}", category="not_found")
         if not fp.is_file():
-            return obs_error(f"not a regular file: {fp}")
+            return obs_error(f"not a regular file: {fp}", category="validation")
 
         ext = fp.suffix.lower()
         log("ingest.start", file=str(fp), ext=ext, bytes=fp.stat().st_size)
@@ -313,135 +312,84 @@ def ingest_document(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservatio
                     f"unsupported file type {ext!r}; supported: "
                     ".pdf, .docx, .pptx, .md/.markdown/.txt, "
                     ".png/.jpg/.jpeg/.webp",
+                    category="unsupported_format",
                 )
         except ScannedPdfError as e:
-            return obs_error(f"ingest failed on {fp.name}: {e}")
+            return obs_error(f"ingest failed on {fp.name}: {e}", category="parse_error")
         except RuntimeError as e:
-            return obs_error(f"ingest failed on {fp.name}: {e}")
+            return obs_error(f"ingest failed on {fp.name}: {e}", category="parse_error")
 
         summaries.append(s)
-        for lid in s.get("registered_layer_ids", []):
-            rec = ctx.state["rendered_layers"].get(lid)
-            if rec and rec.get("src_path"):
-                artifact_paths.append(rec["src_path"])
 
     ctx.state.setdefault("ingested", []).extend(summaries)
     log("ingest.done", files=len(summaries),
         total_figures=sum(len(s.get("registered_layer_ids", [])) for s in summaries))
 
-    lines = []
+    # Build a structured payload with per-figure metadata. The policy needs
+    # this to pick figures meaningfully (caption + dims + source page = the
+    # actual environment state). NOT prose; the policy can iterate it.
+    rendered = ctx.state.get("rendered_layers") or {}
+    files_payload: list[dict[str, Any]] = []
+    figures_payload: list[dict[str, Any]] = []
+    tables_payload: list[dict[str, Any]] = []
+
     for s in summaries:
         f = Path(s["file"]).name
         t = s["type"]
-        if t == "pdf":
-            m = s["manifest"]
-            figure_ids = s.get("registered_figure_ids") or s["registered_layer_ids"]
-            table_ids = s.get("registered_table_ids") or []
-            lines.append(
-                f"  • {f} (PDF): \"{m.get('title','?')}\" by "
-                f"{', '.join(m.get('authors', [])[:3]) or 'unknown'} — "
-                f"{len(m.get('sections', []))} section(s), "
-                f"{len(figure_ids)} figure layer(s), "
-                f"{len(table_ids)} table layer(s)."
-            )
-            # Per-figure detail so planner can pick meaningfully (not
-            # just place one and move on). Cap the displayed catalog to
-            # the top-N "high-signal" candidates so the planner has
-            # enough output budget to emit a full DesignSpec — papers
-            # with 30+ figures can otherwise push the planner over its
-            # max_tokens budget mid-tool_use.
-            rendered = ctx.state.get("rendered_layers") or {}
-            if figure_ids:
-                ranked = _rank_figure_ids_for_planner(figure_ids, rendered)
-                shown = ranked[:_PLANNER_FIG_CATALOG_CAP]
-                lines.append(
-                    f"    Figures available ({len(figure_ids)} total; "
-                    f"showing top {len(shown)} by size + caption):"
-                )
-                for fid in shown:
-                    rec = rendered.get(fid) or {}
-                    w_h = rec.get("image_size") or "?x?"
-                    page = rec.get("source_page", "?")
-                    cap = (rec.get("caption") or "").replace("\n", " ")[:100]
-                    strat = rec.get("extract_strategy") or "?"
-                    lines.append(
-                        f"      - {fid} (p.{page}, {w_h}, {strat}) {cap}"
-                    )
-                remaining = len(figure_ids) - len(shown)
-                if remaining > 0:
-                    lines.append(
-                        f"      (+ {remaining} smaller / uncaptioned figures "
-                        f"available by layer_id if needed)"
-                    )
-            if table_ids:
-                lines.append("    Tables available:")
-                for tid in table_ids:
-                    rec = rendered.get(tid) or {}
-                    page = rec.get("source_page", "?")
-                    n_rows = len(rec.get("rows") or [])
-                    n_cols = len(rec.get("headers") or []) or (
-                        len((rec.get("rows") or [[]])[0])
-                    )
-                    cap = (rec.get("caption") or rec.get("title") or "")
-                    cap = cap.replace("\n", " ")[:100]
-                    lines.append(
-                        f"      - {tid} (p.{page}, {n_rows}x{n_cols}) {cap}"
-                    )
-        elif t in ("docx", "pptx"):
-            m = s["manifest"]
-            figure_ids = s.get("registered_figure_ids") or s["registered_layer_ids"]
-            kind_label = "DOCX" if t == "docx" else "PPTX"
-            lines.append(
-                f"  • {f} ({kind_label}): \"{m.get('title','?')}\" — "
-                f"{len(m.get('sections', []))} section(s), "
-                f"{len(figure_ids)} figure layer(s)."
-            )
-            rendered = ctx.state.get("rendered_layers") or {}
-            if figure_ids:
-                ranked = _rank_figure_ids_for_planner(figure_ids, rendered)
-                shown = ranked[:_PLANNER_FIG_CATALOG_CAP]
-                lines.append(
-                    f"    Figures available ({len(figure_ids)} total; "
-                    f"showing top {len(shown)} by size + caption):"
-                )
-                for fid in shown:
-                    rec = rendered.get(fid) or {}
-                    w_h = rec.get("image_size") or "?x?"
-                    src_ref = rec.get("source_ref", "?")
-                    cap = (rec.get("caption") or "").replace("\n", " ")[:100]
-                    lines.append(
-                        f"      - {fid} ({src_ref}, {w_h}) {cap}"
-                    )
-                remaining = len(figure_ids) - len(shown)
-                if remaining > 0:
-                    lines.append(
-                        f"      (+ {remaining} smaller figures available by layer_id)"
-                    )
-        elif t == "markdown":
-            lines.append(
-                f"  • {f} (MD): {s['n_chars']} chars, "
-                f"{len(s['registered_layer_ids'])} embedded image layer(s): "
-                f"{s['registered_layer_ids']}"
-            )
-        elif t == "image":
-            lines.append(
-                f"  • {f} (image): layer_id={s['registered_layer_ids'][0]}, "
-                f"{s['width']}×{s['height']}"
-            )
+        figure_ids = s.get("registered_figure_ids") or s.get("registered_layer_ids") or []
+        table_ids = s.get("registered_table_ids") or []
 
-    return obs_ok(
-        "Ingested " + str(len(summaries)) + " file(s):\n" + "\n".join(lines) +
-        "\n\nAll image layers are pre-registered in rendered_layers — "
-        "reference them by layer_id in propose_design_spec's layer_graph "
-        "with kind: \"image\" and the renderer will hydrate src_path "
-        "automatically.",
-        artifacts=artifact_paths,
-        next_actions=[
-            "call propose_design_spec — pull title + sections from the "
-            "ingested manifest; reference ingested figure layer_ids as "
-            "image children in the appropriate artifact-type schema",
-        ],
-    )
+        file_entry: dict[str, Any] = {
+            "name": f,
+            "type": t,
+            "n_figures": len(figure_ids),
+            "n_tables": len(table_ids),
+        }
+        if t in ("pdf", "docx", "pptx"):
+            m = s.get("manifest") or {}
+            file_entry["title"] = m.get("title")
+            file_entry["n_sections"] = len(m.get("sections") or [])
+            if t == "pdf":
+                file_entry["authors"] = list(m.get("authors") or [])
+        elif t == "markdown":
+            file_entry["n_chars"] = s.get("n_chars")
+        elif t == "image":
+            file_entry["width"] = s.get("width")
+            file_entry["height"] = s.get("height")
+        files_payload.append(file_entry)
+
+        for fid in figure_ids:
+            rec = rendered.get(fid) or {}
+            figures_payload.append({
+                "layer_id": fid,
+                "source_file": f,
+                "source_page": rec.get("source_page"),
+                "source_ref": rec.get("source_ref"),
+                "image_size": rec.get("image_size"),
+                "caption": rec.get("caption"),
+                "sha256": rec.get("sha256"),
+            })
+        for tid in table_ids:
+            rec = rendered.get(tid) or {}
+            tables_payload.append({
+                "layer_id": tid,
+                "source_file": f,
+                "source_page": rec.get("source_page"),
+                "n_rows": len(rec.get("rows") or []),
+                "n_cols": len(rec.get("headers") or []) or (
+                    len((rec.get("rows") or [[]])[0])
+                ),
+                "caption": rec.get("caption") or rec.get("title"),
+            })
+
+    return obs_ok({
+        "n_files": len(summaries),
+        "n_figures": len(figures_payload),
+        "n_tables": len(tables_payload),
+        "files": files_payload,
+        "figures": figures_payload,
+        "tables": tables_payload,
+    })
 
 
 # ───────────────────────────── PDF branch ──────────────────────────────

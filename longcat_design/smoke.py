@@ -20,8 +20,8 @@ from pydantic import ValidationError
 
 from .schema import (
     AgentTraceStep, CompositionArtifacts, CritiqueResult, DesignSpec,
-    LayerNode, SafeZone, TextEffect, ThinkingBlockRecord, ToolObservation,
-    Trajectory,
+    DistillTrajectory, LayerNode, SafeZone, TextEffect, ThinkingBlockRecord,
+    ToolResultRecord, TrainingMetadata,
 )
 
 
@@ -77,46 +77,131 @@ def check_tool_registry() -> None:
 
 
 def check_pydantic_roundtrip() -> None:
-    print("[3/18] pydantic schema round-trip")
-    spec = DesignSpec(
-        brief="国宝回家 公益项目主视觉海报，竖版 3:4",
-        canvas={"w_px": 1536, "h_px": 2048, "dpi": 300, "aspect_ratio": "3:4", "color_mode": "RGB"},
-        palette=["#1a0f0a", "#fafafa", "#a02018"],
-        typography={"title_font": "NotoSerifSC-Bold", "subtitle_font": "NotoSansSC-Bold"},
-        mood=["oriental epic"],
-        composition_notes="hero centered",
-        layer_graph=[
-            LayerNode(layer_id="L0", name="background", kind="background", z_index=0,
-                      bbox=SafeZone(x=0, y=0, w=1536, h=2048)),
-            LayerNode(layer_id="L1", name="title", kind="text", z_index=1,
-                      bbox=SafeZone(x=96, y=120, w=1344, h=320, purpose="title"),
-                      text="国宝回家", font_family="NotoSerifSC-Bold", font_size_px=220,
-                      align="center",
-                      effects=TextEffect(fill="#fafafa",
-                                         shadow={"color": "#00000080", "dx": 0, "dy": 6, "blur": 18})),
-        ],
+    """v2 trajectory schema roundtrip — covers the new DistillTrajectory
+    plus all step types (input / reasoning / tool_call / tool_result /
+    finalize), ToolResultRecord (success + error variants), and
+    ThinkingBlockRecord (plain + redacted)."""
+    print("[3/18] pydantic schema round-trip (v2)")
+    plain_thinking = ThinkingBlockRecord(
+        thinking="I should declare poster type then propose a 3:4 spec.",
+        signature="sig_opaque_anthropic",
+        is_redacted=False,
     )
-    obs = ToolObservation(status="ok", summary="hi", artifacts=["a.png"])
-    trace = [AgentTraceStep(step_idx=1, timestamp=datetime.now(),
-                            actor="user", type="input", text="brief")]
-    crit = CritiqueResult(iteration=1, verdict="pass", score=0.82,
-                          issues=[], rationale="looks good")
-    comp = CompositionArtifacts(psd_path="x.psd", svg_path="x.svg", preview_path="x.png",
-                                layer_manifest=[])
-    traj = Trajectory(
-        run_id="smoke", created_at=datetime.now(),
-        brief=spec.brief, design_spec=spec, layer_graph=spec.layer_graph,
-        agent_trace=trace, critique_loop=[crit], composition=comp,
-        metadata={"version": "v0"},
+    redacted_thinking = ThinkingBlockRecord(
+        thinking="",
+        signature="enc_payload_bytes",
+        is_redacted=True,
+    )
+    ok_result = ToolResultRecord(
+        status="ok",
+        payload={"layer_id": "L1", "sha256": "deadbeef", "width": 1536, "height": 2048},
+    )
+    err_result = ToolResultRecord(
+        status="error",
+        error_message="DesignSpec validation failed: missing canvas.w_px",
+        error_category="validation",
+        payload={"hint": None},
+    )
+    crit = CritiqueResult(iteration=1, verdict="pass", score=0.86,
+                          issues=[], rationale="reads as a coherent poster")
+    crit_payload = ToolResultRecord(status="ok", payload=crit.model_dump(mode="json"))
+
+    trace = [
+        AgentTraceStep(step_idx=1, actor="user", type="input",
+                       text="design a 3:4 poster"),
+        AgentTraceStep(step_idx=2, actor="planner", type="reasoning",
+                       thinking_blocks=[plain_thinking, redacted_thinking],
+                       model="claude-opus-4-7", stop_reason="tool_use",
+                       usage={"input": 1234, "output": 200, "cache_read": 1024,
+                              "cache_create": 0}),
+        AgentTraceStep(step_idx=3, actor="planner", type="tool_call",
+                       tool_use_id="toolu_x", tool_name="render_text_layer",
+                       tool_args={"layer_id": "L1", "text": "国宝回家"},
+                       model="claude-opus-4-7"),
+        AgentTraceStep(step_idx=4, actor="tool", type="tool_result",
+                       tool_use_id="toolu_x", tool_name="render_text_layer",
+                       tool_result=ok_result),
+        AgentTraceStep(step_idx=5, actor="planner", type="tool_call",
+                       tool_use_id="toolu_y", tool_name="propose_design_spec",
+                       tool_args={"design_spec": "stringified-by-mistake"}),
+        AgentTraceStep(step_idx=6, actor="tool", type="tool_result",
+                       tool_use_id="toolu_y", tool_name="propose_design_spec",
+                       tool_result=err_result),
+        AgentTraceStep(step_idx=7, actor="planner", type="tool_call",
+                       tool_use_id="toolu_z", tool_name="critique"),
+        AgentTraceStep(step_idx=8, actor="tool", type="tool_result",
+                       tool_use_id="toolu_z", tool_name="critique",
+                       tool_result=crit_payload),
+        AgentTraceStep(step_idx=9, actor="critic", type="reasoning",
+                       thinking_blocks=[plain_thinking],
+                       model="claude-opus-4-7"),
+        AgentTraceStep(step_idx=10, actor="planner", type="finalize",
+                       text="all done"),
+    ]
+
+    traj = DistillTrajectory(
+        run_id="smoke",
+        brief="design a 3:4 poster",
+        agent_trace=trace,
+        final_reward=0.86,
+        terminal_status="pass",
+        metadata=TrainingMetadata(
+            schema_version="v2",
+            planner_model="claude-opus-4-7",
+            critic_model="claude-opus-4-7",
+            image_model="gemini-3-pro-image-preview",
+            planner_thinking_budget=10000,
+            critic_thinking_budget=10000,
+            interleaved_thinking=True,
+            total_input_tokens=1234,
+            total_output_tokens=200,
+            total_cache_read_tokens=1024,
+            total_cache_creation_tokens=0,
+            estimated_cost_usd=2.34,
+            wall_time_s=187.5,
+            source="agent_run",
+        ),
     )
     dumped = traj.model_dump(mode="json")
-    _ = json.dumps(dumped, ensure_ascii=False)
+    serialized = json.dumps(dumped, ensure_ascii=False)
     try:
-        Trajectory.model_validate(dumped)
+        reloaded = DistillTrajectory.model_validate(json.loads(serialized))
     except ValidationError as e:
-        _fail(f"Trajectory round-trip: {e.errors()[:3]}")
-    _ok(f"Trajectory round-trips ({len(json.dumps(dumped))} bytes)")
-    _ = obs.model_dump()
+        _fail(f"DistillTrajectory round-trip: {e.errors()[:3]}")
+
+    if reloaded.metadata.schema_version != "v2":
+        _fail(f"schema_version != v2: {reloaded.metadata.schema_version}")
+    if reloaded.final_reward != 0.86:
+        _fail(f"final_reward not preserved: {reloaded.final_reward}")
+    if reloaded.terminal_status != "pass":
+        _fail(f"terminal_status not preserved: {reloaded.terminal_status}")
+
+    reasoning_steps = [s for s in reloaded.agent_trace if s.type == "reasoning"]
+    if len(reasoning_steps) != 2:
+        _fail(f"expected 2 reasoning steps, got {len(reasoning_steps)}")
+    planner_reasoning = next(s for s in reasoning_steps if s.actor == "planner")
+    if not planner_reasoning.thinking_blocks or len(planner_reasoning.thinking_blocks) != 2:
+        _fail("thinking_blocks lost in roundtrip")
+    if planner_reasoning.thinking_blocks[0].thinking != plain_thinking.thinking:
+        _fail("thinking text corrupted")
+    if not planner_reasoning.thinking_blocks[1].is_redacted:
+        _fail("redacted thinking flag lost")
+    if planner_reasoning.usage["cache_read"] != 1024:
+        _fail("usage.cache_read lost")
+
+    err_step = next(s for s in reloaded.agent_trace
+                    if s.tool_result and s.tool_result.status == "error")
+    if not err_step.tool_result.error_message:
+        _fail("error_message stripped from tool_result")
+    if err_step.tool_result.error_category != "validation":
+        _fail(f"error_category lost: {err_step.tool_result.error_category}")
+
+    crit_step = next(s for s in reloaded.agent_trace
+                     if s.tool_name == "critique" and s.type == "tool_result")
+    if crit_step.tool_result.payload.get("score") != 0.86:
+        _fail("critique payload (verdict/score/issues) lost")
+
+    _ok(f"DistillTrajectory v2 + 10 trace steps roundtrip ({len(serialized)} bytes)")
 
 
 def check_fonts() -> None:
@@ -165,7 +250,7 @@ def check_composite_no_api() -> None:
     # First: switch_artifact_type — verifies ctx.state update + valid type
     obs = switch_artifact_type({"type": "poster"}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"switch_artifact_type: {obs.summary}")
+        _fail(f"switch_artifact_type: {(obs.error_message or str(obs.payload))}")
     if ctx.state.get("artifact_type") != "poster":
         _fail(f"ctx.state.artifact_type not set; got {ctx.state.get('artifact_type')}")
 
@@ -188,7 +273,7 @@ def check_composite_no_api() -> None:
     }}
     obs = propose_design_spec(spec_args, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"propose_design_spec: {obs.summary}")
+        _fail(f"propose_design_spec: {(obs.error_message or str(obs.payload))}")
 
     # Fallback check: spec omitted artifact_type → should inherit ctx.state value
     stored_spec = ctx.state["design_spec"]
@@ -212,8 +297,8 @@ def check_composite_no_api() -> None:
         "z_index": 1,
         "effects": {"shadow": {"color": "#00000080", "dx": 0, "dy": 4, "blur": 12}},
     }, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        _fail(f"render_text_layer title: {obs.summary}")
+    if obs.status != "ok":
+        _fail(f"render_text_layer title: {(obs.error_message or str(obs.payload))}")
 
     obs = render_text_layer({
         "layer_id": "L2_subtitle", "name": "subtitle",
@@ -222,12 +307,12 @@ def check_composite_no_api() -> None:
         "bbox": {"x": 64, "y": 280, "w": 640, "h": 60}, "align": "center",
         "z_index": 2,
     }, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        _fail(f"render_text_layer subtitle: {obs.summary}")
+    if obs.status != "ok":
+        _fail(f"render_text_layer subtitle: {(obs.error_message or str(obs.payload))}")
 
     obs = composite({}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"composite: {obs.summary}")
+        _fail(f"composite: {(obs.error_message or str(obs.payload))}")
 
     comp = ctx.state["composition"]
     for label, p in [("PSD", comp.psd_path), ("SVG", comp.svg_path),
@@ -426,8 +511,8 @@ def check_edit_layer_no_api() -> None:
         "bbox": {"x": 48, "y": 80, "w": 672, "h": 180}, "align": "center",
         "z_index": 1,
     }, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        _fail(f"seed: render_text_layer: {obs.summary}")
+    if obs.status != "ok":
+        _fail(f"seed: render_text_layer: {(obs.error_message or str(obs.payload))}")
 
     before = ctx.state["rendered_layers"]["L1_title"]
     before_sha = before["sha256"]
@@ -440,8 +525,8 @@ def check_edit_layer_no_api() -> None:
         "layer_id": "L1_title",
         "diff": {"text": "新标题！", "font_size_px": 140, "fill": "#ff0000"},
     }, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        _fail(f"edit_layer happy path: status={obs.status} summary={obs.summary}")
+    if obs.status != "ok":
+        _fail(f"edit_layer happy path: status={obs.status} summary={(obs.error_message or str(obs.payload))}")
 
     after = ctx.state["rendered_layers"]["L1_title"]
     if after["font_size_px"] != 140:
@@ -467,8 +552,8 @@ def check_edit_layer_no_api() -> None:
         "layer_id": "L1_title",
         "diff": {"bbox": {"y": 200}},  # only y changes
     }, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        _fail(f"bbox partial merge: {obs.summary}")
+    if obs.status != "ok":
+        _fail(f"bbox partial merge: {(obs.error_message or str(obs.payload))}")
     bbox = ctx.state["rendered_layers"]["L1_title"]["bbox"]
     if not (bbox["x"] == 48 and bbox["y"] == 200 and bbox["w"] == 672 and bbox["h"] == 180):
         _fail(f"bbox partial merge broken: {bbox}")
@@ -476,17 +561,17 @@ def check_edit_layer_no_api() -> None:
 
     # --- Missing layer_id --------------------------------------------------
     obs = edit_layer({"layer_id": "nope", "diff": {"text": "x"}}, ctx=ctx)
-    if obs.status != "not_found":
-        _fail(f"unknown layer should return not_found, got {obs.status}")
-    _ok("unknown layer_id → not_found")
+    if obs.status != "error" or obs.error_category != "not_found":
+        _fail(f"unknown layer should return error/not_found, got status={obs.status} cat={obs.error_category}")
+    _ok("unknown layer_id → error/not_found")
 
     # --- Non-text layer rejected ------------------------------------------
     obs = edit_layer({"layer_id": "L0_bg", "diff": {"text": "x"}}, ctx=ctx)
     if obs.status != "error":
         _fail(f"bg layer edit should error, got {obs.status}")
-    if "generate_background" not in obs.summary:
-        _fail(f"bg-error summary should mention generate_background; got: {obs.summary}")
-    _ok("non-text layer → error with redirect to generate_background")
+    if obs.error_category != "validation":
+        _fail(f"bg-error category should be validation; got: {obs.error_category}")
+    _ok("non-text layer → error/validation")
 
     # --- Empty / unknown diff fields --------------------------------------
     if edit_layer({"layer_id": "L1_title", "diff": {}}, ctx=ctx).status != "error":
@@ -529,49 +614,42 @@ def check_apply_edits_roundtrip() -> None:
     )
     out_dir = REPO_ROOT / "out" / "smoke_apply" / "restored"
 
-    traj, traj_path = apply_edits(edited_html_path, settings=settings,
-                                  out_dir=out_dir)
+    traj, traj_path, run_dir, restored_ids, skipped = apply_edits(
+        edited_html_path, settings=settings, out_dir=out_dir,
+    )
 
-    # --- trajectory assertions -------------------------------------------
-    if traj.metadata.get("source") != "apply-edits":
-        _fail(f"metadata.source != 'apply-edits'; got {traj.metadata.get('source')!r}")
-    if not traj.metadata.get("parent_run_id"):
-        _fail("metadata.parent_run_id missing — <meta name='ld-run-id'> may not be emitted")
+    # --- v2 trajectory assertions ----------------------------------------
+    if traj.metadata.source != "apply_edits":
+        _fail(f"metadata.source != 'apply_edits'; got {traj.metadata.source!r}")
     if traj.agent_trace:
         _fail(f"apply-edits trajectory should have empty agent_trace; got {len(traj.agent_trace)}")
-    _ok(f"trajectory: source=apply-edits, parent={traj.metadata['parent_run_id']}, "
-        f"{len(traj.layer_graph)} layers")
+    if traj.terminal_status != "abort":
+        _fail(f"apply-edits should set terminal_status=abort; got {traj.terminal_status}")
+    _ok(f"trajectory: source=apply_edits, terminal=abort, "
+        f"{len(restored_ids)} layers restored")
 
     # --- artifact files exist --------------------------------------------
-    for label, p in [("PSD", traj.composition.psd_path),
-                     ("SVG", traj.composition.svg_path),
-                     ("HTML", traj.composition.html_path),
-                     ("preview", traj.composition.preview_path)]:
-        if p is None or not Path(p).exists() or Path(p).stat().st_size == 0:
-            _fail(f"{label} not written: {p}")
+    for fname in ("poster.psd", "poster.svg", "poster.html", "preview.png"):
+        p = run_dir / fname
+        if not p.exists() or p.stat().st_size == 0:
+            _fail(f"{fname} not written: {p}")
     _ok("PSD+SVG+HTML+preview all regenerated in new run_dir")
 
-    # --- edits landed in re-rendered layer graph -------------------------
-    title = next((L for L in traj.layer_graph
-                  if L.kind == "text" and L.name == "title"), None)
-    if title is None:
-        _fail("title layer missing from round-trip layer_graph")
-    if title.font_size_px != 140:
-        _fail(f"edit lost on round-trip — title.font_size_px={title.font_size_px}, expected 140")
-    if (title.effects and title.effects.fill.lower()) != "#ff3366":
-        _fail(f"edit lost on round-trip — title.effects.fill="
-              f"{title.effects.fill if title.effects else None}, expected '#ff3366'")
-    _ok("edits preserved: title.font_size_px=140, fill=#ff3366")
+    # --- edits landed in re-rendered run dir -----------------------------
+    # v2 trajectory has no layer_graph; verify the rendered HTML on disk
+    # contains the edits instead.
+    rendered_html = (run_dir / "poster.html").read_text(encoding="utf-8")
+    if "140" not in rendered_html:
+        _fail("expected font_size 140 to appear in re-rendered HTML")
+    if "#ff3366" not in rendered_html.lower():
+        _fail("expected fill #ff3366 to appear in re-rendered HTML")
+    _ok("edits preserved in re-rendered HTML: font_size 140, fill #ff3366")
 
-    # --- bg was decoded from data: URI, not copied from original ---------
-    bg = next((L for L in traj.layer_graph if L.kind == "background"), None)
-    if bg is not None:
-        bg_path = Path(bg.src_path)
-        if not bg_path.exists():
-            _fail(f"bg src_path missing: {bg_path}")
-        if out_dir not in bg_path.parents:
-            _fail(f"bg was not written into new run_dir — got {bg_path}")
-        _ok(f"bg decoded from data URI → {bg_path.name} ({bg_path.stat().st_size} B)")
+    # --- bg was decoded from data: URI ----------------------------------
+    layers_dir = run_dir / "layers"
+    bgs = list(layers_dir.glob("bg_*.png")) if layers_dir.exists() else []
+    if bgs:
+        _ok(f"bg decoded from data URI → {bgs[0].name} ({bgs[0].stat().st_size} B)")
 
 
 def check_landing_mode() -> None:
@@ -672,7 +750,7 @@ def check_landing_mode() -> None:
     # --- composite landing ----------------------------------------------
     obs = composite({}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"landing composite: {obs.summary}")
+        _fail(f"landing composite: {(obs.error_message or str(obs.payload))}")
     comp = ctx.state["composition"]
     if comp.psd_path is not None or comp.svg_path is not None:
         _fail("landing should NOT produce PSD/SVG — got non-None paths")
@@ -722,40 +800,26 @@ def check_landing_mode() -> None:
     edited_path = out_dir / "edited.html"
     edited_path.write_text(edited_html, encoding="utf-8")
 
-    traj, traj_path = apply_edits(
+    traj, traj_path, run_dir, restored_ids, skipped = apply_edits(
         edited_path, settings=settings,
         out_dir=out_dir / "restored",
     )
-    if traj.metadata.get("parent_run_id") != "smoke-landing":
-        _fail(f"landing round-trip lost parent_run_id: got "
-              f"{traj.metadata.get('parent_run_id')!r}")
-    if traj.design_spec.artifact_type != ArtifactType.LANDING:
-        _fail("landing round-trip lost artifact_type")
-    # Layer graph should have 5 sections + their children preserved (the
-    # footer section is restored from the semantic <footer class="ld-section">).
-    sections = [n for n in traj.layer_graph if n.kind == "section"]
-    if len(sections) != 5:
-        _fail(f"expected 5 sections, got {len(sections)}")
-    # Headline font size should reflect the edit (128, not 96)
-    headline = next((c for s in sections for c in (s.children or [])
-                     if c.name == "hero_headline"), None)
-    if headline is None:
-        _fail("hero_headline lost on round-trip")
-    if headline.font_size_px != 128:
-        _fail(f"edit lost: hero_headline.font_size_px={headline.font_size_px}, expected 128")
-    # v1.3 — CTA node must survive round-trip with href + variant intact.
-    cta = next((c for s in sections for c in (s.children or [])
-                if c.kind == "cta"), None)
-    if cta is None:
-        _fail("CTA node lost on round-trip")
-    if cta.text != "Get started":
-        _fail(f"CTA text lost: got {cta.text!r}")
-    if cta.href != "#sec-features":
-        _fail(f"CTA href lost: got {cta.href!r}")
-    if cta.variant != "primary":
-        _fail(f"CTA variant lost: got {cta.variant!r}")
-    _ok(f"landing round-trip: 5 sections + children preserved, edits applied "
-        f"(hero_headline: 96px → 128px), CTA node + href + variant intact")
+    if traj.metadata.source != "apply_edits":
+        _fail(f"landing round-trip lost source label: got {traj.metadata.source!r}")
+    # v2: trajectory has no design_spec / layer_graph; verify the edits
+    # landed in the regenerated HTML on disk instead.
+    rendered_html = (run_dir / "index.html").read_text(encoding="utf-8")
+    if "128" not in rendered_html:
+        _fail("landing edit lost: font_size 128 missing from rendered HTML")
+    if "#38bdf8" not in rendered_html.lower():
+        _fail("landing edit lost: fill #38bdf8 missing from rendered HTML")
+    # CTA must survive (data-* attrs encode href + variant in HTML).
+    if 'data-href="#sec-features"' not in rendered_html:
+        _fail("CTA href lost on round-trip")
+    if 'data-variant="primary"' not in rendered_html:
+        _fail("CTA variant lost on round-trip")
+    _ok(f"landing round-trip: edits applied (hero_headline 96px → 128px, "
+        f"fill→#38bdf8), CTA href+variant intact in regenerated HTML")
 
 
 def check_design_system_styles() -> None:
@@ -958,20 +1022,21 @@ def check_landing_with_images() -> None:
         f"2 <figure> image layers inlined with data URIs")
 
     # Apply-edits round-trip: reparse HTML, rebuild section tree with images
-    traj, _ = apply_edits(
+    traj, _, restored_dir, restored_ids, skipped = apply_edits(
         Path(comp.html_path), settings=settings,
         out_dir=out_dir / "restored",
     )
-    sections = [n for n in traj.layer_graph if n.kind == "section"]
-    all_children = [c for s in sections for c in (s.children or [])]
-    image_kids = [c for c in all_children if c.kind == "image"]
-    if len(image_kids) != 2:
-        _fail(f"round-trip lost images: expected 2, got {len(image_kids)}")
-    for img in image_kids:
-        if not img.src_path or not Path(img.src_path).exists():
-            _fail(f"round-trip image has no file: {img.layer_id} src={img.src_path}")
-    _ok(f"round-trip: {len(sections)} sections + {len(image_kids)} image layers "
-        f"all restored with src_path decoded from data: URI")
+    # v2: layer info no longer in trajectory; verify the regenerated run_dir
+    # has the image PNGs decoded from data: URIs onto disk.
+    img_files = sorted((restored_dir / "layers").glob("img_*.png")) \
+        if (restored_dir / "layers").exists() else []
+    if len(img_files) < 2:
+        _fail(f"round-trip lost images: expected ≥2 PNG files, got {len(img_files)}")
+    for img in img_files:
+        if img.stat().st_size == 0:
+            _fail(f"round-trip image is empty: {img}")
+    _ok(f"round-trip: {len(img_files)} image layers decoded from data: URI "
+        f"into {restored_dir}/layers/")
 
 
 def check_deck_mode() -> None:
@@ -1086,11 +1151,11 @@ def check_deck_mode() -> None:
 
     obs = propose_design_spec({"design_spec": spec}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"propose_design_spec(deck): {obs.summary}")
+        _fail(f"propose_design_spec(deck): {(obs.error_message or str(obs.payload))}")
 
     obs = composite({}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"composite(deck): {obs.summary}")
+        _fail(f"composite(deck): {(obs.error_message or str(obs.payload))}")
 
     comp = ctx.state["composition"]
     if comp.psd_path is not None or comp.svg_path is not None or comp.html_path is not None:
@@ -1138,105 +1203,86 @@ def check_deck_mode() -> None:
 
 
 def check_reasoning_step_roundtrip() -> None:
-    """v1 training-data schema: reasoning step + ThinkingBlockRecord survive roundtrip.
+    """v2 training-data: derive artifact_type / design_spec / critique
+    verdict / layer count from agent_trace alone (no top-level fields).
 
-    Covers three subcases:
-      1. Plain thinking block (thinking + signature non-empty, is_redacted=False)
-      2. Redacted thinking block (thinking empty, signature carries opaque data)
-      3. The new AgentTraceStep fields (thinking_blocks, stop_reason,
-         cache_read_input_tokens, cache_creation_input_tokens)
-    The existing pydantic-roundtrip check (#3) would catch basic missing-field
-    bugs; this one specifically exercises the CoT capture path with the exact
-    shape the planner will emit at runtime.
+    Asserts the chat.py helpers (_last_artifact_type / _last_design_spec /
+    _last_critique_payload / _count_unique_layers) correctly recover state
+    from a synthetic v2 trajectory shape.
     """
-    print("[14/18] reasoning step + ThinkingBlockRecord roundtrip")
-    plain = ThinkingBlockRecord(
-        thinking="I need to first declare the artifact type, then propose a spec.",
-        signature="sig_abc123_opaque_anthropic_signature",
-        is_redacted=False,
+    print("[14/18] v2 trajectory: derive metadata from agent_trace only")
+    from .chat import (
+        _last_artifact_type, _last_design_spec, _last_critique_payload,
+        _count_unique_layers,
     )
-    redacted = ThinkingBlockRecord(
-        thinking="",
-        signature="enc_encrypted_payload_opaque_bytes",
-        is_redacted=True,
-    )
-    step = AgentTraceStep(
-        step_idx=42,
-        timestamp=datetime.now(),
-        actor="planner",
-        type="reasoning",
-        thinking_blocks=[plain, redacted],
-        stop_reason="tool_use",
-        cache_read_input_tokens=1234,
-        cache_creation_input_tokens=567,
-        model="claude-opus-4-7",
-    )
-    critic_step = AgentTraceStep(
-        step_idx=43,
-        timestamp=datetime.now(),
-        actor="critic",
-        type="reasoning",
-        thinking_blocks=[ThinkingBlockRecord(
-            thinking="The title contrast is fine; the stamp is too small.",
-            signature="sig_critic_789",
-        )],
-        model="claude-opus-4-7",
-    )
-    traj = Trajectory(
-        run_id="smoke_reasoning",
-        created_at=datetime.now(),
-        brief="smoke",
-        design_spec=DesignSpec(
-            brief="smoke",
-            canvas={"w_px": 100, "h_px": 100, "dpi": 72,
-                    "aspect_ratio": "1:1", "color_mode": "RGB"},
+
+    crit_payload = {
+        "iteration": 1, "verdict": "pass", "score": 0.86,
+        "issues": [], "rationale": "ok",
+    }
+    spec_input = {
+        "brief": "test", "artifact_type": "landing",
+        "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96,
+                   "aspect_ratio": "1:2", "color_mode": "RGB"},
+        "layer_graph": [],
+    }
+
+    trace = [
+        AgentTraceStep(step_idx=1, actor="user", type="input", text="brief"),
+        AgentTraceStep(step_idx=2, actor="planner", type="tool_call",
+                       tool_use_id="t1", tool_name="switch_artifact_type",
+                       tool_args={"type": "landing"}),
+        AgentTraceStep(step_idx=3, actor="tool", type="tool_result",
+                       tool_use_id="t1", tool_name="switch_artifact_type",
+                       tool_result=ToolResultRecord(status="ok",
+                                                   payload={"type": "landing"})),
+        AgentTraceStep(step_idx=4, actor="planner", type="tool_call",
+                       tool_use_id="t2", tool_name="propose_design_spec",
+                       tool_args={"design_spec": spec_input}),
+        AgentTraceStep(step_idx=5, actor="planner", type="tool_call",
+                       tool_use_id="t3", tool_name="generate_image",
+                       tool_args={"layer_id": "L1", "prompt": "hero"}),
+        AgentTraceStep(step_idx=6, actor="planner", type="tool_call",
+                       tool_use_id="t4", tool_name="render_text_layer",
+                       tool_args={"layer_id": "L2", "text": "Hello"}),
+        AgentTraceStep(step_idx=7, actor="planner", type="tool_call",
+                       tool_use_id="t5", tool_name="critique"),
+        AgentTraceStep(step_idx=8, actor="tool", type="tool_result",
+                       tool_use_id="t5", tool_name="critique",
+                       tool_result=ToolResultRecord(status="ok",
+                                                   payload=crit_payload)),
+    ]
+    traj = DistillTrajectory(
+        run_id="smoke-v2-helpers",
+        brief="brief",
+        agent_trace=trace,
+        final_reward=0.86,
+        terminal_status="pass",
+        metadata=TrainingMetadata(
+            schema_version="v2",
+            planner_model="m", critic_model="m", image_model="m",
+            planner_thinking_budget=0, critic_thinking_budget=0,
+            interleaved_thinking=False,
+            total_input_tokens=0, total_output_tokens=0,
+            estimated_cost_usd=0.0, wall_time_s=0.0,
+            source="agent_run",
         ),
-        layer_graph=[],
-        agent_trace=[step, critic_step],
-        composition=CompositionArtifacts(layer_manifest=[]),
-        metadata={
-            "version": "v1",
-            "planner_thinking_budget": 10000,
-            "critic_thinking_budget": 10000,
-            "interleaved_thinking": True,
-        },
     )
-    dumped = traj.model_dump(mode="json")
-    serialized = json.dumps(dumped, ensure_ascii=False)
-    try:
-        reloaded = Trajectory.model_validate(json.loads(serialized))
-    except ValidationError as e:
-        _fail(f"reasoning trajectory roundtrip: {e.errors()[:3]}")
 
-    reasoning_steps = [s for s in reloaded.agent_trace if s.type == "reasoning"]
-    if len(reasoning_steps) != 2:
-        _fail(f"expected 2 reasoning steps after roundtrip, got {len(reasoning_steps)}")
-    planner_step = next(s for s in reasoning_steps if s.actor == "planner")
-    if not planner_step.thinking_blocks or len(planner_step.thinking_blocks) != 2:
-        _fail("planner reasoning step lost thinking_blocks")
-    if planner_step.thinking_blocks[0].thinking != plain.thinking:
-        _fail("thinking text corrupted in roundtrip")
-    if planner_step.thinking_blocks[0].signature != plain.signature:
-        _fail("thinking signature corrupted in roundtrip")
-    if not planner_step.thinking_blocks[1].is_redacted:
-        _fail("redacted thinking flag not preserved")
-    if planner_step.stop_reason != "tool_use":
-        _fail(f"stop_reason lost: {planner_step.stop_reason}")
-    if planner_step.cache_read_input_tokens != 1234:
-        _fail(f"cache_read tokens lost: {planner_step.cache_read_input_tokens}")
-    if reloaded.metadata.get("version") != "v1":
-        _fail(f"metadata.version != v1, got {reloaded.metadata.get('version')}")
+    if _last_artifact_type(traj) != "landing":
+        _fail(f"_last_artifact_type: {_last_artifact_type(traj)}")
+    spec = _last_design_spec(traj)
+    if not spec or spec.get("artifact_type") != "landing":
+        _fail(f"_last_design_spec lost: {spec}")
+    crit = _last_critique_payload(traj)
+    if not crit or crit.get("score") != 0.86:
+        _fail(f"_last_critique_payload lost: {crit}")
+    n = _count_unique_layers(traj)
+    if n != 2:
+        _fail(f"_count_unique_layers: expected 2 (L1, L2), got {n}")
 
-    # Backward compat: an old v0 trajectory without these fields still loads.
-    legacy_step = AgentTraceStep(
-        step_idx=1, timestamp=datetime.now(),
-        actor="user", type="input", text="brief",
-    )
-    _ = legacy_step.model_dump(mode="json")
-    assert legacy_step.thinking_blocks is None
-    assert legacy_step.stop_reason is None
-
-    _ok(f"reasoning step + 2 thinking blocks + cache tokens roundtrip ({len(serialized)} bytes)")
+    _ok("artifact_type, design_spec, critique payload, layer count "
+        "all recoverable from agent_trace alone")
 
 
 def check_ingest_document_markdown() -> None:
@@ -1276,7 +1322,7 @@ def check_ingest_document_markdown() -> None:
 
     obs = ingest_document({"file_paths": [str(md_path)]}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"ingest_document(markdown): {obs.summary}")
+        _fail(f"ingest_document(markdown): {(obs.error_message or str(obs.payload))}")
 
     ingested = ctx.state.get("ingested") or []
     if len(ingested) != 1 or ingested[0]["type"] != "markdown":
@@ -1322,7 +1368,7 @@ def check_ingest_document_image() -> None:
 
     obs = ingest_document({"file_paths": [str(img_path)]}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"ingest_document(image): {obs.summary}")
+        _fail(f"ingest_document(image): {(obs.error_message or str(obs.payload))}")
 
     ingested = ctx.state.get("ingested") or []
     if len(ingested) != 1 or ingested[0]["type"] != "image":
@@ -1385,7 +1431,7 @@ def check_ingest_document_docx() -> None:
 
     obs = ingest_document({"file_paths": [str(docx_path)]}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"ingest_document(docx): {obs.summary}")
+        _fail(f"ingest_document(docx): {(obs.error_message or str(obs.payload))}")
 
     ingested = ctx.state.get("ingested") or []
     if len(ingested) != 1 or ingested[0]["type"] != "docx":
@@ -1446,7 +1492,7 @@ def check_ingest_document_pptx() -> None:
 
     obs = ingest_document({"file_paths": [str(pptx_path)]}, ctx=ctx)
     if obs.status != "ok":
-        _fail(f"ingest_document(pptx): {obs.summary}")
+        _fail(f"ingest_document(pptx): {(obs.error_message or str(obs.payload))}")
 
     ingested = ctx.state.get("ingested") or []
     if len(ingested) != 1 or ingested[0]["type"] != "pptx":
@@ -1464,6 +1510,133 @@ def check_ingest_document_pptx() -> None:
         _fail(f"pptx figure record wrong: {rec}")
     _ok(f"pptx ingested: title='{m['title']}', "
         f"2 slide(s), 1 figure ({figure_ids[0]})")
+
+
+def check_versioning_no_api() -> None:
+    """v2.2 versioning: revise loops + edit_layer must NOT clobber prior
+    intermediate state. Asserts:
+      - render_text_layer writes layers/<id>.v<N>.png (not <id>.png)
+      - edit_layer (re-render) bumps to v<N+1>; v<N> still on disk
+      - 2 composite() calls produce composites/iter_01/ AND composites/iter_02/
+      - final/ symlinks point at iter_02 (the latest)
+      - tool_result.payload exposes relative_path / version / supersedes_*
+    """
+    print("[19/19] versioning + revise-loop preservation (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.render_text_layer import render_text_layer
+    from .tools.edit_layer import edit_layer
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_versioning"
+    layers_dir = out_dir / "layers"
+    if out_dir.exists():
+        # Clean prior smoke run so version counters start at 0.
+        import shutil
+        shutil.rmtree(out_dir)
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-vers")
+
+    # Stub a background so composite has 2 layers
+    bg_path = layers_dir / "bg_seed.png"
+    Image.new("RGB", (768, 1024), (10, 10, 30)).save(bg_path)
+    ctx.state["rendered_layers"]["L0_bg"] = {
+        "layer_id": "L0_bg", "name": "bg", "kind": "background", "z_index": 0,
+        "bbox": {"x": 0, "y": 0, "w": 768, "h": 1024},
+        "src_path": str(bg_path), "prompt": "(stub)",
+        "aspect_ratio": "3:4", "image_size": "1K",
+        "safe_zones": [], "sha256": "seed",
+    }
+
+    switch_artifact_type({"type": "poster"}, ctx=ctx)
+    propose_design_spec({"design_spec": {
+        "brief": "v",
+        "canvas": {"w_px": 768, "h_px": 1024, "dpi": 96,
+                   "aspect_ratio": "3:4", "color_mode": "RGB"},
+        "palette": ["#000", "#fff"],
+        "typography": {}, "mood": [], "composition_notes": "",
+        "layer_graph": [],
+    }}, ctx=ctx)
+
+    # ── v1 layer write ─────────────────────────────────────────────────
+    r1 = render_text_layer({
+        "layer_id": "L1", "name": "title", "text": "v1 text",
+        "font_family": "NotoSansSC-Bold", "font_size_px": 60, "fill": "#fff",
+        "bbox": {"x": 50, "y": 50, "w": 600, "h": 120},
+        "align": "center", "z_index": 1,
+    }, ctx=ctx)
+    if r1.payload.get("version") != 1:
+        _fail(f"first render should be v1; got version={r1.payload.get('version')}")
+    if r1.payload.get("relative_path") != "layers/text_L1.v1.png":
+        _fail(f"v1 relative_path wrong: {r1.payload.get('relative_path')}")
+    if r1.payload.get("supersedes_sha256") is not None:
+        _fail("first render should not have supersedes_sha256")
+    v1_file = layers_dir / "text_L1.v1.png"
+    if not v1_file.exists():
+        _fail(f"v1 file missing: {v1_file}")
+    v1_sha = r1.payload["sha256"]
+
+    # ── v2 layer write (via edit_layer → re-render) ────────────────────
+    r2 = edit_layer({"layer_id": "L1", "diff": {"text": "v2 text"}}, ctx=ctx)
+    if r2.payload.get("version") != 2:
+        _fail(f"edit_layer should bump to v2; got {r2.payload.get('version')}")
+    if r2.payload.get("supersedes_sha256") != v1_sha:
+        _fail(f"v2 supersedes_sha256 should equal v1 sha; got {r2.payload.get('supersedes_sha256')!r}")
+    v2_file = layers_dir / "text_L1.v2.png"
+    if not v2_file.exists():
+        _fail(f"v2 file missing: {v2_file}")
+    if not v1_file.exists():
+        _fail(f"⚠ v1 file was clobbered (this is the bug we're guarding against): {v1_file}")
+    _ok(f"layer versioning: v1 + v2 both on disk; v2.supersedes = v1.sha256[:8] {v1_sha[:8]}")
+
+    # ── Composite iter 1 ──────────────────────────────────────────────
+    c1 = composite({}, ctx=ctx)
+    if c1.status != "ok":
+        _fail(f"composite iter 1: {(c1.error_message or c1.payload)}")
+    if c1.payload.get("iteration") != 1:
+        _fail(f"composite iter 1 should report iteration=1; got {c1.payload.get('iteration')}")
+    iter1_dir = out_dir / "composites" / "iter_01"
+    for f in ("poster.html", "poster.psd", "poster.svg", "preview.png"):
+        if not (iter1_dir / f).exists():
+            _fail(f"iter_01/{f} missing")
+    iter1_preview_sha = c1.payload["preview_sha256"]
+
+    # ── Edit a layer + composite iter 2 ───────────────────────────────
+    edit_layer({"layer_id": "L1", "diff": {"fill": "#ff00ff"}}, ctx=ctx)
+    c2 = composite({}, ctx=ctx)
+    if c2.status != "ok":
+        _fail(f"composite iter 2: {(c2.error_message or c2.payload)}")
+    if c2.payload.get("iteration") != 2:
+        _fail(f"composite iter 2 should report iteration=2; got {c2.payload.get('iteration')}")
+    iter2_dir = out_dir / "composites" / "iter_02"
+    if not (iter2_dir / "preview.png").exists():
+        _fail("iter_02/preview.png missing")
+    if not (iter1_dir / "preview.png").exists():
+        _fail("⚠ iter_01/preview.png was clobbered by iter_02 — versioning broken")
+    if c2.payload.get("supersedes_preview_sha256") != iter1_preview_sha:
+        _fail(f"iter_02 supersedes_preview_sha256 should be iter_01's preview sha")
+    _ok(f"composite versioning: iter_01 + iter_02 both intact; "
+        f"iter_02.supersedes_preview = iter_01.preview_sha[:8] {iter1_preview_sha[:8]}")
+
+    # ── final/ symlinks point at the latest iter ──────────────────────
+    final_dir = out_dir / "final"
+    if not (final_dir / "preview.png").is_symlink():
+        _fail("final/preview.png should be a symlink")
+    if not (final_dir / "poster.html").is_symlink():
+        _fail("final/poster.html should be a symlink")
+    final_preview = (final_dir / "preview.png").resolve()
+    if final_preview.parent.name != "iter_02":
+        _fail(f"final/preview.png should resolve to iter_02; got {final_preview.parent.name}")
+    _ok(f"final/ symlinks resolve to iter_02 (the latest)")
 
 
 def main() -> int:
@@ -1485,6 +1658,7 @@ def main() -> int:
     check_ingest_document_image()
     check_ingest_document_docx()
     check_ingest_document_pptx()
+    check_versioning_no_api()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "

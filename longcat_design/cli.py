@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_oneshot(brief: str, from_file: list[str]) -> int:
-    """One-shot mode — single brief (+ optional attachments) → single Trajectory."""
+    """One-shot mode — single brief (+ optional attachments) → single trajectory."""
     # v1.1: resolve --from-file attachments into Path objects and validate early.
     attachments: list[Path] = []
     for fp_str in from_file:
@@ -118,23 +118,55 @@ def _run_oneshot(brief: str, from_file: list[str]) -> int:
     runner = PipelineRunner(settings)
     traj, traj_path = runner.run(brief, attachments=attachments)
 
+    # v2 trajectory carries no product paths. Locate run dir from the
+    # trajectory file's sibling structure. v2.2 versioning: composites
+    # live under run_dir/composites/iter_<N>/; the final/ subdirectory
+    # has symlinks pointing at the latest iteration.
+    run_dir = traj_path.parent.parent / "runs" / traj.run_id
+    final_dir = run_dir / "final"
+    n_layers = _count_unique_layers_from_trace(traj.agent_trace)
+    n_critiques = _count_critiques_from_trace(traj.agent_trace)
+
     print()
     if attachments:
-        print(f"  Ingested:   {', '.join(str(p.name) for p in attachments)}")
-    print(f"  Trajectory: {traj_path}")
-    print(f"  PSD:        {traj.composition.psd_path}")
-    print(f"  SVG:        {traj.composition.svg_path}")
-    if traj.composition.html_path:
-        print(f"  HTML:       {traj.composition.html_path}")
-    if traj.composition.pptx_path:
-        print(f"  PPTX:       {traj.composition.pptx_path}")
-    print(f"  Preview:    {traj.composition.preview_path}")
-    print(f"  Layers:     {len(traj.layer_graph)}  "
-          f"|  Critiques: {len(traj.critique_loop)}  "
+        print(f"  Ingested:        {', '.join(str(p.name) for p in attachments)}")
+    print(f"  Trajectory:      {traj_path}")
+    print(f"  Run dir:         {run_dir}")
+    for fname in ("preview.png", "poster.psd", "poster.svg",
+                  "poster.html", "index.html", "deck.pptx"):
+        fp = final_dir / fname
+        if fp.exists():
+            print(f"  {fname:14s}:  {fp}")
+    print(f"  Layers:          {n_layers}  "
+          f"|  Critiques: {n_critiques}  "
           f"|  Trace steps: {len(traj.agent_trace)}")
-    print(f"  Wall time:  {traj.metadata['wall_time_s']}s  "
-          f"|  Est. cost: ${traj.metadata['estimated_cost_usd']}")
+    print(f"  Terminal:        {traj.terminal_status}  "
+          f"|  Reward: {traj.final_reward}")
+    print(f"  Wall time:       {traj.metadata.wall_time_s}s  "
+          f"|  Est. cost: ${traj.metadata.estimated_cost_usd}")
     return 0
+
+
+def _count_unique_layers_from_trace(trace) -> int:
+    """Count distinct layer_ids the planner created via render/generate/edit
+    tool_calls. A v2-trajectory replacement for `len(traj.layer_graph)`."""
+    seen: set[str] = set()
+    rendering_tools = {
+        "render_text_layer", "generate_background", "generate_image",
+        "edit_layer",
+    }
+    for s in trace:
+        if s.type == "tool_call" and s.tool_name in rendering_tools:
+            args = s.tool_args or {}
+            lid = args.get("layer_id")
+            if lid:
+                seen.add(lid)
+    return len(seen)
+
+
+def _count_critiques_from_trace(trace) -> int:
+    return sum(1 for s in trace
+               if s.type == "tool_call" and s.tool_name == "critique")
 
 
 def _run_apply_edits(html_path: str, out_dir: str | None) -> int:
@@ -149,24 +181,25 @@ def _run_apply_edits(html_path: str, out_dir: str | None) -> int:
 
     settings = load_settings()
     try:
-        traj, traj_path = apply_edits(src, settings=settings, out_dir=out)
+        traj, traj_path, run_dir, restored_layer_ids, skipped = apply_edits(
+            src, settings=settings, out_dir=out,
+        )
     except (ValueError, RuntimeError, FileNotFoundError) as e:
         print(f"  error: {e}", file=sys.stderr)
         return 2
 
-    parent = traj.metadata.get("parent_run_id") or "(none)"
-    skipped = traj.metadata.get("skipped_layers") or []
     print()
     print(f"  Source HTML:     {src}")
-    print(f"  Parent run:      {parent}")
     print(f"  New run_id:      {traj.run_id}")
     print(f"  Trajectory:      {traj_path}")
-    print(f"  PSD:             {traj.composition.psd_path}")
-    print(f"  SVG:             {traj.composition.svg_path}")
-    if traj.composition.html_path:
-        print(f"  HTML:            {traj.composition.html_path}")
-    print(f"  Preview:         {traj.composition.preview_path}")
-    print(f"  Layers restored: {len(traj.layer_graph)}"
+    print(f"  Run dir:         {run_dir}")
+    final_dir = run_dir / "final"
+    for fname in ("preview.png", "poster.psd", "poster.svg",
+                  "poster.html", "index.html"):
+        fp = final_dir / fname
+        if fp.exists():
+            print(f"  {fname:14s}:  {fp}")
+    print(f"  Layers restored: {len(restored_layer_ids)}"
           + (f"  |  skipped: {len(skipped)} ({', '.join(skipped)})"
              if skipped else ""))
     return 0

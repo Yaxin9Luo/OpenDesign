@@ -24,7 +24,7 @@ from google.genai import types
 from PIL import Image as PILImage
 
 from ._contract import ToolContext, obs_error, obs_ok
-from ..schema import ToolObservation
+from ..schema import ToolResultRecord
 from ..util.io import sha256_file
 from ..util.logging import log
 
@@ -41,7 +41,7 @@ def _ensure_no_text(prompt: str) -> str:
     return f"{prompt.rstrip()}{sep} {NO_TEXT_SUFFIX}"
 
 
-def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     layer_id = args["layer_id"]
     raw_prompt = args["prompt"]
     aspect_ratio = args.get("aspect_ratio", "16:9")
@@ -49,7 +49,11 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation
     name = args.get("name", layer_id)
 
     prompt = _ensure_no_text(raw_prompt)
-    out_path = ctx.layers_dir / f"img_{layer_id}.png"
+
+    prior = ctx.state["rendered_layers"].get(layer_id) or {}
+    prior_sha = prior.get("sha256")
+    version = ctx.next_layer_version(layer_id)
+    out_path = ctx.layers_dir / f"img_{layer_id}.v{version}.png"
 
     client = genai.Client(api_key=ctx.settings.gemini_api_key)
     log("nbp.image.request", model=ctx.settings.image_model,
@@ -69,15 +73,10 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation
             ),
         )
     except Exception as e:
-        return obs_error(
-            f"Gemini API error on generate_image: {e}",
-            next_actions=[
-                "retry generate_image with a simpler prompt",
-                "or proceed without this image (skip the image layer)",
-            ],
-        )
+        return obs_error(f"Gemini API error on generate_image: {e}", category="api")
 
     image_saved = False
+    img_w = img_h = 0
     for part in response.parts:
         if part.inline_data:
             # Gemini inline_data is JPEG regardless of requested extension;
@@ -86,13 +85,14 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation
             if pil.mode != "RGB":
                 pil = pil.convert("RGB")
             pil.save(out_path, format="PNG", optimize=True)
+            img_w, img_h = pil.size
             image_saved = True
             break
 
     if not image_saved:
         return obs_error(
             "Gemini returned no image part — likely safety filter or empty response",
-            next_actions=["rephrase prompt avoiding sensitive terms"],
+            category="safety_filter",
         )
 
     sha = sha256_file(out_path)
@@ -107,15 +107,19 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation
         "aspect_ratio": aspect_ratio,
         "image_size": image_size,
         "sha256": sha,
+        "version": version,
     }
-    log("nbp.image.saved", path=str(out_path), sha=sha[:12], layer_id=layer_id)
+    log("nbp.image.saved", path=str(out_path), sha=sha[:12],
+        layer_id=layer_id, version=version)
 
-    return obs_ok(
-        f"Generated image layer '{name}' ({aspect_ratio}, {image_size}) → {out_path.name}",
-        artifacts=[str(out_path)],
-        next_actions=[
-            "compose this image into a landing section by referencing "
-            f"layer_id='{layer_id}' inside that section's children[], then "
-            "call composite when all sections are ready"
-        ],
-    )
+    payload: dict[str, Any] = {
+        "layer_id": layer_id,
+        "sha256": sha,
+        "width": img_w,
+        "height": img_h,
+        "relative_path": f"layers/img_{layer_id}.v{version}.png",
+        "version": version,
+    }
+    if prior_sha:
+        payload["supersedes_sha256"] = prior_sha
+    return obs_ok(payload)

@@ -19,14 +19,89 @@ from PIL import Image
 from psd_tools import PSDImage
 from psd_tools.constants import BlendMode, Compression
 
+from ..util.io import sha256_file
 from ._contract import ToolContext, obs_error, obs_ok
 from ._deck_preview import build_deck_preview_grid
 from ._font_embed import build_font_face_css
 from .html_renderer import write_html, write_landing_html
 from .pptx_renderer import render_slide_preview_png, write_pptx
-from ..schema import ArtifactType, CompositionArtifacts, ToolObservation
+from ..schema import ArtifactType, CompositionArtifacts, ToolResultRecord
 from ..util.logging import log
 from ..util.table_png import render_table_png
+
+
+# v2.2 versioning helpers — every composite call writes into its own
+# `composites/iter_<N>/` subdirectory so revise loops + critique iters
+# don't lose intermediate state. `final/` symlinks track the latest
+# iteration for product consumers (cli display, apply-edits source).
+
+
+def _open_iter_dir(ctx: ToolContext) -> tuple[Path, int]:
+    """Allocate the next composite iteration directory.
+
+    Returns `(iter_dir, iter_num)` where iter_dir = `<run_dir>/composites/iter_NN`.
+    Caller writes ALL composite outputs (psd / svg / html / preview / slides)
+    into this dir. Use `_refresh_final_links` after a successful write so
+    consumers can keep using stable paths via `<run_dir>/final/<name>`.
+    """
+    iter_num = ctx.next_composite_iter()
+    iter_dir = ctx.run_dir / "composites" / f"iter_{iter_num:02d}"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    return iter_dir, iter_num
+
+
+def _prior_preview_sha(ctx: ToolContext) -> str | None:
+    """Return the sha256 of the *previous* iteration's preview.png if any
+    (lets the new composite's payload encode `supersedes_preview_sha256` so
+    DPO training can pair pre/post snapshots).
+
+    Call AFTER `_open_iter_dir` — current composite_iter is N (new dir),
+    we want N-1 (the prior dir).
+    """
+    iter_num = int(ctx.state.get("composite_iter") or 0)
+    if iter_num <= 1:
+        return None
+    prior = ctx.run_dir / "composites" / f"iter_{iter_num - 1:02d}" / "preview.png"
+    if not prior.exists():
+        return None
+    try:
+        return sha256_file(prior)
+    except OSError:
+        return None
+
+
+def _refresh_final_links(iter_dir: Path, ctx: ToolContext, files: list[str]) -> None:
+    """Update `<run_dir>/final/<name>` symlinks to point at this iter's files.
+
+    Existing symlinks (or files) at the target paths are removed first so the
+    operation is atomic-ish. Uses RELATIVE symlinks so the run_dir is portable
+    if copied to another machine. Skips files that don't exist in iter_dir.
+    """
+    final_dir = ctx.run_dir / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    for fname in files:
+        src = iter_dir / fname
+        if not src.exists():
+            continue
+        link = final_dir / fname
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        # Relative path from final/ to composites/iter_NN/<fname>:
+        rel = Path("..") / "composites" / iter_dir.name / fname
+        link.symlink_to(rel)
+    # Also relink subdirectories (deck/slides/) when present.
+    for subdir_name in ("slides",):
+        src_sub = iter_dir / subdir_name
+        if not src_sub.is_dir():
+            continue
+        link_sub = final_dir / subdir_name
+        if link_sub.is_symlink() or link_sub.exists():
+            if link_sub.is_symlink():
+                link_sub.unlink()
+            else:
+                # safety: if it's a real dir, leave it (don't blow away product data)
+                continue
+        link_sub.symlink_to(Path("..") / "composites" / iter_dir.name / subdir_name)
 
 
 # Warn when the planner's bbox aspect is this many times off from the
@@ -238,10 +313,10 @@ def _maybe_warn_aspect(layer: dict[str, Any], src_size: tuple[int, int],
             aspect_mismatch=round(ratio, 2))
 
 
-def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     spec = ctx.state.get("design_spec")
     if spec is None:
-        return obs_error("propose_design_spec must be called first")
+        return obs_error("propose_design_spec must be called first", category="validation")
 
     # Landing mode (v1.0 #8) is HTML-only — no PSD/SVG, no per-layer PNGs.
     # It reads the section tree directly from design_spec.layer_graph.
@@ -256,7 +331,10 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
 
     rendered = ctx.state["rendered_layers"]
     if not rendered:
-        return obs_error("no layers rendered yet — call generate_background and render_text_layer first")
+        return obs_error(
+            "no layers rendered yet — call generate_background and render_text_layer first",
+            category="validation",
+        )
 
     canvas = spec.canvas
     cw, ch = int(canvas["w_px"]), int(canvas["h_px"])
@@ -273,32 +351,34 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     # declared them in spec but didn't place them, OR they're stale records.
     sorted_layers = [L for L in sorted_layers if L.get("bbox")]
 
-    psd_path = ctx.run_dir / "poster.psd"
-    svg_path = ctx.run_dir / "poster.svg"
-    html_path = ctx.run_dir / "poster.html"
-    preview_path = ctx.run_dir / "preview.png"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    psd_path = iter_dir / "poster.psd"
+    svg_path = iter_dir / "poster.svg"
+    html_path = iter_dir / "poster.html"
+    preview_path = iter_dir / "preview.png"
 
     layer_manifest: list[dict[str, Any]] = []
 
     try:
         _write_psd(sorted_layers, cw, ch, psd_path, layer_manifest, ctx)
     except Exception as e:
-        return obs_error(f"PSD write failed: {e}")
+        return obs_error(f"PSD write failed: {e}", category="api")
 
     try:
         _write_svg(sorted_layers, cw, ch, svg_path, ctx)
     except Exception as e:
-        return obs_error(f"SVG write failed: {e}")
+        return obs_error(f"SVG write failed: {e}", category="api")
 
     try:
         write_html(sorted_layers, cw, ch, html_path, ctx)
     except Exception as e:
-        return obs_error(f"HTML write failed: {e}")
+        return obs_error(f"HTML write failed: {e}", category="api")
 
     try:
         _write_preview(sorted_layers, cw, ch, preview_path, ctx)
     except Exception as e:
-        return obs_error(f"preview render failed: {e}")
+        return obs_error(f"preview render failed: {e}", category="api")
 
     text_overlap_warnings = _detect_text_overlaps(sorted_layers)
     xref_misses = _detect_missing_figure_xrefs(sorted_layers, spec)
@@ -311,53 +391,56 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         layer_manifest=layer_manifest,
     )
     ctx.state["composition"] = artifacts
+    _refresh_final_links(iter_dir, ctx,
+                         ["poster.psd", "poster.svg", "poster.html", "preview.png"])
     log("composite.done",
+        iter=iter_num,
         psd=str(psd_path), svg=str(svg_path), html=str(html_path),
         preview=str(preview_path), layers=len(sorted_layers),
         text_overlaps=len(text_overlap_warnings),
         figure_xref_misses=len(xref_misses))
 
-    summary = (
-        f"Composed {len(sorted_layers)} layers into PSD + SVG + HTML + preview "
-        f"({cw}×{ch}px)"
-    )
-    if text_overlap_warnings:
-        pairs = ", ".join(
-            f"{w['layer_a']}↔{w['layer_b']} (y_ov={w['y_overlap_px']}px)"
-            for w in text_overlap_warnings[:5]
-        )
-        summary += (
-            f"\n⚠ {len(text_overlap_warnings)} text-layer collision(s): {pairs}. "
-            "Fix via edit_layer: widen bbox.h ≥ font_size_px × 1.2 or shift the "
-            "lower layer's y down."
-        )
-    if xref_misses:
-        ids = ", ".join(xref_misses[:5])
-        summary += (
-            f"\n⚠ {len(xref_misses)} placed ingest figure(s)/table(s) not "
-            f"cross-referenced in body text: {ids}. Add '(Fig. N)' / '(Table N)' "
-            "citations to a nearby caption or body layer."
-        )
-
-    return obs_ok(
-        summary,
-        artifacts=[str(psd_path), str(svg_path), str(html_path), str(preview_path)],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
+        "artifact_type": "poster",
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
+        "psd_sha256": sha256_file(psd_path),
+        "svg_sha256": sha256_file(svg_path),
+        "html_sha256": sha256_file(html_path),
+        "n_layers": len(sorted_layers),
+        "canvas": {"w_px": cw, "h_px": ch},
+        # Versioned paths: each iteration's outputs survive on disk for
+        # DPO / layered-gen training. Use this relative_path; final/ is
+        # only a convenience symlink for product consumers.
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "html_relative_path": f"composites/iter_{iter_num:02d}/poster.html",
+        # Real environment state — text overlaps and missing xrefs are
+        # actual quality signals. The policy can decide whether to fix
+        # them via edit_layer or move on. NOT prose hints.
+        "text_overlap_warnings": text_overlap_warnings,
+        "xref_misses": xref_misses,
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
-def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
+def _composite_landing(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     """HTML-only landing-mode composite. Reads the section tree from
     design_spec.layer_graph (not ctx.state['rendered_layers'])."""
     layer_graph = list(spec.layer_graph or [])
     if not layer_graph:
         return obs_error(
             "landing design_spec has empty layer_graph — "
-            "propose_design_spec with a section tree first"
+            "propose_design_spec with a section tree first",
+            category="validation",
         )
 
-    html_path = ctx.run_dir / "index.html"
-    preview_path = ctx.run_dir / "preview.png"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    html_path = iter_dir / "index.html"
+    preview_path = iter_dir / "preview.png"
     canvas = spec.canvas or {}
     cw = int(canvas.get("w_px", 1200))
 
@@ -409,12 +492,12 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
     try:
         write_landing_html(spec, html_path, ctx)
     except Exception as e:
-        return obs_error(f"landing HTML write failed: {e}")
+        return obs_error(f"landing HTML write failed: {e}", category="api")
 
     try:
         _write_landing_preview(spec, preview_path, ctx)
     except Exception as e:
-        return obs_error(f"landing preview render failed: {e}")
+        return obs_error(f"landing preview render failed: {e}", category="api")
 
     artifacts = CompositionArtifacts(
         psd_path=None,
@@ -435,15 +518,25 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
         html=str(html_path), preview=str(preview_path),
         sections=section_ct, images=image_ct, top_level=len(layer_graph))
 
-    return obs_ok(
-        f"Composed landing page: {section_ct} section(s), {image_ct} image(s) "
-        f"→ HTML + preview (width {cw}px, flow layout)",
-        artifacts=[str(html_path), str(preview_path)],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    _refresh_final_links(iter_dir, ctx, ["index.html", "preview.png"])
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
+        "artifact_type": "landing",
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
+        "html_sha256": sha256_file(html_path),
+        "n_sections": section_ct,
+        "n_images": image_ct,
+        "canvas_width_px": cw,
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "html_relative_path": f"composites/iter_{iter_num:02d}/index.html",
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
-def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
+def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     """PPTX-primary deck composite. Reads the slide tree from
     design_spec.layer_graph (top-level `kind="slide"` nodes). Writes:
       - deck.pptx — native PowerPoint file (editable TextFrames)
@@ -455,17 +548,20 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
     if not slides:
         return obs_error(
             "deck design_spec has no slides — propose_design_spec with a "
-            "layer_graph containing at least one kind=\"slide\" node first"
+            "layer_graph containing at least one kind=\"slide\" node first",
+            category="validation",
         )
 
     # Hydrate inline images inside slides (same pattern as landing — planner
     # may declare image children separately and call generate_image later).
     _hydrate_deck_image_srcs(slides, ctx)
 
-    pptx_path = ctx.run_dir / "deck.pptx"
-    slides_dir = ctx.run_dir / "slides"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    pptx_path = iter_dir / "deck.pptx"
+    slides_dir = iter_dir / "slides"
     slides_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = ctx.run_dir / "preview.png"
+    preview_path = iter_dir / "preview.png"
 
     canvas = spec.canvas or {}
     slide_w = int(canvas.get("w_px") or 1920)
@@ -474,7 +570,7 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
     except Exception as e:
-        return obs_error(f"PPTX write failed: {e}")
+        return obs_error(f"PPTX write failed: {e}", category="api")
 
     slide_pngs: list[Path] = []
     for idx, slide_node in enumerate(slides):
@@ -483,12 +579,12 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
             render_slide_preview_png(slide_node, slide_w, slide_h, png_path, ctx)
             slide_pngs.append(png_path)
         except Exception as e:
-            return obs_error(f"slide {idx} preview render failed: {e}")
+            return obs_error(f"slide {idx} preview render failed: {e}", category="api")
 
     try:
         build_deck_preview_grid(slide_pngs, preview_path)
     except Exception as e:
-        return obs_error(f"deck preview grid failed: {e}")
+        return obs_error(f"deck preview grid failed: {e}", category="api")
 
     manifest: list[dict[str, Any]] = []
     for idx, slide_node in enumerate(slides):
@@ -530,12 +626,22 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
         pptx=str(pptx_path), preview=str(preview_path),
         slides=slide_count, images=image_ct)
 
-    return obs_ok(
-        f"Composed deck: {slide_count} slide(s), {image_ct} inline image(s) "
-        f"→ PPTX + per-slide previews + grid ({slide_w}×{slide_h}px)",
-        artifacts=[str(pptx_path), str(preview_path), *[str(p) for p in slide_pngs]],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    _refresh_final_links(iter_dir, ctx, ["deck.pptx", "preview.png"])
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
+        "artifact_type": "deck",
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
+        "pptx_sha256": sha256_file(pptx_path),
+        "n_slides": slide_count,
+        "n_images": image_ct,
+        "canvas": {"w_px": slide_w, "h_px": slide_h},
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "pptx_relative_path": f"composites/iter_{iter_num:02d}/deck.pptx",
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
 def _hydrate_poster_layer_bboxes(rendered: dict[str, dict[str, Any]],

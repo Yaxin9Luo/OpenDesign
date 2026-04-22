@@ -39,3 +39,4 @@ Paper2Any/
 
 # ---- Claude Code local state ----
 .claude/
+dataset/

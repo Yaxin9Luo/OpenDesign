@@ -11,8 +11,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from ._contract import ToolContext, obs_error, obs_ok, obs_partial
-from ..schema import ToolObservation
+from ._contract import ToolContext, obs_error, obs_ok
+from ..schema import ToolResultRecord
 from ..util.io import sha256_file
 from ..util.logging import log
 
@@ -64,10 +64,10 @@ def _wrap_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str
     return lines or [""]
 
 
-def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     spec = ctx.state.get("design_spec")
     if spec is None:
-        return obs_error("propose_design_spec must be called first")
+        return obs_error("propose_design_spec must be called first", category="validation")
 
     canvas = spec.canvas
     cw, ch = int(canvas["w_px"]), int(canvas["h_px"])
@@ -86,7 +86,7 @@ def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservat
     try:
         font = ImageFont.truetype(str(font_path), size=font_size)
     except Exception as e:
-        return obs_error(f"font load failed ({font_path}): {e}")
+        return obs_error(f"font load failed ({font_path}): {e}", category="validation")
 
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -133,7 +133,12 @@ def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservat
         draw.text((x, _y), line, **kw)
         _y += lh + line_gap
 
-    out_path = ctx.layers_dir / f"text_{layer_id}.png"
+    # v2.2 versioning: each render bumps the layer's version counter and
+    # writes to a new file (prior versions stay on disk for training data).
+    prior = ctx.state["rendered_layers"].get(layer_id) or {}
+    prior_sha = prior.get("sha256")
+    version = ctx.next_layer_version(layer_id)
+    out_path = ctx.layers_dir / f"text_{layer_id}.v{version}.png"
     img.save(out_path, format="PNG", optimize=True)
     sha = sha256_file(out_path)
 
@@ -151,17 +156,28 @@ def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservat
         "effects": effects,
         "src_path": str(out_path),
         "sha256": sha,
+        "version": version,
     }
     log("text.rendered", layer=name, font=resolved_family, fallback=was_fallback,
-        chars=len(text), path=str(out_path))
+        chars=len(text), path=str(out_path), version=version)
 
-    summary = f"Rendered text layer '{name}' ({len(text)} chars, {resolved_family}) → {out_path.name}"
+    payload: dict[str, Any] = {
+        "layer_id": layer_id,
+        "sha256": sha,
+        "relative_path": f"layers/text_{layer_id}.v{version}.png",
+        "version": version,
+    }
+    if prior_sha:
+        payload["supersedes_sha256"] = prior_sha
     if was_fallback:
-        return obs_partial(
-            summary + f" [WARN: font_family '{font_family}' not bundled; fell back to {resolved_family}]",
-            artifacts=[str(out_path)],
-        )
-    return obs_ok(summary, artifacts=[str(out_path)])
+        # Surface the font fallback as a warning the policy can learn from
+        # (not an error — text was still rendered). Using payload key keeps
+        # the result parseable; no prose.
+        payload["font_fallback"] = {
+            "requested": font_family,
+            "used": resolved_family,
+        }
+    return obs_ok(payload)
 
 
 def _line_x(align: str, bx: int, bw: int, line_w: int) -> int:

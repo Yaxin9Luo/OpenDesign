@@ -1,33 +1,39 @@
 """critique — vision call on the latest preview, returns a CritiqueResult.
 
-Wraps `longcat_design.critic.Critic` so the planner can invoke critiques inline.
-The full CritiqueResult is appended to ctx.state['critique_results'] and also
-serialized to disk (artifact path returned for SFT/DPO replay).
+Wraps `longcat_design.critic.Critic` so the planner can invoke critiques
+inline. The full CritiqueResult is appended to ctx.state['critique_results']
+(runtime cache) AND embedded verbatim into the tool_result payload (for
+training data — verdict / score / issues / rationale are the ground-truth
+reward signal that mid-training SFT and RL post-training need).
+
+The critic's extended-thinking blocks (if any) are stashed in
+ctx.state["_pending_critic_thinking"] and picked up by PlannerLoop, which
+emits them as actor="critic" type="reasoning" steps right after this tool
+result. That's the second CoT stream in the trajectory.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from ._contract import ToolContext, obs_error, obs_ok
-from ..schema import ToolObservation
+from ..schema import ToolResultRecord
 from ..util.io import atomic_write_json
 from ..util.logging import log
 
 
-def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     spec = ctx.state.get("design_spec")
     if spec is None:
-        return obs_error("propose_design_spec must be called first")
+        return obs_error("propose_design_spec must be called first", category="validation")
 
     prior = len(ctx.state["critique_results"])
     if prior >= ctx.settings.max_critique_iters:
         return obs_error(
-            f"max_critique_iters ({ctx.settings.max_critique_iters}) reached — "
-            "stop revising and call finalize",
-            next_actions=["call finalize"],
+            f"max_critique_iters ({ctx.settings.max_critique_iters}) reached",
+            category="validation",
+            payload={"max_iters": ctx.settings.max_critique_iters, "prior": prior},
         )
 
     composition = ctx.state.get("composition")
@@ -35,7 +41,10 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         composition.preview_path if composition else None
     )
     if not preview_path or not Path(preview_path).exists():
-        return obs_error("no preview.png available — call composite first")
+        return obs_error(
+            "no preview.png available — call composite first",
+            category="not_found",
+        )
 
     from ..critic import Critic
     critic = Critic(ctx.settings)
@@ -49,28 +58,20 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
             max_iters=ctx.settings.max_critique_iters,
         )
     except Exception as e:
-        return obs_error(f"critic call failed: {e}")
+        return obs_error(f"critic call failed: {e}", category="api")
 
     ctx.state["critique_results"].append(result)
-    # Stash extended-thinking blocks (if any) so PlannerLoop can append them
-    # as actor="critic" type="reasoning" steps in the agent_trace. Uses a
-    # single-use slot — planner pops it after the `critique` tool result.
     if thinking_records:
         ctx.state["_pending_critic_thinking"] = thinking_records
+
+    # Persist the raw critique result alongside the run artifacts (for
+    # offline inspection / DPO pair extraction). NOT referenced from the
+    # trajectory JSON — it's a sidecar.
     artifact_path = ctx.run_dir / f"critique_{iteration}.json"
     atomic_write_json(artifact_path, result.model_dump(mode="json"))
     log("critique.done", iter=iteration, verdict=result.verdict, score=result.score,
         n_issues=len(result.issues))
 
-    next_actions = (
-        ["call finalize — design passed self-review"] if result.verdict == "pass"
-        else ["adjust text layers (positions/colors/sizes), call composite again, "
-              "then optionally critique once more"] if result.verdict == "revise"
-        else ["call finalize — critique flagged issues but max iters reached"]
-    )
-    return obs_ok(
-        f"Critique iter={iteration} verdict={result.verdict} score={result.score:.2f} "
-        f"({len(result.issues)} issues)",
-        artifacts=[str(artifact_path)],
-        next_actions=next_actions,
-    )
+    # FULL critique dumped into the tool_result payload — this is the
+    # ground-truth reward signal for RL and a high-value SFT label.
+    return obs_ok(result.model_dump(mode="json"))

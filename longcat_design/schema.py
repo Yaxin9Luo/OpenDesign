@@ -1,16 +1,32 @@
-"""Pydantic models — single source of truth for the trajectory data shape.
+"""Pydantic models — two layers:
 
-Every field is designed to support multi-task SFT extraction:
-- (brief, design_spec) -> planner SFT
-- (design_spec, layer_graph) -> layered-gen SFT (Longcat-Next core target)
-- (layer.prompt, layer.src_path) -> image-gen SFT
-- agent_trace with text + tool_call + tool_result -> CoT/reasoning SFT
-- critique_loop pre/post layer_graph snapshots -> DPO pairs
+1. **Runtime models** (DesignSpec / LayerNode / CritiqueResult / ...):
+   the shapes tools and the critic pass around in memory. These are the
+   engineering primitives — NOT persisted in the final training-data
+   record.
+
+2. **Training-data models** (DistillTrajectory + AgentTraceStep +
+   ToolResultRecord + ThinkingBlockRecord + TrainingMetadata): the
+   on-disk `out/trajectories/<run_id>.json` shape. These are purpose-
+   built for mid-training SFT + RL post-training:
+
+   - thinking blocks (plain + redacted) captured verbatim with signatures
+   - full tool_use args as emitted by the model
+   - lean tool_result payload (IDs + sha256 + minimal state; NO paths,
+     NO descriptive summary, NO next-action hints — hints would leak
+     into the policy and cause reward hacking)
+   - episode-level reward (final_reward + terminal_status)
+   - per-turn usage for cost-aware RL reward shaping
+
+   Deliberately absent from DistillTrajectory: file paths, timestamps,
+   design_spec / layer_graph / composition (these live on disk under
+   out/runs/<run_id>/ if needed for inspection).
+
+Schema version: v2 (see docs/DATA-CONTRACT.md for evolution log).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -50,15 +66,24 @@ class ArtifactType(str, Enum):
     LANDING = "landing"     # self-contained HTML one-pager with flow layout
 
 
-Status = Literal["ok", "error", "partial", "not_found"]
-Actor = Literal["user", "planner", "tool", "critic", "system"]
+Status = Literal["ok", "error"]
+Actor = Literal["user", "planner", "tool", "critic"]
 StepType = Literal[
-    "input", "thought", "tool_call", "tool_result",
-    "design_spec", "critique", "finalize",
-    "artifact_switch",  # new v1.0: emitted when switch_artifact_type is called
-    "reasoning",        # v1 (training-data capture): one or more extended-thinking
-                        # blocks returned by Claude. Distinct from "thought" which is
-                        # the planner's free-form text block between tool calls.
+    "input",        # user brief — exactly one per trajectory, the training input root
+    "reasoning",    # extended-thinking blocks emitted by planner OR critic
+    "tool_call",    # planner emits a tool_use block
+    "tool_result",  # environment returns a ToolResultRecord
+    "finalize",     # terminal step — only emitted by the finalize tool path
+]
+ErrorCategory = Literal[
+    "validation",        # tool_args failed pydantic / schema validation
+    "safety_filter",     # NBP / Anthropic safety filter rejected the request
+    "api",               # upstream API error (network / 5xx / auth)
+    "timeout",           # call exceeded its budget
+    "not_found",         # referenced ID / asset doesn't exist
+    "unsupported_format",  # ingest_document on an unrecognized file type
+    "parse_error",       # critic / ingest model output failed to parse
+    "unknown",
 ]
 LayerKind = Literal[
     "background",    # full-canvas raster (poster/deck only)
@@ -184,54 +209,25 @@ class DesignSpec(BaseModel):
         return self
 
 
-class ToolObservation(BaseModel):
-    """Universal tool return contract — see agent-harness-construction skill."""
-    status: Status
-    summary: str
-    next_actions: list[str] = Field(default_factory=list)
-    artifacts: list[str] = Field(default_factory=list)
-
-
 class ThinkingBlockRecord(BaseModel):
-    """One extended-thinking block captured from Claude's response (v1).
+    """One extended-thinking block captured from Claude's response.
 
-    Anthropic returns two sub-types: `thinking` (plain CoT text) and
-    `redacted_thinking` (encrypted — text is unavailable but the block
-    MUST still round-trip back verbatim via `signature` or the next
-    tool_use turn 400s). Both are preserved here.
+    Anthropic returns two sub-types:
+      - `thinking`: plain CoT text + opaque `signature` for verification
+      - `redacted_thinking`: encrypted (text unavailable) + opaque `data`
+        which we map onto `signature` to keep the record shape uniform.
 
-    Captured for training-data lanes (mid-training / SFT / RL). The
-    `signature` field is opaque to us and only meaningful to Anthropic's
-    verification; record it as-is for offline replay.
+    Both must round-trip back verbatim on the next turn or Anthropic 400s,
+    so signatures are persisted even though we never interpret them.
     """
     thinking: str = ""              # empty when is_redacted=True
-    signature: str = ""              # Anthropic-issued; opaque
+    signature: str = ""              # Anthropic-issued; opaque to us
     is_redacted: bool = False
 
 
-class AgentTraceStep(BaseModel):
-    step_idx: int
-    timestamp: datetime
-    actor: Actor
-    type: StepType
-    tool_use_id: str | None = None
-    tool_name: str | None = None
-    tool_args: dict[str, Any] | None = None
-    observation: ToolObservation | None = None
-    text: str | None = None
-    spec_snapshot: DesignSpec | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    model: str | None = None
-
-    # v1 (training-data capture) — all optional, backward-compatible
-    thinking_blocks: list[ThinkingBlockRecord] | None = None
-    stop_reason: str | None = None
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-
-
 class CritiqueIssue(BaseModel):
+    """Runtime model used by Critic. Not persisted directly in trajectory —
+    instead embedded inside the critique tool's tool_result.payload."""
     severity: Severity
     layer_id: str | None = None
     category: IssueCategory
@@ -240,6 +236,9 @@ class CritiqueIssue(BaseModel):
 
 
 class CritiqueResult(BaseModel):
+    """Runtime model used by Critic. The full result is dumped into the
+    `payload` of the corresponding tool_result step (so the policy sees
+    verdict / score / issues / rationale exactly as the critic emitted)."""
     iteration: int
     verdict: Verdict
     score: float
@@ -255,25 +254,116 @@ class CritiqueResult(BaseModel):
 
 
 class CompositionArtifacts(BaseModel):
-    """Paths are per-artifact-type: poster produces PSD+SVG+HTML+preview;
-    landing (v1.0 #8) produces HTML+preview only (no PSD/SVG); deck (v1.0 #7)
-    produces PPTX + per-slide PNGs + grid preview. `None` means "not applicable
-    for this artifact type"."""
+    """Runtime model used by composite tool to track local file paths
+    inside ctx.state. NOT persisted in DistillTrajectory (paths leak the
+    user's file system; lean tool_result payload carries sha256 instead).
+    apply_edits.py uses this for product round-trip — file paths there
+    live on disk under out/runs/<run_id>/, not in the trajectory JSON."""
     psd_path: str | None = None
     svg_path: str | None = None
-    html_path: str | None = None        # v1.0 #6 — self-contained, contenteditable
-    pptx_path: str | None = None        # v1.0 #7 — deck native PowerPoint file
+    html_path: str | None = None
+    pptx_path: str | None = None
     preview_path: str | None = None
     layer_manifest: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class Trajectory(BaseModel):
+# === Training-data models ===
+
+
+class ToolResultRecord(BaseModel):
+    """Lean tool result for distillation + RL training.
+
+    Replaces the legacy `ToolObservation`. Designed to give the policy
+    enough state to act on the next turn — and nothing else:
+
+      - `status`: binary (RL reward signal base)
+      - `error_message`: full text on error so the policy can learn
+        recovery; never truncated
+      - `error_category`: typed enum so reward models can distinguish
+        model-side errors (validation) from environment errors
+        (api / safety_filter / timeout)
+      - `payload`: success-side minimal state — IDs the next tool_call
+        must reference (layer_id, run_id), sha256 of artifacts so the
+        policy can verify its own action produced a unique output, and
+        for the critique tool the full CritiqueResult dump
+
+    EXPLICITLY NOT INCLUDED: `summary` (descriptive log noise),
+    `next_actions` (hint that would cause shortcut learning),
+    `artifacts` (file paths, leak host filesystem).
+    """
+    status: Status
+    error_message: str | None = None
+    error_category: ErrorCategory | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTraceStep(BaseModel):
+    """A single step in the agent's interaction loop. The 5 step types
+    cover the entire trajectory; legacy装饰性 step types (thought /
+    artifact_switch / design_spec / critique) are gone — their info is
+    recoverable from tool_call args / tool_result payload."""
+    step_idx: int
+    actor: Actor
+    type: StepType
+
+    # Only on tool_call
+    tool_use_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict[str, Any] | None = None     # full input as model emitted
+
+    # Only on tool_result
+    tool_result: ToolResultRecord | None = None
+
+    # Only on reasoning (planner OR critic)
+    thinking_blocks: list[ThinkingBlockRecord] | None = None
+
+    # Only on input / finalize
+    text: str | None = None
+
+    # Populated on assistant-emitting steps (reasoning + tool_call cluster)
+    model: str | None = None
+    stop_reason: str | None = None
+    usage: dict[str, int] | None = None
+    # usage shape: {"input": N, "output": N, "cache_read": N, "cache_create": N}
+
+
+class TrainingMetadata(BaseModel):
+    """Episode-level metadata carried in trajectory JSON."""
+    schema_version: str = "v2"
+    planner_model: str
+    critic_model: str
+    image_model: str
+    planner_thinking_budget: int
+    critic_thinking_budget: int
+    interleaved_thinking: bool
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+    estimated_cost_usd: float
+    wall_time_s: float
+    source: Literal["agent_run", "apply_edits"] = "agent_run"
+
+
+class DistillTrajectory(BaseModel):
+    """The on-disk training-data record for one run.
+
+    Top-level fields contain ONLY:
+      - run_id + brief (training input root)
+      - agent_trace (model decisions + lean tool results)
+      - episode-level reward signal (final_reward + terminal_status)
+      - training metadata (model IDs, token counts, thinking config)
+
+    Deliberately absent: design_spec, layer_graph, composition,
+    critique_loop, file paths, timestamps, descriptive summaries,
+    next_action hints. The product side (HTML / PSD / PPTX renders)
+    lives on disk under out/runs/<run_id>/ if needed for inspection.
+
+    Schema version: v2. NO backward compatibility with v0/v1 JSON.
+    """
     run_id: str
-    created_at: datetime
     brief: str
-    design_spec: DesignSpec
-    layer_graph: list[LayerNode]
     agent_trace: list[AgentTraceStep]
-    critique_loop: list[CritiqueResult] = Field(default_factory=list)
-    composition: CompositionArtifacts
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    final_reward: float | None = None       # = critique score on pass; None on abort/max_turns
+    terminal_status: Literal["pass", "revise", "fail", "max_turns", "abort"]
+    metadata: TrainingMetadata

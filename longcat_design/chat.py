@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .config import Settings, load_settings
 from .runner import PipelineRunner
-from .schema import Trajectory
+from .schema import ArtifactType, DistillTrajectory
 from .session import (
     ChatSession,
     TrajectoryRef,
@@ -167,7 +167,7 @@ def _handle_brief(brief: str, state: dict) -> None:
 
     ref = _trajectory_to_ref(traj, traj_path)
     session.trajectories.append(ref)
-    session.current_artifact_type = traj.design_spec.artifact_type
+    session.current_artifact_type = ref.artifact_type
     session.append_assistant(
         _assistant_summary(traj, ref),
         trajectory_id=traj.run_id,
@@ -240,17 +240,28 @@ def _build_contextual_brief(user_text: str, session: ChatSession) -> str:
 
 
 def _load_prior_design_spec(ref: TrajectoryRef) -> dict | None:
-    """Load the DesignSpec dict from a prior Trajectory on disk.
+    """Load the DesignSpec dict from a prior trajectory on disk.
 
-    Returns None if the file is missing or malformed — caller falls back
-    to a metadata-only prior summary.
+    v2 trajectory shape: design_spec is no longer a top-level field.
+    Recover it by walking agent_trace for the most recent
+    propose_design_spec tool_call's args.
+
+    Returns None if the file is missing, malformed, or has no
+    propose_design_spec call (e.g. apply-edits placeholder run).
     """
     try:
         path = Path(ref.trajectory_path)
         if not path.exists():
             return None
         with open(path, encoding="utf-8") as f:
-            return json.load(f).get("design_spec")
+            data = json.load(f)
+        # Walk trace in reverse to find the latest propose_design_spec args.
+        for s in reversed(data.get("agent_trace") or []):
+            if s.get("type") == "tool_call" and s.get("tool_name") == "propose_design_spec":
+                spec = (s.get("tool_args") or {}).get("design_spec")
+                if spec:
+                    return spec
+        return None
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -546,26 +557,124 @@ def _handle_exit(state: dict) -> None:
 # --- Presentation ---------------------------------------------------------
 
 
-def _trajectory_to_ref(traj: Trajectory, traj_path: Path) -> TrajectoryRef:
-    latest_critique = traj.critique_loop[-1] if traj.critique_loop else None
+def _trajectory_to_ref(traj: DistillTrajectory, traj_path: Path) -> TrajectoryRef:
+    """Derive a session-level TrajectoryRef from a v2 DistillTrajectory.
+
+    v2 trajectory drops `composition` / `design_spec` / `layer_graph` / `critique_loop`
+    from the JSON, so we recover the artifact_type + n_layers + critique
+    verdict by walking the trace, and resolve product file paths from the
+    expected run_dir layout (`out/runs/<run_id>/...`).
+    """
+    artifact_type_str = _last_artifact_type(traj) or ArtifactType.POSTER.value
+    artifact_type_enum = ArtifactType(artifact_type_str)
+
+    n_layers = _count_unique_layers(traj)
+    last_crit = _last_critique_payload(traj)
+
+    # v2.2 versioning: composite outputs live under composites/iter_<N>/;
+    # final/ has symlinks pointing at the most recent iteration. Resolve
+    # the symlink so TrajectoryRef.preview_path etc. are absolute paths
+    # the user (or a downstream tool) can stat without going through the
+    # symlink layer.
+    run_dir = traj_path.parent.parent / "runs" / traj.run_id
+    final_dir = run_dir / "final"
+
+    def _maybe(name: str) -> str | None:
+        p = final_dir / name
+        if not p.exists():
+            return None
+        try:
+            return str(p.resolve())
+        except OSError:
+            return str(p)
+
     return TrajectoryRef(
         run_id=traj.run_id,
-        artifact_type=traj.design_spec.artifact_type,
-        created_at=traj.created_at,
+        artifact_type=artifact_type_enum,
+        # v2 trajectory has no created_at; use the run_id timestamp prefix
+        # or fall back to file mtime.
+        created_at=_run_id_to_datetime(traj.run_id) or datetime.fromtimestamp(
+            traj_path.stat().st_mtime if traj_path.exists() else datetime.now().timestamp()
+        ),
         trajectory_path=str(traj_path),
-        preview_path=traj.composition.preview_path,
-        psd_path=traj.composition.psd_path,
-        svg_path=traj.composition.svg_path,
-        html_path=traj.composition.html_path,
-        n_layers=len(traj.layer_graph),
-        verdict=latest_critique.verdict if latest_critique else None,
-        score=latest_critique.score if latest_critique else None,
-        cost_usd=float(traj.metadata.get("estimated_cost_usd", 0.0)),
-        wall_s=float(traj.metadata.get("wall_time_s", 0.0)),
+        preview_path=_maybe("preview.png"),
+        psd_path=_maybe("poster.psd"),
+        svg_path=_maybe("poster.svg"),
+        html_path=_maybe("poster.html") or _maybe("index.html"),
+        pptx_path=_maybe("deck.pptx"),
+        n_layers=n_layers,
+        verdict=last_crit.get("verdict") if last_crit else None,
+        score=float(last_crit["score"]) if last_crit and last_crit.get("score") is not None else None,
+        cost_usd=float(traj.metadata.estimated_cost_usd),
+        wall_s=float(traj.metadata.wall_time_s),
     )
 
 
-def _assistant_summary(traj: Trajectory, ref: TrajectoryRef) -> str:
+# --- v2 trajectory helpers (recover info from agent_trace) -----------------
+
+
+def _last_artifact_type(traj: DistillTrajectory) -> str | None:
+    """Find the artifact_type from the most recent switch_artifact_type
+    tool_call in the trace, or from a propose_design_spec args."""
+    for s in reversed(traj.agent_trace):
+        if s.type == "tool_call":
+            if s.tool_name == "switch_artifact_type":
+                t = (s.tool_args or {}).get("type")
+                if t:
+                    return t
+            if s.tool_name == "propose_design_spec":
+                spec = (s.tool_args or {}).get("design_spec") or {}
+                t = spec.get("artifact_type")
+                if t:
+                    return t
+    return None
+
+
+def _last_design_spec(traj: DistillTrajectory) -> dict | None:
+    """Recover the most recent DesignSpec from a propose_design_spec
+    tool_call's args. v2 trajectory no longer dumps design_spec at the
+    top level; this is the supported path."""
+    for s in reversed(traj.agent_trace):
+        if s.type == "tool_call" and s.tool_name == "propose_design_spec":
+            spec = (s.tool_args or {}).get("design_spec")
+            if spec:
+                return spec
+    return None
+
+
+def _last_critique_payload(traj: DistillTrajectory) -> dict | None:
+    """Find the most recent critique tool_result.payload (full
+    CritiqueResult dump). Returns None if no critique was ever called."""
+    for s in reversed(traj.agent_trace):
+        if (s.type == "tool_result" and s.tool_name == "critique"
+                and s.tool_result and s.tool_result.status == "ok"):
+            return dict(s.tool_result.payload or {})
+    return None
+
+
+def _count_unique_layers(traj: DistillTrajectory) -> int:
+    seen: set[str] = set()
+    rendering = {"render_text_layer", "generate_background", "generate_image", "edit_layer"}
+    for s in traj.agent_trace:
+        if s.type == "tool_call" and s.tool_name in rendering:
+            lid = (s.tool_args or {}).get("layer_id")
+            if lid:
+                seen.add(lid)
+    return len(seen)
+
+
+def _run_id_to_datetime(run_id: str) -> datetime | None:
+    """run_id format is `YYYYMMDD-HHMMSS-<short>` (see util/ids.py)."""
+    try:
+        prefix = run_id.split("-", 2)
+        if len(prefix) < 2:
+            return None
+        return datetime.strptime(f"{prefix[0]}-{prefix[1]}", "%Y%m%d-%H%M%S")
+    except (ValueError, IndexError):
+        return None
+
+
+def _assistant_summary(traj: DistillTrajectory, ref: TrajectoryRef) -> str:
     """User-facing one-line summary (goes into message_history as content)."""
     verdict_str = f"{ref.verdict}({ref.score:.2f})" if ref.verdict else "no critique"
     return (
@@ -575,12 +684,12 @@ def _assistant_summary(traj: Trajectory, ref: TrajectoryRef) -> str:
     )
 
 
-def _display_turn_result(traj: Trajectory, ref: TrajectoryRef,
+def _display_turn_result(traj: DistillTrajectory, ref: TrajectoryRef,
                          elapsed: float, session: ChatSession) -> None:
     verdict_str = f"{ref.verdict} ({ref.score:.2f})" if ref.verdict else "no critique"
     print(f"\n  ✓ {ref.artifact_type.value} generated")
     print(f"    layers:     {ref.n_layers}")
-    print(f"    critique:   {verdict_str}")
+    print(f"    critique:   {verdict_str}  (terminal: {traj.terminal_status})")
     print(f"    cost:       ${ref.cost_usd}  ({ref.wall_s}s wall)")
     if ref.preview_path:
         print(f"    preview:    {ref.preview_path}")
@@ -590,6 +699,8 @@ def _display_turn_result(traj: Trajectory, ref: TrajectoryRef,
         print(f"    SVG:        {ref.svg_path}")
     if ref.html_path:
         print(f"    HTML:       {ref.html_path}")
+    if ref.pptx_path:
+        print(f"    PPTX:       {ref.pptx_path}")
     print(f"    trajectory: {ref.trajectory_path}")
     print(f"  session total: {len(session.trajectories)} artifact(s), "
           f"${session.total_cost_usd()}, {session.total_wall_s()}s")
