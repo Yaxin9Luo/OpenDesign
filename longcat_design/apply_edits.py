@@ -30,8 +30,8 @@ from bs4 import BeautifulSoup, Tag
 
 from .config import Settings, load_settings
 from .schema import (
-    ArtifactType, CompositionArtifacts, DesignSpec, LayerNode, SafeZone,
-    TextEffect, Trajectory,
+    ArtifactType, CompositionArtifacts, DesignSpec, DistillTrajectory,
+    LayerNode, SafeZone, TextEffect, TrainingMetadata,
 )
 from .tools import ToolContext
 from .tools.composite import composite
@@ -49,8 +49,18 @@ def apply_edits(
     *,
     settings: Settings | None = None,
     out_dir: Path | None = None,
-) -> tuple[Trajectory, Path]:
-    """Apply edits from `edited_html` — return (Trajectory, trajectory_path).
+) -> tuple[DistillTrajectory, Path, Path, list[str], list[str]]:
+    """Apply edits from `edited_html`.
+
+    Returns a 5-tuple `(traj, traj_path, run_dir, restored_layer_ids, skipped)`:
+      - `traj`: a v2 placeholder DistillTrajectory (agent_trace=[],
+        terminal_status="abort", metadata.source="apply_edits"). The trajectory
+        JSON is intentionally minimal — apply-edits is NOT an agent run, so
+        there's no model decisions / no CoT / no critique to capture.
+      - `traj_path`: out/trajectories/<run_id>.json
+      - `run_dir`: out/runs/<run_id>/  (contains the regenerated artifacts)
+      - `restored_layer_ids`: layers successfully recovered from the HTML
+      - `skipped`: layer_ids the parser couldn't restore
 
     Side-effects: creates `out/runs/<new_run_id>/` with poster.{psd,svg,html,
     preview.png} + `out/trajectories/<new_run_id>.json`.
@@ -124,11 +134,15 @@ def apply_edits(
             f"found in {edited_html} — is this a LongcatDesign HTML?"
         )
 
-    obs = composite({}, ctx=ctx)
-    if obs.status != "ok":
-        raise RuntimeError(f"composite failed: {obs.summary}")
+    result = composite({}, ctx=ctx)
+    if result.status != "ok":
+        raise RuntimeError(f"composite failed: {result.error_message or result.payload}")
 
-    traj = _build_trajectory(ctx, parent_run_id, edited_html, skipped, title)
+    # Recover the actually-restored layer_ids for the caller to display.
+    restored_ids = sorted(ctx.state["rendered_layers"].keys())
+
+    traj = _build_trajectory(ctx, settings, parent_run_id, edited_html,
+                              skipped, title)
     traj_path = settings.out_dir / "trajectories" / f"{new_id}.json"
     traj_path.parent.mkdir(parents=True, exist_ok=True)
     traj_path.write_text(
@@ -137,9 +151,9 @@ def apply_edits(
         encoding="utf-8",
     )
     log("apply.done", run_id=new_id, parent=parent_run_id or "(none)",
-        traj=str(traj_path), layers=len(traj.layer_graph))
+        traj=str(traj_path), layers=len(restored_ids))
 
-    return traj, traj_path
+    return traj, traj_path, run_dir, restored_ids, skipped
 
 
 # --- layer restoration ----------------------------------------------------
@@ -426,39 +440,38 @@ def _landing_text_from_div(div: Tag, skipped: list[str]) -> LayerNode | None:
     )
 
 
-def _build_trajectory(ctx: ToolContext, parent_run_id: str | None,
+def _build_trajectory(ctx: ToolContext, settings: Settings,
+                      parent_run_id: str | None,
                       source_html: Path, skipped: list[str],
-                      title: str) -> Trajectory:
-    # Landing keeps its layer_graph on design_spec (the section tree);
-    # poster rebuilds it from rendered_layers (the flat blackboard).
-    spec = ctx.state["design_spec"]
-    if spec.artifact_type == ArtifactType.LANDING:
-        layer_graph = list(spec.layer_graph or [])
-    else:
-        layer_graph = _layer_graph_from_rendered(ctx)
-    comp = ctx.state["composition"]
-    if not isinstance(comp, CompositionArtifacts):
-        comp = CompositionArtifacts.model_validate(comp)
+                      title: str) -> DistillTrajectory:
+    """Placeholder v2 trajectory for apply-edits runs.
 
-    metadata: dict[str, Any] = {
-        "version": "v1.0",
-        "source": "apply-edits",
-        "source_html": str(source_html),
-        "parent_run_id": parent_run_id,
-        "skipped_layers": skipped,
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-    return Trajectory(
+    apply-edits has no model decisions / no CoT / no critique to capture,
+    so the agent_trace is empty and metadata.source flags it for downstream
+    filtering. The real product output (HTML / PSD / SVG) lives in run_dir.
+    """
+    return DistillTrajectory(
         run_id=ctx.run_id,
-        created_at=datetime.now(),
         brief=(title or "(restored from edited HTML)")[:500],
-        design_spec=ctx.state["design_spec"],
-        layer_graph=layer_graph,
         agent_trace=[],
-        critique_loop=[],
-        composition=comp,
-        metadata=metadata,
+        final_reward=None,
+        terminal_status="abort",
+        metadata=TrainingMetadata(
+            schema_version="v2",
+            planner_model=settings.planner_model,
+            critic_model=settings.critic_model,
+            image_model=settings.image_model,
+            planner_thinking_budget=settings.planner_thinking_budget,
+            critic_thinking_budget=settings.critic_thinking_budget,
+            interleaved_thinking=settings.enable_interleaved_thinking,
+            total_input_tokens=0,
+            total_output_tokens=0,
+            total_cache_read_tokens=0,
+            total_cache_creation_tokens=0,
+            estimated_cost_usd=0.0,
+            wall_time_s=0.0,
+            source="apply_edits",
+        ),
     )
 
 

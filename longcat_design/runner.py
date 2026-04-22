@@ -2,20 +2,23 @@
 
 Owns: per-run paths, ToolContext, trajectory serialization. Does NOT own
 business logic; that lives in planner.py / critic.py / tools/*.
+
+v2 trajectory shape (training-data only): produces a DistillTrajectory
+containing only model decisions + lean tool results + episode-level reward.
+The product-side artifacts (HTML / PSD / SVG / PPTX) live on disk under
+out/runs/<run_id>/ and are NOT referenced from the trajectory JSON.
 """
 
 from __future__ import annotations
 
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import Settings
 from .planner import PlannerLoop
 from .schema import (
-    ArtifactType, CompositionArtifacts, DesignSpec, LayerNode, SafeZone,
-    TextEffect, Trajectory,
+    ArtifactType, DistillTrajectory, TrainingMetadata,
 )
 from .tools import ToolContext
 from .util.io import atomic_write_json, ensure_dirs
@@ -29,7 +32,7 @@ class PipelineRunner:
         self.settings = settings
 
     def run(self, brief: str,
-            attachments: list[Path] | None = None) -> tuple[Trajectory, Path]:
+            attachments: list[Path] | None = None) -> tuple[DistillTrajectory, Path]:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
@@ -55,102 +58,94 @@ class PipelineRunner:
         planner = PlannerLoop(self.settings, system_prompt)
         trace = planner.run(effective_brief, ctx)
 
+        # Both spec + composition are runtime-only state now; we still
+        # require them to have been produced (sanity check that the planner
+        # actually completed a full workflow) but do NOT persist them in
+        # the trajectory JSON.
         spec = ctx.state.get("design_spec")
         composition = ctx.state.get("composition")
         if spec is None:
-            raise RuntimeError("planner exited without proposing a DesignSpec")
+            log("run.warning", reason="planner exited without proposing a DesignSpec")
         if composition is None:
-            raise RuntimeError("planner exited without producing composition artifacts")
-
-        # Landing + Deck: the authoritative layer tree is the nested tree on
-        # the DesignSpec (rendered_layers may be empty or hold only raw image
-        # records, not a materialised graph). Poster: materialize from the
-        # rendered_layers blackboard, which is built up by render_text_layer
-        # and generate_background.
-        if spec.artifact_type in (ArtifactType.LANDING, ArtifactType.DECK):
-            final_layer_graph = list(spec.layer_graph or [])
-        else:
-            final_layer_graph = _materialize_layer_graph(ctx.state["rendered_layers"])
+            log("run.warning", reason="planner exited without producing composition artifacts")
 
         wall_s = round(time.monotonic() - wall_start, 2)
         in_tok, out_tok = planner.token_totals
+        cache_read, cache_create = planner.cache_totals
         cost = _estimate_cost(in_tok, out_tok, n_critiques=len(ctx.state["critique_results"]))
 
-        traj = Trajectory(
+        terminal_status, final_reward = _derive_episode_outcome(
+            ctx, finalized=ctx.state.get("finalized", False),
+            spec_present=spec is not None, composition_present=composition is not None,
+        )
+
+        traj = DistillTrajectory(
             run_id=run_id,
-            created_at=datetime.now(),
             brief=effective_brief,
-            design_spec=spec,
-            layer_graph=final_layer_graph,
             agent_trace=trace,
-            critique_loop=ctx.state["critique_results"],
-            composition=composition,
-            metadata={
-                "planner_model": self.settings.planner_model,
-                "critic_model": self.settings.critic_model,
-                "image_model": self.settings.image_model,
-                "total_input_tokens": in_tok,
-                "total_output_tokens": out_tok,
-                "estimated_cost_usd": cost,
-                "wall_time_s": wall_s,
-                "max_critique_iters": self.settings.max_critique_iters,
-                "max_planner_turns": self.settings.max_planner_turns,
-                "finalize_notes": ctx.state.get("finalize_notes", ""),
-                "attachments": [str(p) for p in attachments],
-                # v1 (training-data capture) — record thinking config so
-                # downstream loaders can filter trajectories with CoT.
-                "planner_thinking_budget": self.settings.planner_thinking_budget,
-                "critic_thinking_budget": self.settings.critic_thinking_budget,
-                "interleaved_thinking": self.settings.enable_interleaved_thinking,
-                "version": "v1",
-            },
+            final_reward=final_reward,
+            terminal_status=terminal_status,
+            metadata=TrainingMetadata(
+                schema_version="v2",
+                planner_model=self.settings.planner_model,
+                critic_model=self.settings.critic_model,
+                image_model=self.settings.image_model,
+                planner_thinking_budget=self.settings.planner_thinking_budget,
+                critic_thinking_budget=self.settings.critic_thinking_budget,
+                interleaved_thinking=self.settings.enable_interleaved_thinking,
+                total_input_tokens=in_tok,
+                total_output_tokens=out_tok,
+                total_cache_read_tokens=cache_read,
+                total_cache_creation_tokens=cache_create,
+                estimated_cost_usd=cost,
+                wall_time_s=wall_s,
+                source="agent_run",
+            ),
         )
 
         traj_path = traj_dir / f"{run_id}.json"
         atomic_write_json(traj_path, traj.model_dump(mode="json"))
         log("run.done", run_id=run_id, traj=str(traj_path),
             wall_s=wall_s, cost_usd=cost,
-            n_layers=len(final_layer_graph), n_critiques=len(ctx.state["critique_results"]))
+            terminal_status=terminal_status, final_reward=final_reward,
+            n_steps=len(trace), n_critiques=len(ctx.state["critique_results"]))
 
         return traj, traj_path
 
 
-def _materialize_layer_graph(rendered: dict[str, dict[str, Any]]) -> list[LayerNode]:
-    """Convert ctx.state['rendered_layers'] (dict-by-id) to a flat
-    LayerNode list ordered by z.
+def _derive_episode_outcome(
+    ctx: ToolContext,
+    *,
+    finalized: bool,
+    spec_present: bool,
+    composition_present: bool,
+) -> tuple[str, float | None]:
+    """Compute (terminal_status, final_reward) from the run's end state.
 
-    Skips layers with `bbox=None` — those are "orphaned" ingest
-    candidates the planner registered via `ingest_document` but never
-    placed in the DesignSpec (v1.2 paper2any ingest commonly
-    pre-registers many figure candidates; the planner only references
-    a subset).
+    - "pass": last critique verdict==pass; final_reward=critique_score
+    - "revise": hit max_critique_iters with last verdict==revise; reward=score
+    - "fail": last verdict==fail; reward=score (low)
+    - "max_turns": no finalize, no spec/composition; reward=None
+    - "abort": catch-all when finalize never fired and we have partial state
     """
-    nodes: list[LayerNode] = []
-    for L in sorted(rendered.values(), key=lambda x: int(x.get("z_index", 0))):
-        bbox = L.get("bbox")
-        if bbox is None:
-            continue
-        bb = SafeZone(x=int(bbox["x"]), y=int(bbox["y"]),
-                      w=int(bbox["w"]), h=int(bbox["h"]))
-        eff_dict = L.get("effects") or {}
-        effects = TextEffect(**eff_dict) if (eff_dict and L.get("kind") == "text") else None
-        nodes.append(LayerNode(
-            layer_id=L["layer_id"],
-            name=L["name"],
-            kind=L["kind"],
-            z_index=int(L.get("z_index", 0)),
-            bbox=bb,
-            text=L.get("text"),
-            font_family=L.get("font_family"),
-            font_size_px=L.get("font_size_px"),
-            align=L.get("align"),
-            effects=effects,
-            prompt=L.get("prompt"),
-            aspect_ratio=L.get("aspect_ratio"),
-            image_size=L.get("image_size"),
-            src_path=L.get("src_path"),
-        ))
-    return nodes
+    crits = ctx.state.get("critique_results") or []
+    if crits:
+        last = crits[-1]
+        score = float(last.score)
+        if last.verdict == "pass":
+            return "pass", score
+        if last.verdict == "revise":
+            # finalize after revise → counts as "revise" terminal (not great
+            # but the planner stopped; reward signals "kinda OK")
+            return "revise", score
+        return "fail", score
+    if not spec_present:
+        return "max_turns", None
+    if not composition_present:
+        return "abort", None
+    # finalize fired but no critique was ever called — count as pass with
+    # reward None (no signal). This is rare but possible.
+    return "pass" if finalized else "abort", None
 
 
 def _estimate_cost(input_tokens: int, output_tokens: int, *, n_critiques: int) -> float:

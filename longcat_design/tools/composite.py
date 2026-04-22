@@ -19,12 +19,13 @@ from PIL import Image
 from psd_tools import PSDImage
 from psd_tools.constants import BlendMode, Compression
 
+from ..util.io import sha256_file
 from ._contract import ToolContext, obs_error, obs_ok
 from ._deck_preview import build_deck_preview_grid
 from ._font_embed import build_font_face_css
 from .html_renderer import write_html, write_landing_html
 from .pptx_renderer import render_slide_preview_png, write_pptx
-from ..schema import ArtifactType, CompositionArtifacts, ToolObservation
+from ..schema import ArtifactType, CompositionArtifacts, ToolResultRecord
 from ..util.logging import log
 from ..util.table_png import render_table_png
 
@@ -238,10 +239,10 @@ def _maybe_warn_aspect(layer: dict[str, Any], src_size: tuple[int, int],
             aspect_mismatch=round(ratio, 2))
 
 
-def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     spec = ctx.state.get("design_spec")
     if spec is None:
-        return obs_error("propose_design_spec must be called first")
+        return obs_error("propose_design_spec must be called first", category="validation")
 
     # Landing mode (v1.0 #8) is HTML-only — no PSD/SVG, no per-layer PNGs.
     # It reads the section tree directly from design_spec.layer_graph.
@@ -256,7 +257,10 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
 
     rendered = ctx.state["rendered_layers"]
     if not rendered:
-        return obs_error("no layers rendered yet — call generate_background and render_text_layer first")
+        return obs_error(
+            "no layers rendered yet — call generate_background and render_text_layer first",
+            category="validation",
+        )
 
     canvas = spec.canvas
     cw, ch = int(canvas["w_px"]), int(canvas["h_px"])
@@ -283,22 +287,22 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     try:
         _write_psd(sorted_layers, cw, ch, psd_path, layer_manifest, ctx)
     except Exception as e:
-        return obs_error(f"PSD write failed: {e}")
+        return obs_error(f"PSD write failed: {e}", category="api")
 
     try:
         _write_svg(sorted_layers, cw, ch, svg_path, ctx)
     except Exception as e:
-        return obs_error(f"SVG write failed: {e}")
+        return obs_error(f"SVG write failed: {e}", category="api")
 
     try:
         write_html(sorted_layers, cw, ch, html_path, ctx)
     except Exception as e:
-        return obs_error(f"HTML write failed: {e}")
+        return obs_error(f"HTML write failed: {e}", category="api")
 
     try:
         _write_preview(sorted_layers, cw, ch, preview_path, ctx)
     except Exception as e:
-        return obs_error(f"preview render failed: {e}")
+        return obs_error(f"preview render failed: {e}", category="api")
 
     text_overlap_warnings = _detect_text_overlaps(sorted_layers)
     xref_misses = _detect_missing_figure_xrefs(sorted_layers, spec)
@@ -317,43 +321,31 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         text_overlaps=len(text_overlap_warnings),
         figure_xref_misses=len(xref_misses))
 
-    summary = (
-        f"Composed {len(sorted_layers)} layers into PSD + SVG + HTML + preview "
-        f"({cw}×{ch}px)"
-    )
-    if text_overlap_warnings:
-        pairs = ", ".join(
-            f"{w['layer_a']}↔{w['layer_b']} (y_ov={w['y_overlap_px']}px)"
-            for w in text_overlap_warnings[:5]
-        )
-        summary += (
-            f"\n⚠ {len(text_overlap_warnings)} text-layer collision(s): {pairs}. "
-            "Fix via edit_layer: widen bbox.h ≥ font_size_px × 1.2 or shift the "
-            "lower layer's y down."
-        )
-    if xref_misses:
-        ids = ", ".join(xref_misses[:5])
-        summary += (
-            f"\n⚠ {len(xref_misses)} placed ingest figure(s)/table(s) not "
-            f"cross-referenced in body text: {ids}. Add '(Fig. N)' / '(Table N)' "
-            "citations to a nearby caption or body layer."
-        )
-
-    return obs_ok(
-        summary,
-        artifacts=[str(psd_path), str(svg_path), str(html_path), str(preview_path)],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    return obs_ok({
+        "artifact_type": "poster",
+        "preview_sha256": sha256_file(preview_path),
+        "psd_sha256": sha256_file(psd_path),
+        "svg_sha256": sha256_file(svg_path),
+        "html_sha256": sha256_file(html_path),
+        "n_layers": len(sorted_layers),
+        "canvas": {"w_px": cw, "h_px": ch},
+        # Real environment state — text overlaps and missing xrefs are
+        # actual quality signals. The policy can decide whether to fix
+        # them via edit_layer or move on. NOT prose hints.
+        "text_overlap_warnings": text_overlap_warnings,
+        "xref_misses": xref_misses,
+    })
 
 
-def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
+def _composite_landing(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     """HTML-only landing-mode composite. Reads the section tree from
     design_spec.layer_graph (not ctx.state['rendered_layers'])."""
     layer_graph = list(spec.layer_graph or [])
     if not layer_graph:
         return obs_error(
             "landing design_spec has empty layer_graph — "
-            "propose_design_spec with a section tree first"
+            "propose_design_spec with a section tree first",
+            category="validation",
         )
 
     html_path = ctx.run_dir / "index.html"
@@ -409,12 +401,12 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
     try:
         write_landing_html(spec, html_path, ctx)
     except Exception as e:
-        return obs_error(f"landing HTML write failed: {e}")
+        return obs_error(f"landing HTML write failed: {e}", category="api")
 
     try:
         _write_landing_preview(spec, preview_path, ctx)
     except Exception as e:
-        return obs_error(f"landing preview render failed: {e}")
+        return obs_error(f"landing preview render failed: {e}", category="api")
 
     artifacts = CompositionArtifacts(
         psd_path=None,
@@ -435,15 +427,17 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolObservation:
         html=str(html_path), preview=str(preview_path),
         sections=section_ct, images=image_ct, top_level=len(layer_graph))
 
-    return obs_ok(
-        f"Composed landing page: {section_ct} section(s), {image_ct} image(s) "
-        f"→ HTML + preview (width {cw}px, flow layout)",
-        artifacts=[str(html_path), str(preview_path)],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    return obs_ok({
+        "artifact_type": "landing",
+        "preview_sha256": sha256_file(preview_path),
+        "html_sha256": sha256_file(html_path),
+        "n_sections": section_ct,
+        "n_images": image_ct,
+        "canvas_width_px": cw,
+    })
 
 
-def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
+def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     """PPTX-primary deck composite. Reads the slide tree from
     design_spec.layer_graph (top-level `kind="slide"` nodes). Writes:
       - deck.pptx — native PowerPoint file (editable TextFrames)
@@ -455,7 +449,8 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
     if not slides:
         return obs_error(
             "deck design_spec has no slides — propose_design_spec with a "
-            "layer_graph containing at least one kind=\"slide\" node first"
+            "layer_graph containing at least one kind=\"slide\" node first",
+            category="validation",
         )
 
     # Hydrate inline images inside slides (same pattern as landing — planner
@@ -474,7 +469,7 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
     except Exception as e:
-        return obs_error(f"PPTX write failed: {e}")
+        return obs_error(f"PPTX write failed: {e}", category="api")
 
     slide_pngs: list[Path] = []
     for idx, slide_node in enumerate(slides):
@@ -483,12 +478,12 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
             render_slide_preview_png(slide_node, slide_w, slide_h, png_path, ctx)
             slide_pngs.append(png_path)
         except Exception as e:
-            return obs_error(f"slide {idx} preview render failed: {e}")
+            return obs_error(f"slide {idx} preview render failed: {e}", category="api")
 
     try:
         build_deck_preview_grid(slide_pngs, preview_path)
     except Exception as e:
-        return obs_error(f"deck preview grid failed: {e}")
+        return obs_error(f"deck preview grid failed: {e}", category="api")
 
     manifest: list[dict[str, Any]] = []
     for idx, slide_node in enumerate(slides):
@@ -530,12 +525,14 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolObservation:
         pptx=str(pptx_path), preview=str(preview_path),
         slides=slide_count, images=image_ct)
 
-    return obs_ok(
-        f"Composed deck: {slide_count} slide(s), {image_ct} inline image(s) "
-        f"→ PPTX + per-slide previews + grid ({slide_w}×{slide_h}px)",
-        artifacts=[str(pptx_path), str(preview_path), *[str(p) for p in slide_pngs]],
-        next_actions=["call critique to self-review", "or call finalize"],
-    )
+    return obs_ok({
+        "artifact_type": "deck",
+        "preview_sha256": sha256_file(preview_path),
+        "pptx_sha256": sha256_file(pptx_path),
+        "n_slides": slide_count,
+        "n_images": image_ct,
+        "canvas": {"w_px": slide_w, "h_px": slide_h},
+    })
 
 
 def _hydrate_poster_layer_bboxes(rendered: dict[str, dict[str, Any]],

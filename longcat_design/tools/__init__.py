@@ -1,7 +1,7 @@
 """Tool registry — name → (JSON schema, handler).
 
 Schemas exposed verbatim to the Anthropic tool-use API. Handlers signature:
-    fn(args: dict, *, ctx: ToolContext) -> ToolObservation
+    fn(args: dict, *, ctx: ToolContext) -> ToolResultRecord
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ TOOL_SCHEMAS: list[dict] = [
             "different artifact type) BEFORE propose_design_spec. Default is "
             "'poster' if you skip this; but calling explicitly is recommended "
             "so the decision lands in the trajectory as its own event. "
-            "Returns ToolObservation{status, summary, next_actions, artifacts}."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -65,7 +65,7 @@ TOOL_SCHEMAS: list[dict] = [
             "with kind: \"image\" and the composite step hydrates src_path "
             "automatically. Standalone .png/.jpg files get a passthrough "
             "layer_id. Markdown ingestion returns raw text + any resolved "
-            "relative image refs. Returns ToolObservation; artifacts are the "
+            "relative image refs. Returns a tool result; artifacts are the "
             "extracted / copied image PNG paths."
         ),
         "input_schema": {
@@ -95,7 +95,7 @@ TOOL_SCHEMAS: list[dict] = [
             "tool calls operate on this spec. Re-call to revise. "
             "If `design_spec.artifact_type` is omitted, it falls back to the "
             "value set by switch_artifact_type (default: 'poster'). "
-            "Returns ToolObservation{status, summary, next_actions, artifacts}."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -121,7 +121,7 @@ TOOL_SCHEMAS: list[dict] = [
             "Generate a TEXT-FREE background raster via Gemini Nano Banana Pro. "
             "The prompt MUST describe a scene with NO text, characters, lettering, "
             "symbols, or logos — a separate text rendering pass overlays editable "
-            "type. Returns ToolObservation; artifact is the PNG path."
+            "type. Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -179,7 +179,7 @@ TOOL_SCHEMAS: list[dict] = [
             "design-system guide (e.g. 'soft 3D clay render, pastel palette' "
             "for claymorphism) so all images on the same landing feel "
             "stylistically coherent. "
-            "Returns ToolObservation; artifact is the PNG path."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -222,7 +222,7 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Rasterize a text run into a transparent RGBA PNG sized to the canvas. "
             "Pillow only. Supports stroke and shadow effects. "
-            "Returns ToolObservation; artifact is the PNG path."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -296,7 +296,7 @@ TOOL_SCHEMAS: list[dict] = [
             "the same layer_id; for brand assets call fetch_brand_asset. "
             "Use this for 'make the title bigger', 'try red', 'move the stamp "
             "down 40px', 'bolder shadow' — anything that tweaks one layer. "
-            "Returns ToolObservation{status, summary, artifacts}."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -364,7 +364,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "fetch_brand_asset",
         "description": (
-            "v0 STUB: always returns ToolObservation{status:'not_found'}. "
+            "v0 STUB: always returns status=error with category=not_found. "
             "Reserved for v1 Brand Kit. Planner should fall back to generated "
             "or composed elements."
         ),
@@ -382,7 +382,7 @@ TOOL_SCHEMAS: list[dict] = [
             "elements + base64-embedded background + subsetted-WOFF2 fonts in "
             "@font-face), and a flattened preview PNG. Reads layers from runner "
             "state — no need to pass layer_graph again. "
-            "Returns ToolObservation; artifacts = [psd_path, svg_path, preview_path]."
+            "Returns a tool result."
         ),
         "input_schema": {
             "type": "object",
@@ -393,7 +393,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "critique",
         "description": (
             "Run a vision-based self-critique on the latest preview.png against "
-            "design_spec. Returns ToolObservation{summary} plus a CritiqueResult "
+            "design_spec. Returns a tool result with a CritiqueResult payload "
             "JSON in artifacts[0]. Use AT MOST max_critique_iters times. If "
             "verdict='revise', adjust text layers (positions/colors/sizes) and "
             "call composite again; do NOT regenerate background unless a blocker "
@@ -415,7 +415,7 @@ TOOL_SCHEMAS: list[dict] = [
             "Signal that the design is done. Runner serializes the full Trajectory "
             "(brief + design_spec + layer_graph + agent_trace + critique_loop + "
             "composition + metadata) to trajectories/<run_id>.json. "
-            "Returns ToolObservation; trajectory file path is added by the runner."
+            "Returns a tool result; the runner finalizes the trajectory."
         ),
         "input_schema": {
             "type": "object",

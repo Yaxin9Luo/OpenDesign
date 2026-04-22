@@ -28,10 +28,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
 from PIL import Image
 from pydantic import ValidationError
 
+from .llm_backend import LLMBackend, make_backend
 from .schema import (
     ArtifactType, CritiqueIssue, CritiqueResult, DesignSpec, ThinkingBlockRecord,
 )
@@ -45,10 +45,9 @@ class Critic:
 
     def __init__(self, settings):
         self.settings = settings
-        client_kwargs: dict[str, Any] = {"api_key": settings.anthropic_api_key}
-        if settings.anthropic_base_url:
-            client_kwargs["base_url"] = settings.anthropic_base_url
-        self.client = Anthropic(**client_kwargs)
+        self.backend: LLMBackend = make_backend(
+            settings, settings.critic_model, role="critic",
+        )
         self._poster_prompt: str | None = None
         self._landing_prompt: str | None = None
         self._deck_prompt: str | None = None
@@ -111,26 +110,9 @@ class Critic:
             max_iters=max_iters,
         )
 
-    def _thinking_kwargs(self) -> dict[str, Any]:
-        """Build the kwargs fragment for extended thinking + interleaved beta.
-
-        Returns an empty dict when thinking is disabled so that existing
-        client.messages.create(**kwargs, **self._thinking_kwargs()) calls stay
-        valid on all backends.
-        """
-        if self.settings.critic_thinking_budget <= 0:
-            return {}
-        fragment: dict[str, Any] = {
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": self.settings.critic_thinking_budget,
-            },
-        }
-        if self.settings.enable_interleaved_thinking:
-            fragment["extra_headers"] = {
-                "anthropic-beta": "interleaved-thinking-2025-05-14",
-            }
-        return fragment
+    def _max_tokens(self) -> int:
+        thinking_budget = self.settings.critic_thinking_budget
+        return max(2048, thinking_budget + 1024) if thinking_budget > 0 else 2048
 
     def _evaluate_with_vision(
         self,
@@ -145,29 +127,23 @@ class Critic:
         user_text = _build_user_text(design_spec, layer_manifest, iteration, max_iters)
 
         log("critic.request", iter=iteration, max_iters=max_iters,
-            preview_kb=len(b64) * 3 // 4 // 1024, mode="vision")
+            preview_kb=len(b64) * 3 // 4 // 1024, mode="vision",
+            backend=self.backend.name, model=self.backend.model)
 
-        thinking_budget = self.settings.critic_thinking_budget
-        max_tokens = max(2048, thinking_budget + 1024) if thinking_budget > 0 else 2048
-
-        resp = self.client.messages.create(
-            model=self.settings.critic_model,
-            max_tokens=max_tokens,
+        # Backend builds the right vision content-block shape (Anthropic image
+        # block vs OpenAI image_url block) — critic doesn't need to know.
+        user_msg = self.backend.vision_user_message(
+            image_b64=b64, media_type=media_type, text=user_text,
+        )
+        resp = self.backend.create_turn(
             system=self._system(design_spec.artifact_type),
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image",
-                     "source": {"type": "base64", "media_type": media_type, "data": b64}},
-                    {"type": "text", "text": user_text},
-                ],
-            }],
-            **self._thinking_kwargs(),
+            messages=[user_msg],
+            tools=[],  # critic doesn't use tools
+            thinking_budget=self.settings.critic_thinking_budget,
+            max_tokens=self._max_tokens(),
         )
 
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        thinking_records = _extract_thinking(resp.content)
-        return _parse_critique(text, iteration, max_iters), thinking_records
+        return _parse_critique(resp.text, iteration, max_iters), resp.thinking_blocks
 
     def _evaluate_landing(
         self,
@@ -181,22 +157,18 @@ class Critic:
         log("critic.request", iter=iteration, max_iters=max_iters,
             mode="text-landing",
             sections=sum(1 for n in (design_spec.layer_graph or [])
-                         if getattr(n, "kind", None) == "section"))
+                         if getattr(n, "kind", None) == "section"),
+            backend=self.backend.name, model=self.backend.model)
 
-        thinking_budget = self.settings.critic_thinking_budget
-        max_tokens = max(2048, thinking_budget + 1024) if thinking_budget > 0 else 2048
-
-        resp = self.client.messages.create(
-            model=self.settings.critic_model,
-            max_tokens=max_tokens,
+        resp = self.backend.create_turn(
             system=self._system(ArtifactType.LANDING),
             messages=[{"role": "user", "content": user_text}],
-            **self._thinking_kwargs(),
+            tools=[],
+            thinking_budget=self.settings.critic_thinking_budget,
+            max_tokens=self._max_tokens(),
         )
 
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        thinking_records = _extract_thinking(resp.content)
-        return _parse_critique(text, iteration, max_iters), thinking_records
+        return _parse_critique(resp.text, iteration, max_iters), resp.thinking_blocks
 
     def _evaluate_deck(
         self,
@@ -210,46 +182,18 @@ class Critic:
         log("critic.request", iter=iteration, max_iters=max_iters,
             mode="text-deck",
             slides=sum(1 for n in (design_spec.layer_graph or [])
-                       if getattr(n, "kind", None) == "slide"))
+                       if getattr(n, "kind", None) == "slide"),
+            backend=self.backend.name, model=self.backend.model)
 
-        thinking_budget = self.settings.critic_thinking_budget
-        max_tokens = max(2048, thinking_budget + 1024) if thinking_budget > 0 else 2048
-
-        resp = self.client.messages.create(
-            model=self.settings.critic_model,
-            max_tokens=max_tokens,
+        resp = self.backend.create_turn(
             system=self._system(ArtifactType.DECK),
             messages=[{"role": "user", "content": user_text}],
-            **self._thinking_kwargs(),
+            tools=[],
+            thinking_budget=self.settings.critic_thinking_budget,
+            max_tokens=self._max_tokens(),
         )
 
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        thinking_records = _extract_thinking(resp.content)
-        return _parse_critique(text, iteration, max_iters), thinking_records
-
-
-def _extract_thinking(content: list[Any]) -> list[ThinkingBlockRecord]:
-    """Pull thinking / redacted_thinking blocks from an Anthropic response.
-
-    Kept local (mirrors planner._extract_thinking_records) to avoid critic.py
-    depending on planner.py — they are independent call paths.
-    """
-    out: list[ThinkingBlockRecord] = []
-    for b in content:
-        btype = getattr(b, "type", None)
-        if btype == "thinking":
-            out.append(ThinkingBlockRecord(
-                thinking=getattr(b, "thinking", "") or "",
-                signature=getattr(b, "signature", "") or "",
-                is_redacted=False,
-            ))
-        elif btype == "redacted_thinking":
-            out.append(ThinkingBlockRecord(
-                thinking="",
-                signature=getattr(b, "data", "") or "",
-                is_redacted=True,
-            ))
-    return out
+        return _parse_critique(resp.text, iteration, max_iters), resp.thinking_blocks
 
 
 def _downscale_b64(path: Path, max_edge: int) -> tuple[str, str]:

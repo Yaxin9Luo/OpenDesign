@@ -14,7 +14,7 @@ from google import genai
 from google.genai import types
 
 from ._contract import ToolContext, obs_error, obs_ok
-from ..schema import ToolObservation
+from ..schema import ToolResultRecord
 from ..util.io import sha256_file
 from ..util.logging import log
 
@@ -31,7 +31,7 @@ def _ensure_no_text(prompt: str) -> str:
     return f"{prompt.rstrip()}{sep} {NO_TEXT_SUFFIX}"
 
 
-def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     layer_id = args["layer_id"]
     raw_prompt = args["prompt"]
     aspect_ratio = args.get("aspect_ratio", "3:4")
@@ -59,12 +59,10 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
             ),
         )
     except Exception as e:
-        return obs_error(
-            f"Gemini API error: {e}",
-            next_actions=["retry generate_background with simpler prompt", "or proceed without background"],
-        )
+        return obs_error(f"Gemini API error: {e}", category="api")
 
     image_saved = False
+    canvas_w = canvas_h = 0
     for part in response.parts:
         if part.inline_data:
             # Always re-encode via PIL — Gemini's inline_data is JPEG regardless
@@ -76,13 +74,14 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
             if pil.mode != "RGB":
                 pil = pil.convert("RGB")
             pil.save(out_path, format="PNG", optimize=True)
+            canvas_w, canvas_h = pil.size
             image_saved = True
             break
 
     if not image_saved:
         return obs_error(
             "Gemini returned no image part — likely safety filter or empty response",
-            next_actions=["rephrase prompt avoiding sensitive terms"],
+            category="safety_filter",
         )
 
     sha = sha256_file(out_path)
@@ -101,11 +100,12 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolObserv
     }
     log("nbp.saved", path=str(out_path), sha=sha[:12])
 
-    return obs_ok(
-        f"Generated background ({aspect_ratio}, {image_size}) → {out_path.name}",
-        artifacts=[str(out_path)],
-        next_actions=["call render_text_layer for each text element"],
-    )
+    return obs_ok({
+        "layer_id": layer_id,
+        "sha256": sha,
+        "width": canvas_w,
+        "height": canvas_h,
+    })
 
 
 def _full_canvas_bbox(ctx: ToolContext) -> dict[str, int]:

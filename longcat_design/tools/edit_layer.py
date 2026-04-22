@@ -15,8 +15,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from ..schema import ToolObservation
-from ._contract import ToolContext, obs_error, obs_not_found
+from ..schema import ToolResultRecord
+from ._contract import ToolContext, obs_error, obs_ok
 from .render_text_layer import render_text_layer
 
 
@@ -28,41 +28,43 @@ _ALLOWED_DIFF_FIELDS: frozenset[str] = frozenset({
 })
 
 
-def edit_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
+def edit_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     layer_id = args.get("layer_id")
     diff = args.get("diff") or {}
 
     if not layer_id:
-        return obs_error("edit_layer: 'layer_id' is required")
+        return obs_error("edit_layer: 'layer_id' is required", category="validation")
     if not isinstance(diff, dict) or not diff:
         return obs_error(
             "edit_layer: 'diff' must be a non-empty object "
-            "(subset of editable fields to merge onto current layer state)"
+            "(subset of editable fields to merge onto current layer state)",
+            category="validation",
         )
 
     unknown = sorted(set(diff) - _ALLOWED_DIFF_FIELDS)
     if unknown:
         return obs_error(
             f"edit_layer: unknown diff field(s) {unknown}. "
-            f"Allowed: {sorted(_ALLOWED_DIFF_FIELDS)}"
+            f"Allowed: {sorted(_ALLOWED_DIFF_FIELDS)}",
+            category="validation",
         )
 
     rendered = ctx.state.get("rendered_layers", {})
     current = rendered.get(layer_id)
     if current is None:
-        return obs_not_found(
+        return obs_error(
             f"edit_layer: layer '{layer_id}' not found. "
-            f"Available layer_ids: {sorted(rendered.keys()) or '[]'}. "
-            "Call render_text_layer first (or re-issue from a fresh "
-            "propose_design_spec if this is a new turn)."
+            f"Available layer_ids: {sorted(rendered.keys()) or '[]'}.",
+            category="not_found",
+            payload={"available_layer_ids": sorted(rendered.keys())},
         )
 
     if current.get("kind") != "text":
         return obs_error(
             f"edit_layer: layer '{layer_id}' has kind='{current.get('kind')}', "
-            "but edit_layer only supports kind='text'. "
-            "For backgrounds call generate_background with the same layer_id; "
-            "for brand assets call fetch_brand_asset."
+            "but edit_layer only supports kind='text'.",
+            category="validation",
+            payload={"layer_id": layer_id, "kind": current.get("kind")},
         )
 
     merged = deepcopy(current)
@@ -74,9 +76,6 @@ def edit_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         else:
             merged[k] = v
 
-    # render_text_layer requires the canvas via ctx.state["design_spec"]; if
-    # it's missing it will produce a clear error — no need to duplicate that
-    # check here. We just forward the merged payload.
     render_args = {
         "layer_id": layer_id,
         "name": merged.get("name") or layer_id,
@@ -90,15 +89,13 @@ def edit_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
         "effects": merged.get("effects") or {},
     }
 
-    obs = render_text_layer(render_args, ctx=ctx)
-    if obs.status not in ("ok", "partial"):
-        return obs
+    result = render_text_layer(render_args, ctx=ctx)
+    if result.status != "ok":
+        return result
 
-    changed = ", ".join(sorted(diff.keys()))
-    wrapped = obs.model_copy(update={
-        "summary": (
-            f"edit_layer '{render_args['name']}' ({layer_id}): {changed} "
-            f"→ re-rendered. {obs.summary}"
-        ),
-    })
-    return wrapped
+    # Augment payload with the diff fields the policy requested. render_text_layer
+    # already returned sha256 + layer_id; we add `fields_changed` so the policy
+    # has a record of what its edit actually touched.
+    payload = dict(result.payload)
+    payload["fields_changed"] = sorted(diff.keys())
+    return obs_ok(payload)

@@ -195,6 +195,78 @@ Planner + critic prompts gain matching rules so expectation (prompt) and enforce
 
 ---
 
+## 2026-04-22 — Multi-provider LLM backend (Anthropic + OpenAI-compat); default planner switched to Kimi K2.6
+
+**Decision**: Introduce `LLMBackend` Protocol in [`longcat_design/llm_backend.py`](../longcat_design/llm_backend.py) so all planner / critic LLM access goes through one abstraction. Two impls today: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / vLLM / any OpenAI-compatible). New default planner + critic = `moonshotai/kimi-k2.6` (cheap, agentic, reasoning not redacted). Claude is one env var away (`PLANNER_MODEL=anthropic/claude-opus-4.7`). Trajectory schema is **unchanged** — same `DistillTrajectory`, same `ThinkingBlockRecord` (`signature` empty for OpenAI-compat, present for Anthropic).
+
+**Alternatives considered**:
+1. **Replace Claude entirely with Kimi** — rejected: user wants compatibility, not lock-in. Different runs may want Claude for capability ceiling, Kimi for cost, Doubao for 中文 specialization, etc.
+2. **Multiple parallel codepaths (PlannerLoopAnthropic, PlannerLoopKimi)** — rejected: combinatorial explosion when we add a 3rd / 4th provider.
+3. **LiteLLM / langchain as the abstraction layer** — rejected: heavy deps, opinionated dataclasses, would still need our own translation to `ThinkingBlockRecord` / `ToolResultRecord`. The abstraction we need is small (~250 LOC) and provider-agnostic at the *trajectory* level.
+
+**Backend differences the abstraction normalizes**:
+
+| Concern | Anthropic | OpenAI-compat (Kimi/DeepSeek/etc.) |
+|---|---|---|
+| Endpoint | `/v1/messages` | `/v1/chat/completions` |
+| Reasoning | `thinking` + `redacted_thinking` content blocks with `signature` | `reasoning` / `reasoning_content` string field, no signature |
+| Tool calling | `tool_use` content blocks | `tool_calls: [{id, function: {name, arguments}}]` |
+| Tool result | `tool_result` content block in user message | `role=tool` message with `tool_call_id` |
+| System prompt | top-level `system` parameter | first `role=system` message |
+| Vision | `image` block w/ base64 source | `image_url` block w/ `data:` URI |
+| Stop reason | `end_turn / tool_use / max_tokens / refusal / pause_turn` | `stop / tool_calls / length / content_filter` (we map to the Anthropic vocab) |
+| Thinking control | `thinking={"type":"enabled","budget_tokens":N}` | `extra_body={"reasoning":{"max_tokens":N}}` (OpenRouter unified) |
+| Interleaved thinking | needs `interleaved-thinking-2025-05-14` beta header | n/a (per-turn reasoning is the default) |
+| Cache telemetry | `usage.cache_read_input_tokens` / `cache_creation_input_tokens` | `usage.prompt_tokens_details.cached_tokens` (DeepSeek/some others); not all providers |
+| Replay constraint | thinking signatures must round-trip verbatim or 400 | none (we drop `reasoning_content` from the round-tripped assistant message because some providers reject it on subsequent turns) |
+
+**Configuration surface**:
+- `PLANNER_MODEL` / `CRITIC_MODEL`: model id (default both `moonshotai/kimi-k2.6`)
+- `PLANNER_PROVIDER` / `CRITIC_PROVIDER`: `auto` (default) | `anthropic` | `openai_compat`. Auto-detects from model id prefix
+- `OPENAI_COMPAT_API_KEY` + `OPENAI_COMPAT_BASE_URL`: explicit override for self-hosted vLLM / native Moonshot / DeepSeek API
+- All thinking knobs unchanged (`PLANNER_THINKING_BUDGET` etc work for both backends)
+
+**Verified end-to-end** (real Kimi K2.6 run, 国宝回家 简约 brief, 11 turns):
+- backend=`openai_compat`, model=`moonshotai/kimi-k2.6`
+- terminal_status=`pass`, final_reward=`1.0`, cost=`$3.58`
+- **12 reasoning steps captured** (vs 5 on the equivalent Claude run with redaction) — Kimi's reasoning is fully plaintext, no `signature`, no `is_redacted=True` blocks
+- Critic reasoning 29,973 chars in a single block — would have been ~80% redacted on Claude
+- Total trajectory 73 KB (slightly larger than Claude's 44 KB *because* the reasoning is uncensored — exactly what we want for distillation)
+
+**Adding a new provider** = subclass `LLMBackend` (5 methods: `create_turn`, `append_assistant`, `append_tool_results`, `vision_user_message`; instance attrs `name` + `model`) and add a branch in `make_backend`. Estimate ~80 LOC per new provider for any with native (non-OpenAI-compat) protocol. For anything OpenAI-compatible (most modern LLMs), `OpenAICompatBackend` works out of the box with a different model id.
+
+**Revisit when**: (a) a provider's reasoning field name doesn't match `reasoning` / `reasoning_content` / `thought` (add to `OpenAICompatBackend` extraction list); (b) we want token-level logprobs for PPO / GRPO (add an optional `logprobs: list[float] | None` field to `TurnResponse`, and a `request_logprobs=True` kwarg to `create_turn`); (c) a provider rejects our round-tripped assistant message shape (special-case in that backend's `append_assistant`).
+
+---
+
+## 2026-04-22 — Trajectory schema v1 → v2: lean training-data-only format
+
+**Decision**: Replace `Trajectory` with `DistillTrajectory`. Trajectory JSON is no longer a product/debug/training-data hybrid — it carries **only** what mid-training SFT and RL post-training need: `agent_trace` (model decisions + lean tool results), `final_reward` + `terminal_status` (episode signal), and `metadata` (model IDs, token usage, thinking config). Top-level `design_spec` / `layer_graph` / `composition` / `critique_loop` / `created_at` are dropped (recoverable from `agent_trace` or from `out/runs/<run_id>/` on disk). `ToolObservation` becomes `ToolResultRecord` — `next_actions` / `summary` / `artifacts` fields are removed at the tool layer (not just stripped from JSON). All 13 tool handlers re-emit lean `payload` dicts (IDs + sha256 + minimal state); error path keeps full `error_message` + typed `error_category` so the policy can learn recovery. NO backward compatibility with v0/v1 — old trajectories deleted, not migrated.
+
+**Alternatives considered**:
+1. **Keep current Trajectory + add a sidecar `distill.jsonl`**. Rejected: maintaining two parallel formats is overhead, and the legacy hybrid was 70% noise that no other code path depended on. Cleanly killing it is simpler.
+2. **Strip hint fields only from JSON, keep them runtime-visible to the planner**. Rejected: that creates train↔deploy distribution shift (planner trained with hints, deployed without). Removing `next_actions` from the tool handler itself eliminates the shift entirely. Verified planner still completes the workflow on a real run with no hints (`prompts/planner.md` workflow contract is self-contained).
+3. **Backward-compat shim that loads v0/v1 JSON into the new schema**. Rejected: user explicitly opted to delete legacy data and re-run. Migration code would persist forever for ~30 trajectories of test data — pure overhead.
+4. **Rename `Trajectory` to `DistillTrajectory` but keep the old shape**. Rejected: name change without semantics change is misleading.
+
+**Rationale**: Real 144 KB v1 trajectory was ~70% noise (per the audit: `next_actions` 13%, descriptive `summary` 17%, top-level `design_spec` + `layer_graph` ~40%, `composition` paths 7%). The noise actively hurts:
+- **For SFT**: the planner's decorative "thought" prose between tool calls dilutes the real CoT signal. Verified that what we labeled `type="thought"` is just narration ("*Now I'll generate all 10 images in parallel.*"), not reasoning.
+- **For RL**: `next_actions` hints are reward-hacking shortcuts. A policy trained with hints in tool results learns to follow them; deployed without hints, it underperforms. Removing them at the tool layer keeps the train and deploy distributions identical.
+- **For both**: file paths leak the host machine and aren't reproducible across users. sha256 of artifacts + lean payload (IDs the next tool needs) is the right replay primitive.
+
+**Per-tool payload design** (the substantive bit):
+- All success payloads contain ONLY: IDs the next tool_call must reference (e.g. `layer_id`), sha256 of any artifact written (so the policy can verify its action produced a unique output), and structured environment state the policy can act on (e.g. `composite` returns `text_overlap_warnings` as structured records, not prose hints).
+- All error payloads keep the FULL error message (`error_message`) plus a typed `error_category` enum so reward models can distinguish model-side errors (validation) from environment errors (api / safety_filter / timeout). Errors are training gold — they're the recovery signal.
+- `critique` is special: its full `CritiqueResult.model_dump()` (verdict + score + issues + rationale) goes into `payload` since this is the ground-truth reward signal. ~1 KB per critique, kept in full.
+
+**Verified end-to-end**: smoke 18/18 pass; real poster run produces 44 KB trajectory (vs 144 KB v1 baseline, **70% reduction**), pass critique with 0.89 reward, planner walked all 9 turns + 1 critique iteration without any next_actions hints. Forbidden-field scan confirms zero file paths, zero `next_actions`, zero `summary`, zero `created_at` in the JSON. The 30% remaining payload is 87% reasoning blocks (the dense signal we want).
+
+**Revisit when**: (a) trajectories routinely exceed 500 KB (spin out thinking blocks to a sidecar file); (b) we ever build an SFT data pipeline and discover we need a field we threw away (add it back to the v3 schema with a version bump); (c) the planner workflow degrades because some `next_actions` hint was carrying load we underestimated (real run today says it doesn't, but a long-tail brief might prove otherwise — easy to revert per-tool).
+
+**Branch**: `feat/training-data-capture` (continued — sits on top of the 2026-04-20 extended-thinking commit).
+
+---
+
 ## 2026-04-20 — Enable Claude extended thinking on Planner + Critic via `interleaved-thinking-2025-05-14` beta; trajectory schema v0 → v1
 
 **Decision**: Turn on Anthropic extended thinking for both `PlannerLoop` and `Critic`, with the `interleaved-thinking-2025-05-14` beta header so thinking blocks may also appear *between* tool calls. Capture every `thinking` / `redacted_thinking` content block into a new `AgentTraceStep(type="reasoning")` with the original `signature`. Default `budget_tokens=10000` per call, env-overridable via `PLANNER_THINKING_BUDGET` / `CRITIC_THINKING_BUDGET` / `ENABLE_INTERLEAVED_THINKING`. Also record `stop_reason` + `cache_read_input_tokens` + `cache_creation_input_tokens` per turn. Trajectory `metadata.version` bumps `v0` → `v1`; all new fields are optional for backward compat.
