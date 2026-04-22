@@ -571,11 +571,22 @@ def _trajectory_to_ref(traj: DistillTrajectory, traj_path: Path) -> TrajectoryRe
     n_layers = _count_unique_layers(traj)
     last_crit = _last_critique_payload(traj)
 
+    # v2.2 versioning: composite outputs live under composites/iter_<N>/;
+    # final/ has symlinks pointing at the most recent iteration. Resolve
+    # the symlink so TrajectoryRef.preview_path etc. are absolute paths
+    # the user (or a downstream tool) can stat without going through the
+    # symlink layer.
     run_dir = traj_path.parent.parent / "runs" / traj.run_id
+    final_dir = run_dir / "final"
 
     def _maybe(name: str) -> str | None:
-        p = run_dir / name
-        return str(p) if p.exists() else None
+        p = final_dir / name
+        if not p.exists():
+            return None
+        try:
+            return str(p.resolve())
+        except OSError:
+            return str(p)
 
     return TrajectoryRef(
         run_id=traj.run_id,

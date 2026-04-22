@@ -47,7 +47,29 @@ class ToolContext:
             "composition": None,            # CompositionArtifacts after composite (runtime only)
             "critique_results": [],         # list[CritiqueResult]
             "finalized": False,
+            # v2.2 versioning — every overwrite-prone write versions itself
+            # so revise loops + edit_layer don't lose intermediate state.
+            # `layer_versions[layer_id]` is the highest version number written
+            # so far (next write becomes N+1). `composite_iter` is the count
+            # of completed composite() calls (next call becomes N+1).
+            "layer_versions": {},           # dict[str, int]: layer_id -> highest version
+            "composite_iter": 0,            # int: count of composite calls completed
         }
+
+    def next_layer_version(self, layer_id: str) -> int:
+        """Bump and return the next version number for `layer_id`.
+        Call BEFORE writing the file."""
+        versions = self.state.setdefault("layer_versions", {})
+        v = int(versions.get(layer_id, 0)) + 1
+        versions[layer_id] = v
+        return v
+
+    def next_composite_iter(self) -> int:
+        """Bump and return the next composite iteration number.
+        Call at the START of each composite() invocation."""
+        v = int(self.state.get("composite_iter", 0)) + 1
+        self.state["composite_iter"] = v
+        return v
 
 
 def obs_ok(payload: dict[str, Any] | None = None) -> ToolResultRecord:

@@ -49,7 +49,11 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecor
     name = args.get("name", layer_id)
 
     prompt = _ensure_no_text(raw_prompt)
-    out_path = ctx.layers_dir / f"img_{layer_id}.png"
+
+    prior = ctx.state["rendered_layers"].get(layer_id) or {}
+    prior_sha = prior.get("sha256")
+    version = ctx.next_layer_version(layer_id)
+    out_path = ctx.layers_dir / f"img_{layer_id}.v{version}.png"
 
     client = genai.Client(api_key=ctx.settings.gemini_api_key)
     log("nbp.image.request", model=ctx.settings.image_model,
@@ -103,12 +107,19 @@ def generate_image(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecor
         "aspect_ratio": aspect_ratio,
         "image_size": image_size,
         "sha256": sha,
+        "version": version,
     }
-    log("nbp.image.saved", path=str(out_path), sha=sha[:12], layer_id=layer_id)
+    log("nbp.image.saved", path=str(out_path), sha=sha[:12],
+        layer_id=layer_id, version=version)
 
-    return obs_ok({
+    payload: dict[str, Any] = {
         "layer_id": layer_id,
         "sha256": sha,
         "width": img_w,
         "height": img_h,
-    })
+        "relative_path": f"layers/img_{layer_id}.v{version}.png",
+        "version": version,
+    }
+    if prior_sha:
+        payload["supersedes_sha256"] = prior_sha
+    return obs_ok(payload)

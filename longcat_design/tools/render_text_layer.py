@@ -133,7 +133,12 @@ def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRe
         draw.text((x, _y), line, **kw)
         _y += lh + line_gap
 
-    out_path = ctx.layers_dir / f"text_{layer_id}.png"
+    # v2.2 versioning: each render bumps the layer's version counter and
+    # writes to a new file (prior versions stay on disk for training data).
+    prior = ctx.state["rendered_layers"].get(layer_id) or {}
+    prior_sha = prior.get("sha256")
+    version = ctx.next_layer_version(layer_id)
+    out_path = ctx.layers_dir / f"text_{layer_id}.v{version}.png"
     img.save(out_path, format="PNG", optimize=True)
     sha = sha256_file(out_path)
 
@@ -151,14 +156,19 @@ def render_text_layer(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRe
         "effects": effects,
         "src_path": str(out_path),
         "sha256": sha,
+        "version": version,
     }
     log("text.rendered", layer=name, font=resolved_family, fallback=was_fallback,
-        chars=len(text), path=str(out_path))
+        chars=len(text), path=str(out_path), version=version)
 
     payload: dict[str, Any] = {
         "layer_id": layer_id,
         "sha256": sha,
+        "relative_path": f"layers/text_{layer_id}.v{version}.png",
+        "version": version,
     }
+    if prior_sha:
+        payload["supersedes_sha256"] = prior_sha
     if was_fallback:
         # Surface the font fallback as a warning the policy can learn from
         # (not an error — text was still rendered). Using payload key keeps

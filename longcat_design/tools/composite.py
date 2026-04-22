@@ -30,6 +30,80 @@ from ..util.logging import log
 from ..util.table_png import render_table_png
 
 
+# v2.2 versioning helpers — every composite call writes into its own
+# `composites/iter_<N>/` subdirectory so revise loops + critique iters
+# don't lose intermediate state. `final/` symlinks track the latest
+# iteration for product consumers (cli display, apply-edits source).
+
+
+def _open_iter_dir(ctx: ToolContext) -> tuple[Path, int]:
+    """Allocate the next composite iteration directory.
+
+    Returns `(iter_dir, iter_num)` where iter_dir = `<run_dir>/composites/iter_NN`.
+    Caller writes ALL composite outputs (psd / svg / html / preview / slides)
+    into this dir. Use `_refresh_final_links` after a successful write so
+    consumers can keep using stable paths via `<run_dir>/final/<name>`.
+    """
+    iter_num = ctx.next_composite_iter()
+    iter_dir = ctx.run_dir / "composites" / f"iter_{iter_num:02d}"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    return iter_dir, iter_num
+
+
+def _prior_preview_sha(ctx: ToolContext) -> str | None:
+    """Return the sha256 of the *previous* iteration's preview.png if any
+    (lets the new composite's payload encode `supersedes_preview_sha256` so
+    DPO training can pair pre/post snapshots).
+
+    Call AFTER `_open_iter_dir` — current composite_iter is N (new dir),
+    we want N-1 (the prior dir).
+    """
+    iter_num = int(ctx.state.get("composite_iter") or 0)
+    if iter_num <= 1:
+        return None
+    prior = ctx.run_dir / "composites" / f"iter_{iter_num - 1:02d}" / "preview.png"
+    if not prior.exists():
+        return None
+    try:
+        return sha256_file(prior)
+    except OSError:
+        return None
+
+
+def _refresh_final_links(iter_dir: Path, ctx: ToolContext, files: list[str]) -> None:
+    """Update `<run_dir>/final/<name>` symlinks to point at this iter's files.
+
+    Existing symlinks (or files) at the target paths are removed first so the
+    operation is atomic-ish. Uses RELATIVE symlinks so the run_dir is portable
+    if copied to another machine. Skips files that don't exist in iter_dir.
+    """
+    final_dir = ctx.run_dir / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    for fname in files:
+        src = iter_dir / fname
+        if not src.exists():
+            continue
+        link = final_dir / fname
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        # Relative path from final/ to composites/iter_NN/<fname>:
+        rel = Path("..") / "composites" / iter_dir.name / fname
+        link.symlink_to(rel)
+    # Also relink subdirectories (deck/slides/) when present.
+    for subdir_name in ("slides",):
+        src_sub = iter_dir / subdir_name
+        if not src_sub.is_dir():
+            continue
+        link_sub = final_dir / subdir_name
+        if link_sub.is_symlink() or link_sub.exists():
+            if link_sub.is_symlink():
+                link_sub.unlink()
+            else:
+                # safety: if it's a real dir, leave it (don't blow away product data)
+                continue
+        link_sub.symlink_to(Path("..") / "composites" / iter_dir.name / subdir_name)
+
+
 # Warn when the planner's bbox aspect is this many times off from the
 # layer's source-content aspect. Above the threshold we letterbox for
 # images / re-render for tables so text/figures stay legible; below,
@@ -277,10 +351,12 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
     # declared them in spec but didn't place them, OR they're stale records.
     sorted_layers = [L for L in sorted_layers if L.get("bbox")]
 
-    psd_path = ctx.run_dir / "poster.psd"
-    svg_path = ctx.run_dir / "poster.svg"
-    html_path = ctx.run_dir / "poster.html"
-    preview_path = ctx.run_dir / "preview.png"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    psd_path = iter_dir / "poster.psd"
+    svg_path = iter_dir / "poster.svg"
+    html_path = iter_dir / "poster.html"
+    preview_path = iter_dir / "preview.png"
 
     layer_manifest: list[dict[str, Any]] = []
 
@@ -315,26 +391,39 @@ def composite(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
         layer_manifest=layer_manifest,
     )
     ctx.state["composition"] = artifacts
+    _refresh_final_links(iter_dir, ctx,
+                         ["poster.psd", "poster.svg", "poster.html", "preview.png"])
     log("composite.done",
+        iter=iter_num,
         psd=str(psd_path), svg=str(svg_path), html=str(html_path),
         preview=str(preview_path), layers=len(sorted_layers),
         text_overlaps=len(text_overlap_warnings),
         figure_xref_misses=len(xref_misses))
 
-    return obs_ok({
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
         "artifact_type": "poster",
-        "preview_sha256": sha256_file(preview_path),
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
         "psd_sha256": sha256_file(psd_path),
         "svg_sha256": sha256_file(svg_path),
         "html_sha256": sha256_file(html_path),
         "n_layers": len(sorted_layers),
         "canvas": {"w_px": cw, "h_px": ch},
+        # Versioned paths: each iteration's outputs survive on disk for
+        # DPO / layered-gen training. Use this relative_path; final/ is
+        # only a convenience symlink for product consumers.
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "html_relative_path": f"composites/iter_{iter_num:02d}/poster.html",
         # Real environment state — text overlaps and missing xrefs are
         # actual quality signals. The policy can decide whether to fix
         # them via edit_layer or move on. NOT prose hints.
         "text_overlap_warnings": text_overlap_warnings,
         "xref_misses": xref_misses,
-    })
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
 def _composite_landing(spec: Any, ctx: ToolContext) -> ToolResultRecord:
@@ -348,8 +437,10 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolResultRecord:
             category="validation",
         )
 
-    html_path = ctx.run_dir / "index.html"
-    preview_path = ctx.run_dir / "preview.png"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    html_path = iter_dir / "index.html"
+    preview_path = iter_dir / "preview.png"
     canvas = spec.canvas or {}
     cw = int(canvas.get("w_px", 1200))
 
@@ -427,14 +518,22 @@ def _composite_landing(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         html=str(html_path), preview=str(preview_path),
         sections=section_ct, images=image_ct, top_level=len(layer_graph))
 
-    return obs_ok({
+    _refresh_final_links(iter_dir, ctx, ["index.html", "preview.png"])
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
         "artifact_type": "landing",
-        "preview_sha256": sha256_file(preview_path),
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
         "html_sha256": sha256_file(html_path),
         "n_sections": section_ct,
         "n_images": image_ct,
         "canvas_width_px": cw,
-    })
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "html_relative_path": f"composites/iter_{iter_num:02d}/index.html",
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
 def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
@@ -457,10 +556,12 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     # may declare image children separately and call generate_image later).
     _hydrate_deck_image_srcs(slides, ctx)
 
-    pptx_path = ctx.run_dir / "deck.pptx"
-    slides_dir = ctx.run_dir / "slides"
+    iter_dir, iter_num = _open_iter_dir(ctx)
+    prior_preview_sha = _prior_preview_sha(ctx)
+    pptx_path = iter_dir / "deck.pptx"
+    slides_dir = iter_dir / "slides"
     slides_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = ctx.run_dir / "preview.png"
+    preview_path = iter_dir / "preview.png"
 
     canvas = spec.canvas or {}
     slide_w = int(canvas.get("w_px") or 1920)
@@ -525,14 +626,22 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         pptx=str(pptx_path), preview=str(preview_path),
         slides=slide_count, images=image_ct)
 
-    return obs_ok({
+    _refresh_final_links(iter_dir, ctx, ["deck.pptx", "preview.png"])
+    preview_sha = sha256_file(preview_path)
+    payload: dict[str, Any] = {
         "artifact_type": "deck",
-        "preview_sha256": sha256_file(preview_path),
+        "iteration": iter_num,
+        "preview_sha256": preview_sha,
         "pptx_sha256": sha256_file(pptx_path),
         "n_slides": slide_count,
         "n_images": image_ct,
         "canvas": {"w_px": slide_w, "h_px": slide_h},
-    })
+        "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
+        "pptx_relative_path": f"composites/iter_{iter_num:02d}/deck.pptx",
+    }
+    if prior_preview_sha:
+        payload["supersedes_preview_sha256"] = prior_preview_sha
+    return obs_ok(payload)
 
 
 def _hydrate_poster_layer_bboxes(rendered: dict[str, dict[str, Any]],

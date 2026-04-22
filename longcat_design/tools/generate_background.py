@@ -40,7 +40,10 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolResult
 
     prompt = _ensure_no_text(raw_prompt)
 
-    out_path = ctx.layers_dir / f"bg_{layer_id}.png"
+    prior = ctx.state["rendered_layers"].get(layer_id) or {}
+    prior_sha = prior.get("sha256")
+    version = ctx.next_layer_version(layer_id)
+    out_path = ctx.layers_dir / f"bg_{layer_id}.v{version}.png"
 
     client = genai.Client(api_key=ctx.settings.gemini_api_key)
     log("nbp.request", model=ctx.settings.image_model,
@@ -97,15 +100,21 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolResult
         "image_size": image_size,
         "safe_zones": safe_zones,
         "sha256": sha,
+        "version": version,
     }
-    log("nbp.saved", path=str(out_path), sha=sha[:12])
+    log("nbp.saved", path=str(out_path), sha=sha[:12], version=version)
 
-    return obs_ok({
+    payload: dict[str, Any] = {
         "layer_id": layer_id,
         "sha256": sha,
         "width": canvas_w,
         "height": canvas_h,
-    })
+        "relative_path": f"layers/bg_{layer_id}.v{version}.png",
+        "version": version,
+    }
+    if prior_sha:
+        payload["supersedes_sha256"] = prior_sha
+    return obs_ok(payload)
 
 
 def _full_canvas_bbox(ctx: ToolContext) -> dict[str, int]:

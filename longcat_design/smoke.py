@@ -1512,6 +1512,133 @@ def check_ingest_document_pptx() -> None:
         f"2 slide(s), 1 figure ({figure_ids[0]})")
 
 
+def check_versioning_no_api() -> None:
+    """v2.2 versioning: revise loops + edit_layer must NOT clobber prior
+    intermediate state. Asserts:
+      - render_text_layer writes layers/<id>.v<N>.png (not <id>.png)
+      - edit_layer (re-render) bumps to v<N+1>; v<N> still on disk
+      - 2 composite() calls produce composites/iter_01/ AND composites/iter_02/
+      - final/ symlinks point at iter_02 (the latest)
+      - tool_result.payload exposes relative_path / version / supersedes_*
+    """
+    print("[19/19] versioning + revise-loop preservation (no API)")
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.propose_design_spec import propose_design_spec
+    from .tools.render_text_layer import render_text_layer
+    from .tools.edit_layer import edit_layer
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_versioning"
+    layers_dir = out_dir / "layers"
+    if out_dir.exists():
+        # Clean prior smoke run so version counters start at 0.
+        import shutil
+        shutil.rmtree(out_dir)
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir,
+                      layers_dir=layers_dir, run_id="smoke-vers")
+
+    # Stub a background so composite has 2 layers
+    bg_path = layers_dir / "bg_seed.png"
+    Image.new("RGB", (768, 1024), (10, 10, 30)).save(bg_path)
+    ctx.state["rendered_layers"]["L0_bg"] = {
+        "layer_id": "L0_bg", "name": "bg", "kind": "background", "z_index": 0,
+        "bbox": {"x": 0, "y": 0, "w": 768, "h": 1024},
+        "src_path": str(bg_path), "prompt": "(stub)",
+        "aspect_ratio": "3:4", "image_size": "1K",
+        "safe_zones": [], "sha256": "seed",
+    }
+
+    switch_artifact_type({"type": "poster"}, ctx=ctx)
+    propose_design_spec({"design_spec": {
+        "brief": "v",
+        "canvas": {"w_px": 768, "h_px": 1024, "dpi": 96,
+                   "aspect_ratio": "3:4", "color_mode": "RGB"},
+        "palette": ["#000", "#fff"],
+        "typography": {}, "mood": [], "composition_notes": "",
+        "layer_graph": [],
+    }}, ctx=ctx)
+
+    # ── v1 layer write ─────────────────────────────────────────────────
+    r1 = render_text_layer({
+        "layer_id": "L1", "name": "title", "text": "v1 text",
+        "font_family": "NotoSansSC-Bold", "font_size_px": 60, "fill": "#fff",
+        "bbox": {"x": 50, "y": 50, "w": 600, "h": 120},
+        "align": "center", "z_index": 1,
+    }, ctx=ctx)
+    if r1.payload.get("version") != 1:
+        _fail(f"first render should be v1; got version={r1.payload.get('version')}")
+    if r1.payload.get("relative_path") != "layers/text_L1.v1.png":
+        _fail(f"v1 relative_path wrong: {r1.payload.get('relative_path')}")
+    if r1.payload.get("supersedes_sha256") is not None:
+        _fail("first render should not have supersedes_sha256")
+    v1_file = layers_dir / "text_L1.v1.png"
+    if not v1_file.exists():
+        _fail(f"v1 file missing: {v1_file}")
+    v1_sha = r1.payload["sha256"]
+
+    # ── v2 layer write (via edit_layer → re-render) ────────────────────
+    r2 = edit_layer({"layer_id": "L1", "diff": {"text": "v2 text"}}, ctx=ctx)
+    if r2.payload.get("version") != 2:
+        _fail(f"edit_layer should bump to v2; got {r2.payload.get('version')}")
+    if r2.payload.get("supersedes_sha256") != v1_sha:
+        _fail(f"v2 supersedes_sha256 should equal v1 sha; got {r2.payload.get('supersedes_sha256')!r}")
+    v2_file = layers_dir / "text_L1.v2.png"
+    if not v2_file.exists():
+        _fail(f"v2 file missing: {v2_file}")
+    if not v1_file.exists():
+        _fail(f"⚠ v1 file was clobbered (this is the bug we're guarding against): {v1_file}")
+    _ok(f"layer versioning: v1 + v2 both on disk; v2.supersedes = v1.sha256[:8] {v1_sha[:8]}")
+
+    # ── Composite iter 1 ──────────────────────────────────────────────
+    c1 = composite({}, ctx=ctx)
+    if c1.status != "ok":
+        _fail(f"composite iter 1: {(c1.error_message or c1.payload)}")
+    if c1.payload.get("iteration") != 1:
+        _fail(f"composite iter 1 should report iteration=1; got {c1.payload.get('iteration')}")
+    iter1_dir = out_dir / "composites" / "iter_01"
+    for f in ("poster.html", "poster.psd", "poster.svg", "preview.png"):
+        if not (iter1_dir / f).exists():
+            _fail(f"iter_01/{f} missing")
+    iter1_preview_sha = c1.payload["preview_sha256"]
+
+    # ── Edit a layer + composite iter 2 ───────────────────────────────
+    edit_layer({"layer_id": "L1", "diff": {"fill": "#ff00ff"}}, ctx=ctx)
+    c2 = composite({}, ctx=ctx)
+    if c2.status != "ok":
+        _fail(f"composite iter 2: {(c2.error_message or c2.payload)}")
+    if c2.payload.get("iteration") != 2:
+        _fail(f"composite iter 2 should report iteration=2; got {c2.payload.get('iteration')}")
+    iter2_dir = out_dir / "composites" / "iter_02"
+    if not (iter2_dir / "preview.png").exists():
+        _fail("iter_02/preview.png missing")
+    if not (iter1_dir / "preview.png").exists():
+        _fail("⚠ iter_01/preview.png was clobbered by iter_02 — versioning broken")
+    if c2.payload.get("supersedes_preview_sha256") != iter1_preview_sha:
+        _fail(f"iter_02 supersedes_preview_sha256 should be iter_01's preview sha")
+    _ok(f"composite versioning: iter_01 + iter_02 both intact; "
+        f"iter_02.supersedes_preview = iter_01.preview_sha[:8] {iter1_preview_sha[:8]}")
+
+    # ── final/ symlinks point at the latest iter ──────────────────────
+    final_dir = out_dir / "final"
+    if not (final_dir / "preview.png").is_symlink():
+        _fail("final/preview.png should be a symlink")
+    if not (final_dir / "poster.html").is_symlink():
+        _fail("final/poster.html should be a symlink")
+    final_preview = (final_dir / "preview.png").resolve()
+    if final_preview.parent.name != "iter_02":
+        _fail(f"final/preview.png should resolve to iter_02; got {final_preview.parent.name}")
+    _ok(f"final/ symlinks resolve to iter_02 (the latest)")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -1531,6 +1658,7 @@ def main() -> int:
     check_ingest_document_image()
     check_ingest_document_docx()
     check_ingest_document_pptx()
+    check_versioning_no_api()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "

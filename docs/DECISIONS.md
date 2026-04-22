@@ -195,6 +195,37 @@ Planner + critic prompts gain matching rules so expectation (prompt) and enforce
 
 ---
 
+## 2026-04-22 — Intermediate-artifact versioning (composites/iter_NN/ + layer .vN.png + supersedes_sha256 chain)
+
+**Decision**: All overwrite-prone tool writes now version themselves so revise loops + edit_layer don't permanently lose intermediate state. Layer renderers (`render_text_layer` / `generate_background` / `generate_image` / `edit_layer`) write to `layers/<prefix>_<id>.v<N>.png`. Composite writes the full output set (psd / svg / html / preview / pptx / slides) into `composites/iter_<N>/`. A `final/` symlink directory tracks the latest iteration for product consumers (cli / chat / apply-edits source). Tool result payloads expose `relative_path`, `version`, and `supersedes_sha256` (the prior version's sha) so DPO / layered-gen trainers can pair pre/post snapshots without walking the disk.
+
+**Alternatives considered**:
+1. **Keep stable filenames + duplicate copies**. Rejected: 5-10 MB per composite × N iters × M runs adds up to 100s of MB per training-data session for no benefit over symlinks.
+2. **Single rolling snapshot** (just keep `iter_(N-1)` and `iter_N`). Rejected: critique loops can do up to `max_critique_iters=2` revisions; combined with planner's own retry-on-quality-fail, real runs hit 3-4 composites. Keeping everything on disk is cheap and lets us extract the full iteration sequence for layered-gen SFT, not just terminal pairs.
+3. **Sidecar manifest tracking versions** instead of in-payload fields. Rejected: payload-based is self-describing, no extra file to keep in sync, queryable directly from trajectory JSON.
+
+**Rationale**: This was the gap left by the v2 trajectory rewrite. The v2 schema captured every model decision and tool result, but the *artifacts those decisions produced* still lived in clobber-prone fixed paths. For DPO, the most valuable training pair is `(rejected_preview_iter_1.png, chosen_preview_iter_2.png, critic_issues_diff)` — and the rejected half was previously lost by the next composite. For layered-gen SFT, the per-layer rendering history (`layer_v1 → edit → layer_v2`) was similarly clobbered. With versioning the full graph is preserved.
+
+**Chain semantics**:
+- `payload.version` (int): 1-indexed monotonic counter per `(layer_id)` for layer renderers; per-run for composite (`payload.iteration`).
+- `payload.relative_path` (str): path relative to `<run_dir>/`. Always exists for layer + composite payloads.
+- `payload.supersedes_sha256` (str | absent): sha256 of the *immediately previous* version (or preview, for composite). Forms a backward chain a trainer can walk to assemble the per-layer / per-composite history. Absent on the first version.
+- `payload.preview_relative_path` / `payload.html_relative_path` / `payload.pptx_relative_path` (composite): per-output-type paths under `composites/iter_<N>/`.
+
+**`final/` symlink semantics**: relative symlinks (`final/preview.png → ../composites/iter_NN/preview.png`) so the run_dir is portable across machines. Refreshed atomically (unlink + recreate) on each successful composite. Consumers (cli display, apply-edits HTML source) read through `final/` and get the latest version transparently. Versioning is invisible to end-user product flows; only training-data extractors care about the full history.
+
+**Verified end-to-end** (Kimi K2.6 real run, 国宝回家 简约, 4 layers, 2 composite iters, 1 critique pass):
+- `composites/iter_01/{poster.html,psd,svg,preview.png}` and `composites/iter_02/{...}` both intact on disk
+- `final/preview.png` is a symlink resolving to `composites/iter_02/preview.png`
+- `layers/text_L3_stamp.v1.png` + `text_L3_stamp.v2.png` both kept (L3 was edited mid-run)
+- Trajectory `composite` tool_result payloads chain: `iter=1 preview=5e5253...` → `iter=2 preview=acd1ec... supersedes=5e5253...`
+- Trajectory `edit_layer` payload chains: `text_L3_stamp v=2 supersedes=afdf06ff` (the v1 sha)
+- Smoke check `[19/19] versioning + revise-loop preservation` exercises the path with two consecutive composites + an edit_layer; asserts disk layout + payload chain.
+
+**Revisit when**: (a) disk usage becomes a concern on multi-100-run training-data collection (could add a `--prune-iters keep-last-K` post-processor); (b) we want preview snapshots at *intermediate* layer states (between render_text_layer calls within one composite-cycle) — would need explicit `snapshot()` tool; (c) Windows support becomes a requirement (symlinks need admin or developer mode — fall back to copies).
+
+---
+
 ## 2026-04-22 — Multi-provider LLM backend (Anthropic + OpenAI-compat); default planner switched to Kimi K2.6
 
 **Decision**: Introduce `LLMBackend` Protocol in [`longcat_design/llm_backend.py`](../longcat_design/llm_backend.py) so all planner / critic LLM access goes through one abstraction. Two impls today: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / vLLM / any OpenAI-compatible). New default planner + critic = `moonshotai/kimi-k2.6` (cheap, agentic, reasoning not redacted). Claude is one env var away (`PLANNER_MODEL=anthropic/claude-opus-4.7`). Trajectory schema is **unchanged** — same `DistillTrajectory`, same `ThinkingBlockRecord` (`signature` empty for OpenAI-compat, present for Anthropic).
