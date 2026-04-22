@@ -1132,6 +1132,8 @@ def check_deck_mode() -> None:
                      "bbox": {"x": 120, "y": 260, "w": 1680, "h": 720},
                      "aspect_ratio": "16:9"},
                 ],
+                # v2.3 speaker notes — populate notes_slide.notes_text_frame
+                "speaker_notes": "Open with a show-of-hands: who had a stressful bubble-tea run this week? Describe the three overlapping signage problems (logos / menu density / color war). Pause 5s on the pain statement. Transition: that's why we built MilkCloud.",
             },
             {
                 "layer_id": "slide_03", "name": "thank_you", "kind": "slide",
@@ -1195,11 +1197,21 @@ def check_deck_mode() -> None:
     if pic_count != 1:
         _fail(f"slide 2 expected 1 picture shape, got {pic_count}")
 
+    # v2.3 — speaker notes on slide 2 populated notes_slide.notes_text_frame
+    s2_notes = prs.slides[1].notes_slide.notes_text_frame.text
+    if "show-of-hands" not in s2_notes:
+        _fail(f"slide 2 speaker notes missing or wrong — got: {s2_notes[:120]!r}")
+    # Slides 1 + 3 (no speaker_notes in fixture) should have empty notes
+    s1_notes = prs.slides[0].notes_slide.notes_text_frame.text.strip()
+    s3_notes = prs.slides[2].notes_slide.notes_text_frame.text.strip()
+    if s1_notes or s3_notes:
+        _fail(f"slide 1/3 should have empty notes — got s1={s1_notes!r} s3={s3_notes!r}")
+
     pptx_size_kb = Path(comp.pptx_path).stat().st_size // 1024
     preview_size_kb = Path(comp.preview_path).stat().st_size // 1024
     _ok(f"deck composite: 3 slides → {pptx_size_kb} KB .pptx + "
         f"3 slide PNGs + {preview_size_kb} KB preview grid")
-    _ok("pptx reopen: slide count + native text runs + picture shape all OK")
+    _ok("pptx reopen: slide count + native text runs + picture shape + speaker notes all OK")
 
 
 def check_reasoning_step_roundtrip() -> None:

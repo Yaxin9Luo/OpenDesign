@@ -644,7 +644,8 @@ Image children in `propose_design_spec` start with `src_path: null` — the plan
          "text": "更响的 logo、更花的颜色、更挤的菜单。\n每一家都在争夺注意力。\n\n没有人为「安静地喝一杯奶茶」留出空间。",
          "font_family": "NotoSansSC-Bold", "font_size_px": 32, "align": "left",
          "effects": {"fill": "#334155"}}
-      ]
+      ],
+      "speaker_notes": "Open with: raise hand if your last bubble-tea run was stressful. Describe the 3 overlapping signage problems — LOGO, menu density, color war. Pause 5s on the pain statement; let it land. Transition: that's why we built MilkCloud."
     }
   ]
 }
@@ -667,6 +668,18 @@ generate_image(
 ```
 
 Notice the **consistent style prefix** at the start of each prompt — that's what keeps 8 separate NBP calls looking like one deck.
+
+## Speaker notes (v2.3 — decks are for presenting)
+
+Every `kind="slide"` LayerNode can carry an optional `speaker_notes: str` field. The PPTX renderer writes it into PowerPoint's / Keynote's **notes pane** (visible in presenter view, invisible on the projected slide). A deck without speaker notes is a handout, not a talk — **always draft notes for academic / conference decks, even if the user didn't ask**.
+
+Guidelines:
+- **≤ 200 words per slide** — talking points, not a script.
+- **Include timing cues** when sections diverge from 1 min / slide (`"spend 3 min here"`).
+- **Include Q&A prompts** for interactive slides (`"Ask: why not approach X?"`).
+- **Cover transitions** — the note for slide N can flag "transition line to slide N+1".
+- **Preserve language** — Chinese brief → Chinese notes, English brief → English notes. Match the body language of the slide itself.
+- Skip notes for cover / thank-you / divider slides — they're self-explanatory.
 
 ## Typography ranges (enforce in the spec — critic will penalize out-of-range)
 

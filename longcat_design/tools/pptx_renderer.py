@@ -83,6 +83,14 @@ def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
             _add_table(slide, child, slide_w, slide_h)
         # silently skip unknown kinds; planner enforces vocab
 
+    # v2.3 — populate PowerPoint's notes pane from slide.speaker_notes.
+    # `notes_slide` is auto-created on first access by python-pptx; we only
+    # write when the planner provided actual text, so slides without notes
+    # keep an empty (but valid) notes_slide underneath.
+    notes = getattr(slide_node, "speaker_notes", None)
+    if notes:
+        slide.notes_slide.notes_text_frame.text = notes
+
 
 def _bbox_to_emu(bbox: Any, slide_w: int, slide_h: int,
                  default_bbox: tuple[int, int, int, int] | None = None

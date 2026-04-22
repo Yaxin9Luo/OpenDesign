@@ -188,6 +188,11 @@ class LayerNode(BaseModel):
     href: str | None = None
     variant: Literal["primary", "secondary", "ghost"] | None = None
 
+    # v2.3 deck speaker notes — slide-only (kind="slide"); ignored on other kinds.
+    # Populates `slide.notes_slide.notes_text_frame.text` in the PPTX renderer,
+    # so the notes show in PowerPoint / Keynote presenter view but not on slides.
+    speaker_notes: str | None = None
+
 
 class DesignSpec(BaseModel):
     brief: str
