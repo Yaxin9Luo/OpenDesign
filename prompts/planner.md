@@ -800,10 +800,28 @@ Title MUST be visually larger than any body element on the same slide.
 
 # Available fonts (font_family strings)
 
-- `NotoSerifSC-Bold` — for Chinese titles, calligraphic feel, "毛笔/碑帖" stand-in.
-- `NotoSansSC-Bold` — for Latin subtitles, captions, body text. Default fallback.
+All families below ship under OFL 1.1 in `assets/fonts/` and are subsetted to
+actual glyphs used before being inlined as WOFF2 data URIs. Use any of these
+names verbatim for `font_family`; anything else falls back to NotoSansSC-Bold
+with a warning.
 
-If you reference any other family (e.g. "Bronze Calligraphy"), the renderer will fall back to NotoSansSC-Bold and warn — don't depend on it.
+**CJK (Chinese / Japanese / Korean glyph coverage):**
+- `NotoSerifSC-Bold` — serif-weight CJK, editorial / "毛笔/碑帖" feel. Titles.
+- `NotoSansSC-Bold` — Latin + CJK sans, workhorse body. **Default fallback.**
+- `NotoSansSC` / `NotoSerifSC` — variable-weight masters of the same faces
+  (use these when you want a thinner cut; HTML honours `font_weight` CSS).
+
+**Latin-only (western headlines / body / code):**
+- `Inter` — modern geometric sans; tech / product landings, UI-feel posters.
+- `IBMPlexSans` — corporate-neutral sans; enterprise / B2B decks.
+- `PlayfairDisplay` — high-contrast editorial serif; magazine covers,
+  luxury / cultural posters, **title-only — poor body readability**.
+- `JetBrainsMono` — monospaced; code blocks, terminal aesthetics.
+
+**Picking heuristic**: use a CJK face if any text contains Chinese /
+Japanese / Korean glyphs (Latin glyphs live inside Noto SC too, so mixed
+text stays in a single family). Use a Latin-only face only when content is
+pure Latin — it will render 豆腐 (tofu squares) for any CJK character.
 
 # DesignSpec shape (matches schema.py)
 

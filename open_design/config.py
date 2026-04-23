@@ -114,9 +114,27 @@ class Settings:
     # OpenAI-compat backends (reasoning is naturally per-turn there).
     enable_interleaved_thinking: bool = True
 
+    # v2.4.2 — bundled OFL fonts. Flat `family → filename` for back-compat
+    # with every downstream lookup (`settings.fonts.get(family)`). Families
+    # with a single file ship their "-Variable.ttf" wght-axis master so
+    # CSS `font-weight` picks the right cut; the legacy CJK `-Bold.otf`
+    # entries are kept for the PSD/SVG/PNG path where PIL doesn't honour
+    # the OpenType wght axis.
+    #
+    # When you add a family here, also extend the typography section of
+    # `prompts/planner.md` so the planner knows it exists.
     fonts: dict[str, str] = field(default_factory=lambda: {
+        # Legacy CJK bold (used by PSD/PPTX/PNG rasterization via PIL).
         "NotoSansSC-Bold": "NotoSansSC-Bold.otf",
         "NotoSerifSC-Bold": "NotoSerifSC-Bold.otf",
+        # Variable CJK — all weights in one file, ideal for HTML/SVG.
+        "NotoSansSC": "NotoSansSC-Variable.ttf",
+        "NotoSerifSC": "NotoSerifSC-Variable.ttf",
+        # Latin — all variable masters, weights via `font-weight` CSS.
+        "Inter": "Inter-Variable.ttf",
+        "IBMPlexSans": "IBMPlexSans-Variable.ttf",
+        "JetBrainsMono": "JetBrainsMono-Regular.ttf",  # variable wght axis
+        "PlayfairDisplay": "PlayfairDisplay-Variable.ttf",
     })
     default_text_font: str = "NotoSansSC-Bold"
     default_title_font: str = "NotoSerifSC-Bold"
@@ -228,6 +246,51 @@ def _parse_provider(raw: str) -> ProviderChoice:
     if raw in ("claude",):
         return "anthropic"
     return "auto"
+
+
+def resolve_font(family: str | None, weight: str = "regular",
+                 settings: "Settings | None" = None) -> Path | None:
+    """Resolve ``(family, weight)`` to an on-disk font path, or None.
+
+    v2.4.2 forward-compat API. Most consumers still use the flat
+    ``settings.fonts.get(family)`` lookup; this helper wraps it with two
+    niceties:
+    - Accepts legacy suffix-encoded names (``"NotoSansSC-Bold"`` →
+      family=``NotoSansSC``, weight=``bold``). Downstream code can move
+      to the ``(family, weight)`` pair incrementally.
+    - Falls back to the plain-family key when no weight-specific file is
+      registered (e.g. ``resolve_font("Inter", weight="bold")`` returns
+      ``Inter-Variable.ttf`` because the variable TTF covers all cuts).
+    - Returns ``None`` (not an exception) when nothing matches.
+    """
+    if not family:
+        return None
+    cfg = settings or load_settings()
+    registry = cfg.fonts
+
+    family_clean = family.strip()
+    if not family_clean:
+        return None
+
+    # Legacy "Family-Weight" shortcut — if the exact key is registered,
+    # prefer it (back-compat with existing trajectories).
+    if family_clean in registry:
+        return cfg.fonts_dir / registry[family_clean]
+
+    # Split trailing -Bold / -Regular / -Medium etc. onto the weight axis.
+    if "-" in family_clean:
+        base, _, suffix = family_clean.rpartition("-")
+        if suffix.lower() in {"regular", "bold", "medium", "light",
+                              "thin", "black", "semibold", "extralight"}:
+            weight = suffix.lower()
+            family_clean = base
+
+    weighted_key = f"{family_clean}-{weight.capitalize()}" if weight != "regular" else family_clean
+    for candidate in (weighted_key, family_clean):
+        path = registry.get(candidate)
+        if path:
+            return cfg.fonts_dir / path
+    return None
 
 
 def _parse_int_env(name: str, default: int) -> int:
