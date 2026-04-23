@@ -206,7 +206,7 @@ Planner + critic prompts gain matching rules so expectation (prompt) and enforce
 
 ## 2026-04-21 — v1.2 Qwen-VL-Max via OpenRouter as default ingest model; dual-SDK dispatcher (commit `ce50f2a`)
 
-**Decision**: Default `ingest_model` = `qwen/qwen-vl-max` (via OpenRouter) instead of `anthropic/claude-sonnet-4-6`. Introduce `longcat_design/util/vlm.py` as a neutral dispatcher with `vlm_call_json(...)` that routes by model id: `anthropic/` / `claude-` → Anthropic SDK; `qwen/` → OpenAI SDK against OpenRouter's OpenAI-compat `/api/v1`. Ingest is the **only** surface that uses the OpenAI SDK — planner and critic stay 100 % Anthropic SDK to preserve tool_use protocol compatibility (the OpenAI-compat endpoint's tool_use shape is different enough to break them). Override via `INGEST_MODEL` env var; stock-Anthropic mode falls back to `claude-sonnet-4-7`.
+**Decision**: Default `ingest_model` = `qwen/qwen-vl-max` (via OpenRouter) instead of `anthropic/claude-sonnet-4-6`. Introduce `open_design/util/vlm.py` as a neutral dispatcher with `vlm_call_json(...)` that routes by model id: `anthropic/` / `claude-` → Anthropic SDK; `qwen/` → OpenAI SDK against OpenRouter's OpenAI-compat `/api/v1`. Ingest is the **only** surface that uses the OpenAI SDK — planner and critic stay 100 % Anthropic SDK to preserve tool_use protocol compatibility (the OpenAI-compat endpoint's tool_use shape is different enough to break them). Override via `INGEST_MODEL` env var; stock-Anthropic mode falls back to `claude-sonnet-4-7`.
 
 **Alternatives considered**:
 1. **Stay on Claude Sonnet 4.6 for ingest.** Rejected: Sonnet 4.6's vision grounding was unreliable enough to motivate the whole pymupdf refactor — but even post-refactor, its "read this paper" performance is slower and ~5× more expensive than Qwen-VL-Max for the same non-reasoning workload (structure extraction + caption matching + table parsing).
@@ -294,7 +294,7 @@ Planner + critic prompts gain matching rules so expectation (prompt) and enforce
 
 ## 2026-04-22 — Multi-provider LLM backend (Anthropic + OpenAI-compat); default planner switched to Kimi K2.6
 
-**Decision**: Introduce `LLMBackend` Protocol in [`longcat_design/llm_backend.py`](../longcat_design/llm_backend.py) so all planner / critic LLM access goes through one abstraction. Two impls today: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / vLLM / any OpenAI-compatible). New default planner + critic = `moonshotai/kimi-k2.6` (cheap, agentic, reasoning not redacted). Claude is one env var away (`PLANNER_MODEL=anthropic/claude-opus-4.7`). Trajectory schema is **unchanged** — same `DistillTrajectory`, same `ThinkingBlockRecord` (`signature` empty for OpenAI-compat, present for Anthropic).
+**Decision**: Introduce `LLMBackend` Protocol in [`open_design/llm_backend.py`](../open_design/llm_backend.py) so all planner / critic LLM access goes through one abstraction. Two impls today: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / vLLM / any OpenAI-compatible). New default planner + critic = `moonshotai/kimi-k2.6` (cheap, agentic, reasoning not redacted). Claude is one env var away (`PLANNER_MODEL=anthropic/claude-opus-4.7`). Trajectory schema is **unchanged** — same `DistillTrajectory`, same `ThinkingBlockRecord` (`signature` empty for OpenAI-compat, present for Anthropic).
 
 **Alternatives considered**:
 1. **Replace Claude entirely with Kimi** — rejected: user wants compatibility, not lock-in. Different runs may want Claude for capability ceiling, Kimi for cost, Doubao for 中文 specialization, etc.
@@ -426,11 +426,11 @@ Planner + critic prompts gain matching rules so expectation (prompt) and enforce
 **Decision**: All 6 landing design-system guides + their CSS live inside the repo at `prompts/design-systems/*.md` and `assets/design-systems/*.css`. The planner reads the bundled guides; the HTML renderer loads the bundled CSS via `_load_design_system_css` and inlines it. The package is completely self-contained — no dependency on the user's local `~/.claude/skills/` or anywhere else.
 
 **Alternatives considered**:
-1. **Reference `~/.claude/skills/ccg/domains/frontend-design/*` directly at runtime**. Rejected immediately once we realized this is a distribution bug: external users who `pip install longcat-design` don't have those skill files on their machine, so the planner would get empty guides and the renderer would have no CSS.
+1. **Reference `~/.claude/skills/ccg/domains/frontend-design/*` directly at runtime**. Rejected immediately once we realized this is a distribution bug: external users who `pip install open-design` don't have those skill files on their machine, so the planner would get empty guides and the renderer would have no CSS.
 2. **Distill to ONE "design system guide" covering all 6 styles in a single file**. Rejected: too coarse — planner needs style-specific vocabulary (claymorphism's "soft 3D clay render" prefix, neubrutalism's "thick black outlines + saturated candy colors," etc.), not a generic lecture.
 3. **Ship CSS as Python string constants in `html_renderer.py`**. Rejected: ~500 LOC of CSS in a Python file is unreadable and makes CSS changes require Python edits + imports. Splitting to `.css` files + runtime `read_text` is cleaner and lets CSS tooling (formatters, linters) work naturally.
 
-**Rationale**: Product-distribution correctness (user's pointed-out concern) + maintainability. The dev-time workflow was: read my local skill files → distill patterns into LongcatDesign-specific guides (NOT copy-paste, to avoid license questions and because skill files are too generic for a landing-with-contenteditable use case) → write fresh CSS tuned to our specific HTML structure. Runtime workflow: zero external lookups.
+**Rationale**: Product-distribution correctness (user's pointed-out concern) + maintainability. The dev-time workflow was: read my local skill files → distill patterns into OpenDesign-specific guides (NOT copy-paste, to avoid license questions and because skill files are too generic for a landing-with-contenteditable use case) → write fresh CSS tuned to our specific HTML structure. Runtime workflow: zero external lookups.
 
 **Style loudness ladder (codified in `prompts/design-systems/README.md`)**:
 - 3/10 `minimalist` (Stripe/Linear) — default if in doubt
@@ -535,12 +535,12 @@ Per-turn cost of fully supporting cross-turn edits: +1h implementation + permane
 
 ## 2026-04-18 — CLI subcommand split: `chat` (default) + `run` (one-shot), backward-compatible
 
-**Decision**: `longcat-design` with no subcommand launches the chat REPL. The old one-shot behavior (single brief → single trajectory) moves to `longcat-design run "<brief>"`. Both work via the same `cli.py` with argparse subparsers.
+**Decision**: `open-design` with no subcommand launches the chat REPL. The old one-shot behavior (single brief → single trajectory) moves to `open-design run "<brief>"`. Both work via the same `cli.py` with argparse subparsers.
 
 **Alternatives**:
-1. Keep one-shot as default, add `longcat-design chat` explicitly — preserves v0 CLI behavior but makes the headline v1.0 feature a secondary option.
+1. Keep one-shot as default, add `open-design chat` explicitly — preserves v0 CLI behavior but makes the headline v1.0 feature a secondary option.
 2. Remove one-shot entirely, chat is the only interface — cleaner, but breaks automation/scripting/CI use cases and loses an easy path for batch dataset generation.
-3. Two separate binaries (`longcat-design-chat` + `longcat-design-run`) — extra pyproject scripts, extra PATH clutter, no real benefit.
+3. Two separate binaries (`open-design-chat` + `open-design-run`) — extra pyproject scripts, extra PATH clutter, no real benefit.
 
 **Rationale**: Chat is the v1.0 product-UX headline — should be the frictionless default. One-shot is still valuable for (a) dataset generation scripts that call it in a loop, (b) CI smoke tests, (c) users who just want one artifact and are scared of a REPL. Keeping both under argparse subparsers is zero extra infra. There are no external users yet, so "breaking" the no-arg one-shot form costs nothing in adoption — and the explicit `run` subcommand is arguably clearer even in isolation.
 
@@ -548,16 +548,16 @@ Per-turn cost of fully supporting cross-turn edits: +1h implementation + permane
 
 ---
 
-## 2026-04-18 — PIVOT: rebrand as LongcatDesign, reposition as open-source Claude Design alternative
+## 2026-04-18 — PIVOT: rebrand as OpenDesign, reposition as open-source Claude Design alternative
 
-**Decision**: Stop framing the project primarily as "Longcat-Next training-data pipeline / research prototype." Rename to **LongcatDesign** and ship as an **open-source product** — a terminal-first conversational design agent that is a true alternative to Claude Design (Anthropic's closed SaaS released 2026-04-18). v1.0 MVP covers three artifact types (poster / slide deck / landing page) with HTML as first-class output.
+**Decision**: Stop framing the project primarily as "Longcat-Next training-data pipeline / research prototype." Rename to **OpenDesign** and ship as an **open-source product** — a terminal-first conversational design agent that is a true alternative to Claude Design (Anthropic's closed SaaS released 2026-04-18). v1.0 MVP covers three artifact types (poster / slide deck / landing page) with HTML as first-class output.
 
 **Alternatives considered**:
 1. **Stay the course** — continue v0.1 → v0.2 → v0.3 under trajectory-first framing. Rejected: after Claude Design launched, the product-form for AI design agents is validated in a way training-data emission isn't; missing the window leaves us building for a use case (Longcat-Next model training) that may not monetize user pain the way shipping a real product does.
 2. **Build full SaaS clone of Claude Design** (browser UI, multi-user, Canva integration) — rejected as [VISION.md](VISION.md) / [COMPETITORS.md](COMPETITORS.md) note: we can't win on UX polish budget against Anthropic, but can win on open-source + terminal-first + open formats.
 3. **Abandon trajectory emission entirely** — rejected: kept as internal session state. Enables resume / undo / optional future training-data harvesting with no product dilution.
 
-**Rationale**: Claude Design validates the UX thesis (conversational iteration > one-shot) and reveals the market gap we can actually own: open-source, terminal-first, open output formats, self-hostable, model-agnostic. Also: rebranding to `LongcatDesign` aligns with our team's Longcat ecosystem (Longcat-Next et al.) — signals team credibility without forcing the training-data framing into the product pitch. Trajectory machinery is preserved; if the Longcat-Next team wants to harvest session data later, it's a feature-flag flip, not a refactor.
+**Rationale**: Claude Design validates the UX thesis (conversational iteration > one-shot) and reveals the market gap we can actually own: open-source, terminal-first, open output formats, self-hostable, model-agnostic. Also: rebranding to `OpenDesign` aligns with our team's Longcat ecosystem (Longcat-Next et al.) — signals team credibility without forcing the training-data framing into the product pitch. Trajectory machinery is preserved; if the Longcat-Next team wants to harvest session data later, it's a feature-flag flip, not a refactor.
 
 **Consequences**:
 - [VISION.md](VISION.md) rewritten around product positioning.
@@ -565,7 +565,7 @@ Per-turn cost of fully supporting cross-turn edits: +1h implementation + permane
 - [DATA-CONTRACT.md](DATA-CONTRACT.md) carries a banner: schema preserved, no longer the product — see its header for details.
 - [COMPETITORS.md](COMPETITORS.md) needs partial revision (flagged for rewrite); differentiation-vs-Claude-Design section is newly relevant.
 - [V1-MVP-PLAN.md](V1-MVP-PLAN.md) (new doc) is the single-page shipping plan for v1.0.
-- Package will rename `design_agent` → `longcat_design` (pending user confirmation; tracked in todo).
+- Package will rename `design_agent` → `open_design` (pending user confirmation; tracked in todo).
 
 **Revisit when**: (a) v1.0 ships and we have real adoption numbers — if GitHub stars/active users stay in low dozens after 3 months, reconsider positioning; (b) Anthropic open-sources Claude Design or exposes a "layered output" API — would shift the competitive landscape; (c) Longcat-Next team explicitly needs the training-data pipeline to launch — can reactivate with config flag without abandoning product.
 

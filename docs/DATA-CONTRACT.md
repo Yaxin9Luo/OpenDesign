@@ -2,7 +2,7 @@
 
 > **⚠️ v2 REWRITE (2026-04-22)** — `Trajectory` is replaced by **`DistillTrajectory`**, a lean training-data-only format. NO backward compat with v0/v1 trajectories — old JSON files are deleted, not migrated. See [DECISIONS.md § 2026-04-22](DECISIONS.md) for rationale.
 
-The single source of truth is [`longcat_design/schema.py`](../longcat_design/schema.py). This doc explains the *meaning* of each field and the downstream training tasks it supports. **If this doc disagrees with `schema.py`, the code wins — fix the doc.**
+The single source of truth is [`open_design/schema.py`](../open_design/schema.py). This doc explains the *meaning* of each field and the downstream training tasks it supports. **If this doc disagrees with `schema.py`, the code wins — fix the doc.**
 
 ---
 
@@ -573,9 +573,9 @@ That's it. No special infra needed — flat JSON files in a directory.
 
 When you change the schema:
 
-1. Edit [`longcat_design/schema.py`](../longcat_design/schema.py) (the source of truth).
+1. Edit [`open_design/schema.py`](../open_design/schema.py) (the source of truth).
 2. Update this doc to match.
-3. Bump `metadata.version` in [`runner.py`](../longcat_design/runner.py) (e.g. `"v0"` → `"v0.1"`) — but only when the change is non-backward-compat. Field additions with defaults don't require a version bump.
+3. Bump `metadata.version` in [`runner.py`](../open_design/runner.py) (e.g. `"v0"` → `"v0.1"`) — but only when the change is non-backward-compat. Field additions with defaults don't require a version bump.
 4. Add a migration note in [DECISIONS.md](DECISIONS.md) explaining what changed and why.
 5. Old trajectories remain readable — just branch on `metadata.version` in downstream loaders.
 

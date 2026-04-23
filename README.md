@@ -1,13 +1,13 @@
-# LongcatDesign
+# OpenDesign
 
-> **An open-source, terminal-first conversational design agent AND a training-data pipeline for layered design generation. Describe what you want; LongcatDesign builds and iterates it with you, exporting real HTML, PPTX, or editable PSD/SVG — and every run is automatically captured as a distillation-ready trajectory.**
+> **An open-source, terminal-first conversational design agent AND a training-data pipeline for layered design generation. Describe what you want; OpenDesign builds and iterates it with you, exporting real HTML, PPTX, or editable PSD/SVG — and every run is automatically captured as a distillation-ready trajectory.**
 
 The open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs) and similar closed SaaS design tools — with a second life as the training-data producer for the [Longcat](https://github.com/) layered / interleaved image-text ecosystem.
 
 > **Current status** (2026-04-22): **v2 training-data pipeline + multi-provider backend** (PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1), commits [30cab95](https://github.com/Yaxin9Luo/OpenDesign/commit/30cab95) · [c264545](https://github.com/Yaxin9Luo/OpenDesign/commit/c264545) · [eeb6490](https://github.com/Yaxin9Luo/OpenDesign/commit/eeb6490)) layered on top of v1.3 interactive landings. **Two things shipped together because they share the same code paths and the same goal** — making every design run simultaneously a product output AND a training sample:
 >
 > - **v2 `DistillTrajectory` schema** — pure model decisions + lean tool results + episode reward. 70 % size drop (144 KB → 44 KB). Tool results no longer leak `summary` / `next_actions` hints, so train↔deploy distribution shift vanishes. Episode-level `final_reward` + `terminal_status` (`pass` / `revise` / `fail` / `max_turns` / `abort`) is the RL reward signal directly.
-> - **Multi-provider LLM backend** (`longcat_design/llm_backend.py`) — `LLMBackend` Protocol + `AnthropicBackend` + `OpenAICompatBackend` handle 9 normalized protocol differences. Default planner + critic switched to **`moonshotai/kimi-k2.6`** (~$3.58/run with full plaintext reasoning vs Claude Opus 4.7 at $8-12/run with ~80 % redacted thinking). Claude is one env var away: `PLANNER_MODEL=anthropic/claude-opus-4.7`. Mix-and-match supported: planner on Claude + critic on DeepSeek-R1 works. Self-hosted vLLM / native Kimi / Moonshot supported via `OPENAI_COMPAT_BASE_URL`.
+> - **Multi-provider LLM backend** (`open_design/llm_backend.py`) — `LLMBackend` Protocol + `AnthropicBackend` + `OpenAICompatBackend` handle 9 normalized protocol differences. Default planner + critic switched to **`moonshotai/kimi-k2.6`** (~$3.58/run with full plaintext reasoning vs Claude Opus 4.7 at $8-12/run with ~80 % redacted thinking). Claude is one env var away: `PLANNER_MODEL=anthropic/claude-opus-4.7`. Mix-and-match supported: planner on Claude + critic on DeepSeek-R1 works. Self-hosted vLLM / native Kimi / Moonshot supported via `OPENAI_COMPAT_BASE_URL`.
 > - **Versioned intermediate artifacts** (`composites/iter_NN/` + layer `.vN.png` + `supersedes_sha256` chain) — every revise loop and every `edit_layer` call preserves prior state on disk. The data DPO training (rejected/chosen pairs) and layered-gen SFT (per-layer edit history) need most is now extractable by default. `final/` symlinks resolve transparently for product consumers.
 > - **SFT jsonl exporter** (`scripts/export_sft_jsonl.py`) — one `uv run` turns a directory of `DistillTrajectory` JSONs into OpenAI-compat jsonl, one record per assistant turn, with CoT + tool_calls + tool catalog + turn usage. CLI flags gate by `--min-reward` / `--source` / `--actor` / `--provider` / `--terminal-status`.
 >
@@ -30,7 +30,7 @@ The open-source alternative to [Claude Design](https://www.anthropic.com/news/cl
 
 ---
 
-## What LongcatDesign does
+## What OpenDesign does
 
 Three artifact types, generated conversationally from a CLI chat shell:
 
@@ -46,7 +46,7 @@ All text is a separate, named, editable element — including Chinese. The poste
 
 ---
 
-## Why LongcatDesign
+## Why OpenDesign
 
 ### vs [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs)
 
@@ -75,7 +75,7 @@ All text is a separate, named, editable element — including Chinese. The poste
 
 ### Install (uv-managed)
 
-LongcatDesign uses [uv](https://docs.astral.sh/uv/) for environment + dependency management. Install uv once (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
+OpenDesign uses [uv](https://docs.astral.sh/uv/) for environment + dependency management. Install uv once (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
 
 ```bash
 git clone https://github.com/Yaxin9Luo/OpenDesign.git
@@ -84,18 +84,18 @@ uv sync                    # creates .venv, installs deps from uv.lock, editable
 cp .env.example .env       # fill in GEMINI_API_KEY + OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
 ```
 
-> **macOS note:** if `uv run` fails with `ModuleNotFoundError: longcat_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).
+> **macOS note:** if `uv run` fails with `ModuleNotFoundError: open_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 ### Smoke test (no API, ~5 sec, 19 checks)
 
 ```bash
-uv run python -m longcat_design.smoke
+uv run python -m open_design.smoke
 ```
 
 ### Chat shell (default — conversational multi-turn)
 
 ```bash
-uv run python -m longcat_design.cli
+uv run python -m open_design.cli
 > 设计一张 3:4 竖版海报：「国宝回家」公益项目
   ✓ poster generated  (5 layers · critic pass 0.86 · $1.41 · 100s)
 
@@ -111,19 +111,19 @@ uv run python -m longcat_design.cli
 > :exit
 ```
 
-Full slash command reference in [docs/WORKFLOWS.md](docs/WORKFLOWS.md#slash-commands). Resume a prior session: `uv run python -m longcat_design.cli chat --resume <session_id>`.
+Full slash command reference in [docs/WORKFLOWS.md](docs/WORKFLOWS.md#slash-commands). Resume a prior session: `uv run python -m open_design.cli chat --resume <session_id>`.
 
 ### One-shot (for scripting / CI)
 
 ```bash
-uv run python -m longcat_design.cli run "10 张投资者 pitch deck：奶茶品牌 MilkCloud。封面 · 3 张 problem · 3 张 solution · 2 张 traction · thank-you。1920×1080，每张 slide 都要配图。"
+uv run python -m open_design.cli run "10 张投资者 pitch deck：奶茶品牌 MilkCloud。封面 · 3 张 problem · 3 张 solution · 2 张 traction · thank-you。1920×1080，每张 slide 都要配图。"
 ```
 
 Outputs land in `out/runs/<run_id>/` (per-artifact — `poster.pptx` + `slides/` + `preview.png` for deck; `index.html` + `preview.png` for landing; `poster.psd/svg/html` + `layers/` for poster). Chat mode additionally wraps trajectories under `sessions/<session_id>.json`.
 
 ### Switching models (planner + critic)
 
-All LLM access goes through [`longcat_design/llm_backend.py`](longcat_design/llm_backend.py), a provider-agnostic abstraction with two implementations: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / Qwen / vLLM-served / anything OpenAI-compatible).
+All LLM access goes through [`open_design/llm_backend.py`](open_design/llm_backend.py), a provider-agnostic abstraction with two implementations: `AnthropicBackend` (Claude via Anthropic API or OpenRouter Anthropic-compat endpoint) and `OpenAICompatBackend` (Kimi / DeepSeek / Doubao / Qwen / vLLM-served / anything OpenAI-compatible).
 
 **Default**: both planner and critic use `moonshotai/kimi-k2.6` — cheap, agentic, reasoning not redacted. One `OPENROUTER_API_KEY` covers all providers below.
 
@@ -145,7 +145,7 @@ Inspect what's active:
 
 ```bash
 uv run python -c "
-from longcat_design.config import load_settings
+from open_design.config import load_settings
 s = load_settings()
 print(f'planner: {s.planner_model} ({s.planner_provider})')
 print(f'critic:  {s.critic_model} ({s.critic_provider})')
@@ -159,13 +159,13 @@ Drop a paper / markdown / image into any run — planner calls `ingest_document`
 
 ```bash
 # One-shot CLI
-uv run python -m longcat_design.cli run \
+uv run python -m open_design.cli run \
   --from-file ~/papers/longcat-next.pdf \
   "基于附件的 Longcat-Next 论文，设计一张 3:4 学术海报。包含：标题 + 作者 + abstract 核心观点 + method/results + 2-3 张原论文图表直接 passthrough。学术会议风格。"
 # (optional — repeat --from-file for logo / brand kit / reference shots)
 
 # Or in chat
-uv run python -m longcat_design.cli
+uv run python -m open_design.cli
 > :attach ~/papers/longcat-next.pdf
   ✓ queued: longcat-next.pdf (17 MB). Will be ingested on the next non-slash turn.
 > 生成一张 claymorphism 风格的 landing，把 abstract 当 hero，method 和 results 当特性卡
@@ -188,7 +188,7 @@ What the planner gets on a paper run: title / authors / abstract / sections, up 
 Every poster + landing HTML comes with an embedded edit toolbar. Open the `.html` in a browser, click any text layer, edit inline (font / size / color / content / drag-to-move), click **Save** → download the edited HTML. Then:
 
 ```bash
-uv run python -m longcat_design.cli apply-edits ~/Downloads/poster-edited.html
+uv run python -m open_design.cli apply-edits ~/Downloads/poster-edited.html
 # → new run_dir with PSD + SVG + HTML regenerated from the edited version
 #   (parent_run_id tracked in the trajectory for lineage)
 ```
@@ -231,7 +231,7 @@ Full component map and data flow in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 |---|---|---|---|---|---|---|
 | 国宝回家 公益项目 | poster (3:4) | 5 | 1 bg | pass 0.86 | $1.41 | 100s |
 | CVPR academic poster | poster (3:4) | 18 | 1 bg | pass 0.86 | $2.49 | 196s |
-| LongcatDesign 发布海报 | poster (3:4) | 5 | 1 bg | 0.78 → 0.82 (2 iter) | $3.74 | 297s |
+| OpenDesign 发布海报 | poster (3:4) | 5 | 1 bg | 0.78 → 0.82 (2 iter) | $3.74 | 297s |
 | 茉语 奶茶品牌 landing | landing (claymorphism) | 4 sections | 5 (hero + icons) | pass 0.94 | $2.20 | 207s |
 | MilkCloud 投资人 deck | deck (16:9) | 10 slides | 10 (cover bg + 8 content + closing bg) | pass 0.92 | $3.43 | 384s |
 
@@ -247,4 +247,4 @@ MIT (planned). Fonts in `assets/fonts/` are OFL (Noto Sans SC + Noto Serif SC), 
 
 ## Part of the Longcat ecosystem
 
-LongcatDesign is built by the Longcat team alongside [Longcat-Next](https://github.com/) (next-gen layered image-text generation model). The trajectory-capture architecture preserved inside LongcatDesign can feed Longcat-Next's training data pipeline when needed — but that's a side-channel, not the product.
+OpenDesign is built by the Longcat team alongside [Longcat-Next](https://github.com/) (next-gen layered image-text generation model). The trajectory-capture architecture preserved inside OpenDesign can feed Longcat-Next's training data pipeline when needed — but that's a side-channel, not the product.

@@ -30,7 +30,7 @@ If both LLM keys are set, **OpenRouter wins**. To force stock Anthropic, comment
 Use this whenever you change tools, schema, fonts, or composite logic:
 
 ```bash
-uv run python -m longcat_design.smoke
+uv run python -m open_design.smoke
 ```
 
 Verifies 7 steps: imports (incl. chat + session modules), tool registry shape (8 tools + `switch_artifact_type` first), `Trajectory` Pydantic round-trip, font loading, real composite call against a stub background, SVG vector text + embedded fonts, **ChatSession save/load round-trip**.
@@ -44,9 +44,9 @@ Outputs go to `out/smoke/`. Inspect `poster.psd` (should have 3 named layers: `b
 ### Chat shell (v1.0 default — conversational multi-turn)
 
 ```bash
-uv run python -m longcat_design.cli
+uv run python -m open_design.cli
 # or equivalently:
-uv run python -m longcat_design.cli chat
+uv run python -m open_design.cli chat
 ```
 
 Launches a REPL. Type a brief, agent generates, iterate. Every turn auto-saves to `sessions/<session_id>.json`. See [§slash commands](#slash-commands) below.
@@ -54,23 +54,23 @@ Launches a REPL. Type a brief, agent generates, iterate. Every turn auto-saves t
 Resume a prior session:
 
 ```bash
-uv run python -m longcat_design.cli chat --resume session_20260418-214348_ea6c0de9
+uv run python -m open_design.cli chat --resume session_20260418-214348_ea6c0de9
 ```
 
 ### One-shot (legacy, for scripting / CI / single-brief work)
 
 ```bash
-uv run python -m longcat_design.cli run "<your brief>"
+uv run python -m open_design.cli run "<your brief>"
 ```
 
 Examples:
 
 ```bash
 # Minimal — replicates the 国宝回家 reference case
-uv run python -m longcat_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
+uv run python -m open_design.cli run "国宝回家 公益项目主视觉海报，竖版 3:4"
 
 # Academic poster (text-heavy)
-uv run python -m longcat_design.cli run "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
+uv run python -m open_design.cli run "学术海报：CVPR 2026 投稿《<title>》。需要：主标题 + 5 位作者及 affiliation + 4 个 section（Abstract / Method / Results / Conclusion）+ 底部 conference info + 右上角 QR 占位框。竖版 3:4。"
 ```
 
 Both modes produce artifacts in `out/runs/<run_id>/` (per-artifact-type — see layout below) and trajectories in `out/trajectories/<run_id>.json`. Chat mode ADDITIONALLY wraps trajectories under `sessions/<session_id>.json`.
@@ -141,7 +141,7 @@ Canvas: typically 3:4 (`1536×2048`) or 4:3 (`2048×1536`) for print; `1920×108
 
 **v2.3.3 `--template` flag** — skip typing venue dims:
 ```
-longcat-design run --from-file paper.pdf --template neurips-portrait "poster brief..."
+open-design run --from-file paper.pdf --template neurips-portrait "poster brief..."
 ```
 5 bundled presets: `neurips-portrait` / `cvpr-landscape` / `icml-portrait` / `a0-portrait` / `a0-landscape`. Resolves to a canvas dict (w_px / h_px / dpi / aspect_ratio) injected via brief prologue. Case-insensitive; unknown names fail fast before any API cost.
 
@@ -303,12 +303,12 @@ Drop a source document into any run — planner calls `ingest_document` first, e
 ### CLI — one-shot
 
 ```bash
-uv run python -m longcat_design.cli run \
+uv run python -m open_design.cli run \
   --from-file ~/papers/longcat-next.pdf \
   "基于附件的论文，设计一张 3:4 学术海报。包含：标题 + 作者 + abstract + method + results + 2-3 张原论文图表直接 passthrough。学术会议风格。"
 
 # repeatable — attach multiple files
-uv run python -m longcat_design.cli run \
+uv run python -m open_design.cli run \
   --from-file paper.pdf --from-file brand-logo.png \
   "landing page for this paper, claymorphism style, use the attached logo in the hero"
 ```
@@ -414,7 +414,7 @@ In the browser:
 Round-trip back into PSD / SVG / HTML (poster) or HTML (landing):
 
 ```bash
-uv run python -m longcat_design.cli apply-edits ~/Downloads/poster-edited.html
+uv run python -m open_design.cli apply-edits ~/Downloads/poster-edited.html
 #  → new out/runs/<new_run_id>/ with metadata.source = "apply-edits"
 #    and metadata.parent_run_id tracing back to the original
 ```
@@ -476,7 +476,7 @@ Figma's SVG importer mishandles `text-anchor`, drops embedded `@font-face`, and 
 
 ### Add a new tool
 
-1. Create `longcat_design/tools/<your_tool>.py`. The handler signature:
+1. Create `open_design/tools/<your_tool>.py`. The handler signature:
 
 ```python
 from typing import Any
@@ -490,19 +490,19 @@ def your_tool(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
     return obs_ok("did the thing", artifacts=["<path>"], next_actions=["<hint>"])
 ```
 
-2. Register it in [`longcat_design/tools/__init__.py`](../longcat_design/tools/__init__.py):
+2. Register it in [`open_design/tools/__init__.py`](../open_design/tools/__init__.py):
    - Add a JSON schema entry to `TOOL_SCHEMAS` (description ends with the observation contract notice).
    - Add the handler to `TOOL_HANDLERS` dict.
 
 3. Update [`prompts/planner.md`](../prompts/planner.md) to mention the tool, when to use it, and any constraints.
 
-4. Update the `expected` tool set in `longcat_design/smoke.py::check_tool_registry`.
+4. Update the `expected` tool set in `open_design/smoke.py::check_tool_registry`.
 
-5. Re-run `uv run python -m longcat_design.smoke` — the registry assertion will catch typos.
+5. Re-run `uv run python -m open_design.smoke` — the registry assertion will catch typos.
 
 ### Add a new artifact type or renderer
 
-1. Extend `ArtifactType` enum in [`schema.py`](../longcat_design/schema.py).
+1. Extend `ArtifactType` enum in [`schema.py`](../open_design/schema.py).
 2. Add any new `LayerKind` literals needed (e.g. `"slide"` for deck).
 3. Add a new branch in `tools/composite.py::composite()` that dispatches to your renderer.
 4. Write the renderer module (e.g. `tools/pptx_renderer.py`) with a `write_<type>(spec, out_path, ctx)` function.
@@ -514,9 +514,9 @@ def your_tool(args: dict[str, Any], *, ctx: ToolContext) -> ToolObservation:
 
 ### Modify the trajectory schema
 
-1. Edit [`longcat_design/schema.py`](../longcat_design/schema.py).
+1. Edit [`open_design/schema.py`](../open_design/schema.py).
 2. Update [DATA-CONTRACT.md](DATA-CONTRACT.md) to match (this drifts easiest).
-3. Bump `metadata.version` in [`runner.py`](../longcat_design/runner.py) **only** for non-backward-compat changes.
+3. Bump `metadata.version` in [`runner.py`](../open_design/runner.py) **only** for non-backward-compat changes.
 4. Add a note to [DECISIONS.md](DECISIONS.md) under a new dated entry.
 5. Re-run smoke — pydantic round-trip will catch breakage.
 
@@ -536,7 +536,7 @@ Set env vars:
 ```bash
 export PLANNER_MODEL="anthropic/claude-haiku-4-5"   # cheaper, see if planning still holds
 export CRITIC_MODEL="anthropic/claude-sonnet-4-6"
-uv run python -m longcat_design.cli run "..."
+uv run python -m open_design.cli run "..."
 ```
 
 Both planner and critic still go through the same Anthropic SDK + tool-use protocol regardless of model.

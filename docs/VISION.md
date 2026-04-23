@@ -2,15 +2,15 @@
 
 ## Product name
 
-**LongcatDesign** — the open-source conversational design agent from the Longcat team.
+**OpenDesign** — the open-source conversational design agent from the Longcat team.
 
 The `Longcat` prefix aligns with our team's broader ecosystem (Longcat-Next et al.) and signals that this is a serious OSS release with a brand, not a throwaway research artifact.
 
 ## The 1-line pitch
 
-> **An open-source, terminal-first conversational design agent. Describe what you want; LongcatDesign builds and iterates it with you, exporting real HTML, PPTX, or editable PSD/SVG.**
+> **An open-source, terminal-first conversational design agent. Describe what you want; OpenDesign builds and iterates it with you, exporting real HTML, PPTX, or editable PSD/SVG.**
 
-## Why LongcatDesign exists
+## Why OpenDesign exists
 
 [Claude Design (Anthropic Labs)](https://www.anthropic.com/news/claude-design-anthropic-labs) shipped the right UX thesis — *conversational design iteration produces dramatically better artifacts than one-shot text-to-image* — but locked it inside a closed browser SaaS tied to Claude subscriptions. That's the same bet every closed AI design tool makes (Canva Magic / Figma AI / Lovart / Adobe Firefly).
 
@@ -20,15 +20,15 @@ We think the right UX + open-source distribution + open output formats wins a re
 - **Self-hosting teams** who can't send IP to a cloud SaaS but still want AI-accelerated design.
 - **Designers** who want the agent's output as *real editable source files* (PSD, SVG, HTML) they can push into their own pipeline — not just rasters locked in a vendor's canvas.
 
-LongcatDesign is the terminal-first, open-source answer to "I want what Claude Design does, but I want to own the stack and the output."
+OpenDesign is the terminal-first, open-source answer to "I want what Claude Design does, but I want to own the stack and the output."
 
 ## North Star: paper2any
 
-The end-state product form is **paper2any**: user drops in a paper / PDF / docx / markdown / image bundle → LongcatDesign generates the matching poster, landing page, or slide deck → user iterates via the in-HTML edit toolbar and the `apply-edits` round-trip. One ingest, three artifact types, all editable after the fact.
+The end-state product form is **paper2any**: user drops in a paper / PDF / docx / markdown / image bundle → OpenDesign generates the matching poster, landing page, or slide deck → user iterates via the in-HTML edit toolbar and the `apply-edits` round-trip. One ingest, three artifact types, all editable after the fact.
 
 v1.0 ships the single-brief story ("describe what you want"). **v1.1 closes the loop** with a `ingest_document` tool and `--from-file` / `:attach` entry points — see [ROADMAP.md § v1.1](ROADMAP.md#v11--document-ingestion-paper2any--core). Everything in v1.0 (round-trip editable layers, 6 design systems, NBP inline imagery) is pre-work for the paper2any moment.
 
-## What LongcatDesign does (v1 MVP scope)
+## What OpenDesign does (v1 MVP scope)
 
 Three artifact types, produced from conversational briefs in a CLI chat shell:
 
@@ -41,7 +41,7 @@ Three artifact types, produced from conversational briefs in a CLI chat shell:
 The CLI is a conversational shell, not a one-shot command. Typical session:
 
 ```
-$ longcat-design
+$ open-design
 > design a 3:4 poster for "国宝回家 公益项目"
 [agent designs, composites, shows preview link]
 > make the title bigger and move the stamp to the top-left
@@ -72,7 +72,7 @@ $ longcat-design
 
 ## Origin story (the gap we were built from)
 
-LongcatDesign started as a research prototype (codename "Design-Agent") aimed at capturing layered-generation training trajectories for the Longcat-Next model team. Along the way we realized:
+OpenDesign started as a research prototype (codename "Design-Agent") aimed at capturing layered-generation training trajectories for the Longcat-Next model team. Along the way we realized:
 
 1. The **architecture** we built (Anthropic SDK + handwritten tool loop + text-free background generation + separately-rendered text layers + structured composition) produces genuinely better editable artifacts than any closed competitor's approach — especially for Chinese text, where SaaS tools rasterize titles into the image.
 2. The **UX** that Claude Design validated (conversational iteration + multi-format export + brand system consistency) is the natural front-end to that architecture.
@@ -103,20 +103,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map — most of it st
 
 ## Success criteria
 
-**v1.0 launch**: LongcatDesign ships on GitHub (MIT license) with:
+**v1.0 launch**: OpenDesign ships on GitHub (MIT license) with:
 
-- Working CLI chat shell, runnable from `pip install longcat-design`
+- Working CLI chat shell, runnable from `pip install open-design`
 - The three artifact types produce viewable / editable artifacts
 - README showcases one great example of each artifact type
 - Docs cover setup, quickstart, extending with new tools, model-backend config
 - A short YouTube/video walkthrough of a multi-turn design session
 - At least the first external contributor's PR merged — proof that the architecture is readable and extensible
 
-**v1.x growth** (months post-launch): GitHub stars as a directional signal, but the real signal is whether teams actually self-host LongcatDesign for internal design needs.
+**v1.x growth** (months post-launch): GitHub stars as a directional signal, but the real signal is whether teams actually self-host OpenDesign for internal design needs.
 
 ## The honest constraint (still relevant post-pivot)
 
-LongcatDesign depends on:
+OpenDesign depends on:
 
 - **Claude Opus 4.7** (via OpenRouter or Anthropic stock) for planning + critiquing
 - **Gemini 3 Pro Image / Nano Banana Pro** for text-free background generation

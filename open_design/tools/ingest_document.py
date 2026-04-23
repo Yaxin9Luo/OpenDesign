@@ -28,7 +28,7 @@ v1.2 separates two concerns:
         filtered at this step.
 
 The `rendered_layers` record shape is unchanged (see the downstream
-contract in `docs/DECISIONS.md` and `longcat_design/tools/composite.py`
+contract in `docs/DECISIONS.md` and `open_design/tools/composite.py`
 hydration helpers): callers reference ingested figures by the stable
 `layer_id` we register (e.g. `ingest_fig_01`), and the renderer
 hydrates `src_path` / `bbox` / `caption` from the layer registry.
@@ -132,7 +132,7 @@ Rules:
 
 
 _INGEST_STRUCTURE_PROMPT = """\
-You are a document-structure extractor for LongcatDesign. You will be
+You are a document-structure extractor for OpenDesign. You will be
 given ONE cover-page image (page 1) for visual grounding, followed by
 the full extracted text of the paper (all pages, marked with
 [PAGE N] headers). Return a STRICT JSON manifest that downstream tools

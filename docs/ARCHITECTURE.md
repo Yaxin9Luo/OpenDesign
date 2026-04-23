@@ -2,9 +2,9 @@
 
 ## One-paragraph overview
 
-A `ChatREPL` (in [`longcat_design/chat.py`](../longcat_design/chat.py)) manages the outer conversation loop; each non-slash user message invokes a `PipelineRunner` (in [`longcat_design/runner.py`](../longcat_design/runner.py)) which bootstraps a per-run directory and a `ToolContext`, then hands control to a `PlannerLoop` (in [`longcat_design/planner.py`](../longcat_design/planner.py)) driving Claude Opus 4.7 through a handwritten tool-use loop (no LangGraph / CrewAI). When the brief is prefixed with an `Attached files:` block (from CLI `--from-file` or chat `:attach`), the planner calls `ingest_document` **first** to extract structure + figures + tables; as of v1.2 this step uses **pymupdf natively** (`doc.extract_image(xref)` for embedded rasters at native resolution; `page.get_drawings()` clustered at 300 dpi for vector diagrams; `page.find_tables()` for table localization) and asks **Qwen-VL-Max via OpenRouter** (dispatched through `longcat_design/util/vlm.py`) only for the non-localization jobs: structure manifest extraction, per-figure caption matching, fake-figure filtering, and per-table cell parsing with optional `col_highlight_rule`. Then the full pipeline runs: `switch_artifact_type` → `propose_design_spec` → (`generate_background` | `generate_image`)× → `render_text_layer` × N (poster only) → `edit_layer` (critic-revise loops) → `fetch_brand_asset` (v1 stub) → `composite` → `critique` → `finalize`. **11 tools wired** (since v1.1 `ingest_document`). The `composite` tool dispatches on `spec.artifact_type`: **POSTER** → PSD + SVG + HTML + aspect-preserve preview.png (image layers contain-fit via `_aspect_fit_contain`; table layers re-rendered at bbox dims with font autoscale); **LANDING** → single HTML with 6 bundled design systems + inline NBP imagery + real `<table>` + `figcaption`; **DECK** → `deck.pptx` with native `add_table` shapes for `kind="table"` layers + per-slide PNG thumbs + grid preview.png. Every assistant turn and every tool result is appended to a structured `agent_trace`. When the planner calls `finalize`, the runner serializes the `Trajectory` (brief + spec + layer_graph + trace + critique loop + composition artifacts + metadata) to `out/trajectories/<run_id>.json`; the chat loop appends a lightweight `TrajectoryRef` to the `ChatSession` and persists that to `sessions/<id>.json`. For poster + landing, a standalone `apply-edits` CLI round-trips user-edited HTML back into a new run. For deck, editability lives directly in PowerPoint / Keynote — TextFrames AND native tables are live.
+A `ChatREPL` (in [`open_design/chat.py`](../open_design/chat.py)) manages the outer conversation loop; each non-slash user message invokes a `PipelineRunner` (in [`open_design/runner.py`](../open_design/runner.py)) which bootstraps a per-run directory and a `ToolContext`, then hands control to a `PlannerLoop` (in [`open_design/planner.py`](../open_design/planner.py)) driving Claude Opus 4.7 through a handwritten tool-use loop (no LangGraph / CrewAI). When the brief is prefixed with an `Attached files:` block (from CLI `--from-file` or chat `:attach`), the planner calls `ingest_document` **first** to extract structure + figures + tables; as of v1.2 this step uses **pymupdf natively** (`doc.extract_image(xref)` for embedded rasters at native resolution; `page.get_drawings()` clustered at 300 dpi for vector diagrams; `page.find_tables()` for table localization) and asks **Qwen-VL-Max via OpenRouter** (dispatched through `open_design/util/vlm.py`) only for the non-localization jobs: structure manifest extraction, per-figure caption matching, fake-figure filtering, and per-table cell parsing with optional `col_highlight_rule`. Then the full pipeline runs: `switch_artifact_type` → `propose_design_spec` → (`generate_background` | `generate_image`)× → `render_text_layer` × N (poster only) → `edit_layer` (critic-revise loops) → `fetch_brand_asset` (v1 stub) → `composite` → `critique` → `finalize`. **11 tools wired** (since v1.1 `ingest_document`). The `composite` tool dispatches on `spec.artifact_type`: **POSTER** → PSD + SVG + HTML + aspect-preserve preview.png (image layers contain-fit via `_aspect_fit_contain`; table layers re-rendered at bbox dims with font autoscale); **LANDING** → single HTML with 6 bundled design systems + inline NBP imagery + real `<table>` + `figcaption`; **DECK** → `deck.pptx` with native `add_table` shapes for `kind="table"` layers + per-slide PNG thumbs + grid preview.png. Every assistant turn and every tool result is appended to a structured `agent_trace`. When the planner calls `finalize`, the runner serializes the `Trajectory` (brief + spec + layer_graph + trace + critique loop + composition artifacts + metadata) to `out/trajectories/<run_id>.json`; the chat loop appends a lightweight `TrajectoryRef` to the `ChatSession` and persists that to `sessions/<id>.json`. For poster + landing, a standalone `apply-edits` CLI round-trips user-edited HTML back into a new run. For deck, editability lives directly in PowerPoint / Keynote — TextFrames AND native tables are live.
 
-**Dual-SDK routing**: planner and critic always use the Anthropic SDK (preserves tool_use protocol — OpenRouter's Claude endpoint is Anthropic-compatible). Ingest's VLM calls route through `longcat_design/util/vlm.py::vlm_call_json`, which picks the Anthropic or OpenAI SDK based on model id prefix (`anthropic/` / `claude-` → Anthropic; `qwen/` → OpenAI against OpenRouter's `/api/v1`). Ingest is the **only** surface that uses the OpenAI SDK; leaking it into planner.py would break tool_use.
+**Dual-SDK routing**: planner and critic always use the Anthropic SDK (preserves tool_use protocol — OpenRouter's Claude endpoint is Anthropic-compatible). Ingest's VLM calls route through `open_design/util/vlm.py::vlm_call_json`, which picks the Anthropic or OpenAI SDK based on model id prefix (`anthropic/` / `claude-` → Anthropic; `qwen/` → OpenAI against OpenRouter's `/api/v1`). Ingest is the **only** surface that uses the OpenAI SDK; leaking it into planner.py would break tool_use.
 
 ## Top-level data flow
 
@@ -33,7 +33,7 @@ A `ChatREPL` (in [`longcat_design/chat.py`](../longcat_design/chat.py)) manages 
                │ tool_use blocks
                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  TOOLS  (action space — 11 tools, all in longcat_design/tools/)               │
+│  TOOLS  (action space — 11 tools, all in open_design/tools/)               │
 │                                                                              │
 │  switch_artifact_type → poster/deck/landing declaration → ctx.state           │
 │  ingest_document      → v1.2 paper2any: PDF (pymupdf native figure + table   │
@@ -97,8 +97,8 @@ poster.html / index.html  (written by composite with contenteditable text + data
         ▼  open in browser, click layers, edit inline, Save button → Copy/Download
 poster-edited.html
         │
-        ▼  uv run python -m longcat_design.cli apply-edits <path>
-longcat_design/apply_edits.py
+        ▼  uv run python -m open_design.cli apply-edits <path>
+open_design/apply_edits.py
   - bs4 parses HTML
   - LANDING detected via <main class="ld-landing"> → _restore_landing rebuilds section tree
   - POSTER detected via <div class="canvas">    → _restore_poster rebuilds rendered_layers
@@ -162,7 +162,7 @@ Design-Agent/                      # directory name preserved from v0 for stabil
 │       ├── glassmorphism.css
 │       └── neubrutalism.css
 │
-├── longcat_design/                # the package
+├── open_design/                # the package
 │   ├── __init__.py
 │   ├── cli.py                     # argparse: `chat` (default) / `run` (one-shot) / `apply-edits`
 │   ├── chat.py                    # ChatREPL — multi-turn REPL, 8 slash commands, session I/O
@@ -180,7 +180,7 @@ Design-Agent/                      # directory name preserved from v0 for stabil
 │   ├── planner.py                 # PlannerLoop — tool-use loop (max_tokens=16384)
 │   ├── critic.py                  # Critic — branches POSTER vision / LANDING+DECK text-only
 │   ├── apply_edits.py             # HTML → new run round-trip (poster + landing) — v1.0 #6.5
-│   ├── smoke.py                   # `python -m longcat_design.smoke` (18/18 no-API checks)
+│   ├── smoke.py                   # `python -m open_design.smoke` (18/18 no-API checks)
 │   │
 │   ├── tools/                     # the action space (11 tools)
 │   │   ├── __init__.py            # TOOL_SCHEMAS + TOOL_HANDLERS registry (11 tools)
@@ -228,7 +228,7 @@ Design-Agent/                      # directory name preserved from v0 for stabil
 
 The chat layer wraps the per-run `PipelineRunner` inside a multi-turn loop:
 
-- **`ChatSession`** ([session.py](../longcat_design/session.py)): outer container. Holds `session_id`, `message_history: list[ChatMessage]`, `trajectories: list[TrajectoryRef]`, `current_artifact_type`. Persists to `sessions/<session_id>.json`.
+- **`ChatSession`** ([session.py](../open_design/session.py)): outer container. Holds `session_id`, `message_history: list[ChatMessage]`, `trajectories: list[TrajectoryRef]`, `current_artifact_type`. Persists to `sessions/<session_id>.json`.
 - **`ChatMessage`**: single turn (`role ∈ {user, assistant, system}` + content + optional `trajectory_id` linking an assistant message to the Trajectory it produced).
 - **`TrajectoryRef`**: lightweight pointer from session → the full Trajectory JSON on disk. Holds run_id, artifact paths, verdict, cost, wall_s — enough to display in `:history` / `:tokens` without loading the full ~50KB Trajectory.
 
@@ -242,7 +242,7 @@ The chat REPL (`chat.py`) sits above `PipelineRunner`:
 
 The chat layer does NOT touch tool internals or the planner loop — it just wraps per-turn execution. `PipelineRunner`, `PlannerLoop`, `Critic`, and the 11 tools are unchanged by chat mode.
 
-Legacy one-shot `longcat-design run "<brief>"` bypasses `chat.py` entirely and invokes `PipelineRunner.run()` directly. Backward compat with the v0 CLI behavior, minus the outer ChatSession.
+Legacy one-shot `open-design run "<brief>"` bypasses `chat.py` entirely and invokes `PipelineRunner.run()` directly. Backward compat with the v0 CLI behavior, minus the outer ChatSession.
 
 ## The 11 tools (action space)
 
@@ -250,19 +250,19 @@ Every tool follows the same signature: `fn(args: dict, *, ctx: ToolContext) -> T
 
 | # | Tool | File | Purpose | Side effect |
 |---|---|---|---|---|
-| 1 | `switch_artifact_type` | [`tools/switch_artifact_type.py`](../longcat_design/tools/switch_artifact_type.py) | Declare `poster` \| `deck` \| `landing`. MUST be first tool for any new artifact (not counting re-affirm). Writes to `ctx.state["artifact_type"]` — drives renderer selection + acts as fallback default if `propose_design_spec` omits the field. | Sets `ctx.state["artifact_type"]`. Planner emits `AgentTraceStep(type="artifact_switch")`. |
-| 2 | `ingest_document` | [`tools/ingest_document.py`](../longcat_design/tools/ingest_document.py) | v1.2 paper2any. Dispatches on extension: `.pdf` → pymupdf native raster/vector figure extraction + `find_tables()` localization; Qwen-VL-Max (via `util/vlm.py`) handles structure manifest + caption matching + fake-figure filtering + table cell parsing. Scanned PDFs auto-detected via `detect_scanned_pdf` → `_ocr_scanned_pdf` runs a 6-worker Qwen-VL page-OCR pass at 200 dpi (v1.2.5). `.docx` → `python-docx` structural reader: heading-styled paragraphs build the section tree, `doc.part.rels` provides embedded images. `.pptx` → `python-pptx` reader: each slide becomes a section, picture shapes become `ingest_fig_NN` (v1.2.5). `.md,.txt` → embedded `![](…)` ref resolution. `.png/.jpg/.jpeg/.webp` → passthrough. Registers `ingest_fig_NN` (`kind="image"`) + `ingest_table_NN` (`kind="table"` with `rows`, `headers`, `col_highlight_rule`) in `rendered_layers`. Tool result summarizes the top-20 figure catalog for planner picks. | Writes `layers/img_<id>.png`; registers records in `rendered_layers`; stores manifest in `ctx.state["ingested"]`. |
-| 3 | `propose_design_spec` | [`tools/propose_design_spec.py`](../longcat_design/tools/propose_design_spec.py) | Validate `DesignSpec` JSON from planner; store in `ctx.state["design_spec"]`. Falls back to `ctx.state["artifact_type"]` when spec omits `artifact_type`. For DECK and LANDING, the `layer_graph` is the authoritative section/slide tree. Supports `kind="table"` layers with `rows`, `headers`, `caption`, `col_highlight_rule` fields. | Sets `ctx.state["design_spec"]`. |
-| 4 | `generate_background` | [`tools/generate_background.py`](../longcat_design/tools/generate_background.py) | POSTER-only full-canvas text-free background via NBP (`gemini-3-pro-image-preview`). Auto-appends "no text" suffix. Has `safe_zones` so the model protects title/stamp regions. | Writes `layers/bg_<id>.png`; registers in `ctx.state["rendered_layers"]`. |
-| 5 | `generate_image` | [`tools/generate_image.py`](../longcat_design/tools/generate_image.py) | Inline NBP image for LANDING sections OR DECK slide elements (image / background children). No `safe_zones` — planner controls placement via `bbox`. v1.0 #8.75 for landing; v1.0 #7 extends for deck. | Writes `layers/img_<layer_id>.png`; registers record in `rendered_layers`. |
-| 6 | `render_text_layer` | [`tools/render_text_layer.py`](../longcat_design/tools/render_text_layer.py) | POSTER-only. Render a text run to RGBA PNG with stroke + drop-shadow. Auto-wraps long lines (Latin on space, CJK char-by-char). Falls back to NotoSansSC-Bold for unknown fonts. LANDING + DECK skip this — text stays as native HTML / PPTX TextFrame. | Writes `layers/text_<id>.png`; registers layer. |
-| 7 | `edit_layer` | [`tools/edit_layer.py`](../longcat_design/tools/edit_layer.py) | v1.0 #5. Subset-merge diff onto an existing text layer (text / font / size / color / bbox / effects) and re-render. Used during critique revise loops to avoid re-issuing full `propose_design_spec`. Non-text layers return an error with a redirect to the right tool. | Replaces `rendered_layers[layer_id]`; rewrites the layer PNG. |
-| 8 | `fetch_brand_asset` | [`tools/fetch_brand_asset.py`](../longcat_design/tools/fetch_brand_asset.py) | v1 stub. Always returns `status: "not_found"`. Replaced by v1.5 Brand Kit ingestion. | Nothing. |
-| 9 | `composite` | [`tools/composite.py`](../longcat_design/tools/composite.py) | **Dispatches on `spec.artifact_type`.** POSTER → PSD (psd-tools named pixel layers + `text` group; image layers use `_aspect_fit_contain` letterbox; table layers are re-rendered at bbox dims via `render_table_png`) + SVG (svgwrite real `<text>` + subsetted-WOFF2 @font-face; `<image preserveAspectRatio="xMidYMid meet">` for images + tables) + HTML (contenteditable toolbar + inline fonts/images) + preview.png (PIL alpha_composite, aspect-preserve). LANDING → `index.html` via `write_landing_html` (6 bundled design systems + NBP imagery + real `<table>` with winner-class styling for ingested tables; v1.3 adds CTA `<a role="button">` layers with per-style chrome, `<header><nav>` auto-generated when `section_count ≥ 4` or `design_system.show_nav=true`, semantic `<footer>` auto-upgrade for footer-variant sections, and an inline vanilla-JS `<script>` for `IntersectionObserver` reveal + smooth anchor scroll + `aria-current` active-nav tracking). DECK → `deck.pptx` via `pptx_renderer.write_pptx` (native TextFrames, picture shapes for images, native `add_table` shapes with bold-winner cells for `kind="table"` layers) + `slides/slide_NN.png` per-slide previews + grid `preview.png`. | Writes artifacts under `run_dir`; sets `ctx.state["composition"]`. |
-| 10 | `critique` | [`tools/critique_tool.py`](../longcat_design/tools/critique_tool.py) | Invoke `Critic.evaluate()`. Hard-capped at `max_critique_iters` (default 2). Branches on `artifact_type`: POSTER → vision on `preview.png` with v1.2 visual-density rubric (20% weight) that penalizes < 3 figures on paper posters, image-area < 45%, tables < 400 px tall; LANDING → text-only on section tree via `critic-landing.md`; DECK → text-only on slide tree via `critic-deck.md`. | Appends to `ctx.state["critique_results"]`; writes `critique_<i>.json`. |
-| 11 | `finalize` | [`tools/finalize.py`](../longcat_design/tools/finalize.py) | Signal "planner is done." | Sets `ctx.state["finalized"] = True`. Runner sees this after the turn and serializes the trajectory. |
+| 1 | `switch_artifact_type` | [`tools/switch_artifact_type.py`](../open_design/tools/switch_artifact_type.py) | Declare `poster` \| `deck` \| `landing`. MUST be first tool for any new artifact (not counting re-affirm). Writes to `ctx.state["artifact_type"]` — drives renderer selection + acts as fallback default if `propose_design_spec` omits the field. | Sets `ctx.state["artifact_type"]`. Planner emits `AgentTraceStep(type="artifact_switch")`. |
+| 2 | `ingest_document` | [`tools/ingest_document.py`](../open_design/tools/ingest_document.py) | v1.2 paper2any. Dispatches on extension: `.pdf` → pymupdf native raster/vector figure extraction + `find_tables()` localization; Qwen-VL-Max (via `util/vlm.py`) handles structure manifest + caption matching + fake-figure filtering + table cell parsing. Scanned PDFs auto-detected via `detect_scanned_pdf` → `_ocr_scanned_pdf` runs a 6-worker Qwen-VL page-OCR pass at 200 dpi (v1.2.5). `.docx` → `python-docx` structural reader: heading-styled paragraphs build the section tree, `doc.part.rels` provides embedded images. `.pptx` → `python-pptx` reader: each slide becomes a section, picture shapes become `ingest_fig_NN` (v1.2.5). `.md,.txt` → embedded `![](…)` ref resolution. `.png/.jpg/.jpeg/.webp` → passthrough. Registers `ingest_fig_NN` (`kind="image"`) + `ingest_table_NN` (`kind="table"` with `rows`, `headers`, `col_highlight_rule`) in `rendered_layers`. Tool result summarizes the top-20 figure catalog for planner picks. | Writes `layers/img_<id>.png`; registers records in `rendered_layers`; stores manifest in `ctx.state["ingested"]`. |
+| 3 | `propose_design_spec` | [`tools/propose_design_spec.py`](../open_design/tools/propose_design_spec.py) | Validate `DesignSpec` JSON from planner; store in `ctx.state["design_spec"]`. Falls back to `ctx.state["artifact_type"]` when spec omits `artifact_type`. For DECK and LANDING, the `layer_graph` is the authoritative section/slide tree. Supports `kind="table"` layers with `rows`, `headers`, `caption`, `col_highlight_rule` fields. | Sets `ctx.state["design_spec"]`. |
+| 4 | `generate_background` | [`tools/generate_background.py`](../open_design/tools/generate_background.py) | POSTER-only full-canvas text-free background via NBP (`gemini-3-pro-image-preview`). Auto-appends "no text" suffix. Has `safe_zones` so the model protects title/stamp regions. | Writes `layers/bg_<id>.png`; registers in `ctx.state["rendered_layers"]`. |
+| 5 | `generate_image` | [`tools/generate_image.py`](../open_design/tools/generate_image.py) | Inline NBP image for LANDING sections OR DECK slide elements (image / background children). No `safe_zones` — planner controls placement via `bbox`. v1.0 #8.75 for landing; v1.0 #7 extends for deck. | Writes `layers/img_<layer_id>.png`; registers record in `rendered_layers`. |
+| 6 | `render_text_layer` | [`tools/render_text_layer.py`](../open_design/tools/render_text_layer.py) | POSTER-only. Render a text run to RGBA PNG with stroke + drop-shadow. Auto-wraps long lines (Latin on space, CJK char-by-char). Falls back to NotoSansSC-Bold for unknown fonts. LANDING + DECK skip this — text stays as native HTML / PPTX TextFrame. | Writes `layers/text_<id>.png`; registers layer. |
+| 7 | `edit_layer` | [`tools/edit_layer.py`](../open_design/tools/edit_layer.py) | v1.0 #5. Subset-merge diff onto an existing text layer (text / font / size / color / bbox / effects) and re-render. Used during critique revise loops to avoid re-issuing full `propose_design_spec`. Non-text layers return an error with a redirect to the right tool. | Replaces `rendered_layers[layer_id]`; rewrites the layer PNG. |
+| 8 | `fetch_brand_asset` | [`tools/fetch_brand_asset.py`](../open_design/tools/fetch_brand_asset.py) | v1 stub. Always returns `status: "not_found"`. Replaced by v1.5 Brand Kit ingestion. | Nothing. |
+| 9 | `composite` | [`tools/composite.py`](../open_design/tools/composite.py) | **Dispatches on `spec.artifact_type`.** POSTER → PSD (psd-tools named pixel layers + `text` group; image layers use `_aspect_fit_contain` letterbox; table layers are re-rendered at bbox dims via `render_table_png`) + SVG (svgwrite real `<text>` + subsetted-WOFF2 @font-face; `<image preserveAspectRatio="xMidYMid meet">` for images + tables) + HTML (contenteditable toolbar + inline fonts/images) + preview.png (PIL alpha_composite, aspect-preserve). LANDING → `index.html` via `write_landing_html` (6 bundled design systems + NBP imagery + real `<table>` with winner-class styling for ingested tables; v1.3 adds CTA `<a role="button">` layers with per-style chrome, `<header><nav>` auto-generated when `section_count ≥ 4` or `design_system.show_nav=true`, semantic `<footer>` auto-upgrade for footer-variant sections, and an inline vanilla-JS `<script>` for `IntersectionObserver` reveal + smooth anchor scroll + `aria-current` active-nav tracking). DECK → `deck.pptx` via `pptx_renderer.write_pptx` (native TextFrames, picture shapes for images, native `add_table` shapes with bold-winner cells for `kind="table"` layers) + `slides/slide_NN.png` per-slide previews + grid `preview.png`. | Writes artifacts under `run_dir`; sets `ctx.state["composition"]`. |
+| 10 | `critique` | [`tools/critique_tool.py`](../open_design/tools/critique_tool.py) | Invoke `Critic.evaluate()`. Hard-capped at `max_critique_iters` (default 2). Branches on `artifact_type`: POSTER → vision on `preview.png` with v1.2 visual-density rubric (20% weight) that penalizes < 3 figures on paper posters, image-area < 45%, tables < 400 px tall; LANDING → text-only on section tree via `critic-landing.md`; DECK → text-only on slide tree via `critic-deck.md`. | Appends to `ctx.state["critique_results"]`; writes `critique_<i>.json`. |
+| 11 | `finalize` | [`tools/finalize.py`](../open_design/tools/finalize.py) | Signal "planner is done." | Sets `ctx.state["finalized"] = True`. Runner sees this after the turn and serializes the trajectory. |
 
-The `ToolContext` (in [`tools/_contract.py`](../longcat_design/tools/_contract.py)) is the per-run shared state object. It carries the `Settings`, the run/layers paths, and a mutable `state` dict that tools both read and write. This is intentionally a "blackboard" pattern — keeps tool signatures simple and lets the runner snapshot the final state for the trajectory. In chat mode, each turn gets a FRESH ToolContext — inter-turn state lives in `ChatSession`, not `ToolContext`.
+The `ToolContext` (in [`tools/_contract.py`](../open_design/tools/_contract.py)) is the per-run shared state object. It carries the `Settings`, the run/layers paths, and a mutable `state` dict that tools both read and write. This is intentionally a "blackboard" pattern — keeps tool signatures simple and lets the runner snapshot the final state for the trajectory. In chat mode, each turn gets a FRESH ToolContext — inter-turn state lives in `ChatSession`, not `ToolContext`.
 
 ## Two-step image flow + hydration (LANDING + DECK)
 
@@ -297,9 +297,9 @@ This split is deliberate: it keeps the planner's working context lean (planner d
 
 ## Critique loop
 
-The `critique` tool is **planner-invocable** — the planner decides whether and when to call it. The planner is instructed (via `prompts/planner.md`) to call it once after the first composite and use it at most twice. Hard caps in [`config.py`](../longcat_design/config.py): `max_critique_iters = 2`.
+The `critique` tool is **planner-invocable** — the planner decides whether and when to call it. The planner is instructed (via `prompts/planner.md`) to call it once after the first composite and use it at most twice. Hard caps in [`config.py`](../open_design/config.py): `max_critique_iters = 2`.
 
-The critic ([`critic.py`](../longcat_design/critic.py)) branches on `design_spec.artifact_type`:
+The critic ([`critic.py`](../open_design/critic.py)) branches on `design_spec.artifact_type`:
 
 - **POSTER** → `_evaluate_with_vision`: downscales `preview.png` to ≤1024px long edge (respects Anthropic's vision cap of 5 MB / 8000×8000), encodes as JPEG, sends alongside the DesignSpec + layer manifest. Rubric in `prompts/critic.md`.
 - **LANDING** → `_evaluate_landing`: text-only on the flattened section tree. The Pillow preview is a lossy proxy for the real browser-rendered HTML (tofu emojis, missing CSS, etc.); grading it with vision leads to false fails. Rubric in `prompts/critic-landing.md`. Decision in DECISIONS.md 2026-04-19.
@@ -311,7 +311,7 @@ If `verdict: "revise"` and iter < max, the planner is expected to adjust layers 
 
 ## Smoke test (no-API)
 
-[`longcat_design/smoke.py`](../longcat_design/smoke.py) is a 13-check end-to-end battery that hits no LLM and no Gemini API:
+[`open_design/smoke.py`](../open_design/smoke.py) is a 13-check end-to-end battery that hits no LLM and no Gemini API:
 
 | # | Check | What it proves |
 |---|---|---|
@@ -329,7 +329,7 @@ If `verdict: "revise"` and iter < max, the planner is expected to adjust layers 
 | 12 | landing with images | 2 stub image PNGs inline as `<figure>` with data: URIs; round-trip preserves |
 | 13 | deck mode | 3-slide spec → `.pptx` + per-slide PNGs + grid preview; pptx reopen verifies slide count + native text runs + picture shapes |
 
-Run with `uv run python -m longcat_design.smoke`. Use this whenever you change any of: schema, tool contract, renderer, critic, apply-edits, or the registry. Catches dependency / wiring regressions in ~5 seconds and zero $.
+Run with `uv run python -m open_design.smoke`. Use this whenever you change any of: schema, tool contract, renderer, critic, apply-edits, or the registry. Catches dependency / wiring regressions in ~5 seconds and zero $.
 
 ## Performance baselines (reference)
 
@@ -339,7 +339,7 @@ Measured on real OpenRouter runs with `claude-opus-4-7` planner + critic and NBP
 |---|---|---|---|---|---|---|
 | 国宝回家 主视觉 | poster (3:4) | 5 layers (4 text + 1 bg) | 1 NBP bg | 100 s | $1.41 | pass 0.86 (1 iter) |
 | CVPR academic poster | poster (3:4) | 18 layers (17 text + 1 bg) | 1 NBP bg | 196 s | $2.49 | pass 0.86 (1 iter) |
-| LongcatDesign 发布海报 | poster (3:4) | 5 layers | 1 NBP bg (3 retries) | 297 s | $3.74 | revise 0.78 → pass 0.82 (2 iter) |
+| OpenDesign 发布海报 | poster (3:4) | 5 layers | 1 NBP bg (3 retries) | 297 s | $3.74 | revise 0.78 → pass 0.82 (2 iter) |
 | 茉语 奶茶 landing | landing (claymorphism) | 4 sections | 5 NBP (1 × 2K hero + 4 × 1K icons) | 207 s | $2.20 | pass 0.94 (1 iter) |
 | MilkCloud 投资人 deck | deck (16:9) | 10 slides | 10 NBP (cover bg + 8 content + closing bg) | 384 s | $3.43 | pass 0.92 (1 iter) |
 

@@ -1,7 +1,7 @@
 """No-API smoke test: imports + schemas + fonts + a real composite call.
 
 Run with:
-    python -m longcat_design.smoke
+    python -m open_design.smoke
 
 Generates `out/smoke/` containing poster.psd, poster.svg, preview.png produced
 from a fake (solid-color) background + 2 real text layers rendered via Pillow.
@@ -361,7 +361,7 @@ def check_svg_text_is_vector() -> None:
         "data-kind attr":       "data-kind=",
         "Chinese title text":   "国宝回家",
         "bg data URI":          "data:image/png;base64,",
-        "generator meta":       '<meta name="generator" content="LongcatDesign"',
+        "generator meta":       '<meta name="generator" content="OpenDesign"',
         # Edit toolbar markers (v1.0 #6 edit UX)
         "bbox data attrs":      'data-bbox-x=',
         "font-size data attr":  'data-font-size-px=',
@@ -376,7 +376,7 @@ def check_svg_text_is_vector() -> None:
         "save modal":           'id="ld-modal-backdrop"',
         "copy button":          'id="ld-copy"',
         "download button":      'id="ld-download"',
-        "apply-edits hint":     "longcat-design apply-edits",
+        "apply-edits hint":     "open-design apply-edits",
     }
     for label, needle in required_markers.items():
         if needle not in html_text:
@@ -686,7 +686,7 @@ def check_landing_mode() -> None:
         _fail("switch_artifact_type(landing)")
 
     spec_args = {"design_spec": {
-        "brief": "LongcatDesign v1.0 landing",
+        "brief": "OpenDesign v1.0 landing",
         "artifact_type": "landing",
         "canvas": {"w_px": 1200, "h_px": 2400, "dpi": 96,
                    "aspect_ratio": "1:2", "color_mode": "RGB"},
@@ -697,7 +697,7 @@ def check_landing_mode() -> None:
             {"layer_id": "S1", "name": "hero", "kind": "section", "z_index": 1,
              "children": [
                  {"layer_id": "H1", "name": "hero_headline", "kind": "text", "z_index": 1,
-                  "text": "LongcatDesign", "font_family": "NotoSerifSC-Bold",
+                  "text": "OpenDesign", "font_family": "NotoSerifSC-Bold",
                   "font_size_px": 96, "align": "center",
                   "effects": {"fill": "#f8fafc"}},
                  {"layer_id": "H2", "name": "hero_subhead", "kind": "text", "z_index": 2,
@@ -729,7 +729,7 @@ def check_landing_mode() -> None:
             {"layer_id": "S4", "name": "cta", "kind": "section", "z_index": 4,
              "children": [
                  {"layer_id": "C1", "name": "cta_text", "kind": "text", "z_index": 1,
-                  "text": "pip install longcat-design",
+                  "text": "pip install open-design",
                   "font_family": "NotoSansSC-Bold", "font_size_px": 36,
                   "align": "center", "effects": {"fill": "#f8fafc"}},
                  {"layer_id": "C2", "name": "cta_button", "kind": "cta", "z_index": 2,
@@ -739,7 +739,7 @@ def check_landing_mode() -> None:
             {"layer_id": "S5", "name": "footer", "kind": "section", "z_index": 5,
              "children": [
                  {"layer_id": "FT1", "name": "copyright", "kind": "text", "z_index": 1,
-                  "text": "© 2026 LongcatDesign · MIT",
+                  "text": "© 2026 OpenDesign · MIT",
                   "font_family": "NotoSansSC-Bold", "font_size_px": 14,
                   "align": "center", "effects": {"fill": "#94a3b8"}},
              ]},
@@ -1496,7 +1496,7 @@ def check_ingest_document_pptx() -> None:
     pptx_path = src_dir / "deck.pptx"
     prs = Presentation()
     s1 = prs.slides.add_slide(prs.slide_layouts[0])
-    s1.shapes.title.text = "LongcatDesign Pitch"
+    s1.shapes.title.text = "OpenDesign Pitch"
     s1.placeholders[1].text = "Open-source conversational design agent"
     s2 = prs.slides.add_slide(prs.slide_layouts[1])
     s2.shapes.title.text = "Why now?"
@@ -1519,7 +1519,7 @@ def check_ingest_document_pptx() -> None:
     if len(ingested) != 1 or ingested[0]["type"] != "pptx":
         _fail(f"ingested manifest missing pptx entry: {ingested}")
     m = ingested[0]["manifest"]
-    if m["title"] != "LongcatDesign Pitch":
+    if m["title"] != "OpenDesign Pitch":
         _fail(f"pptx title wrong: {m['title']!r}")
     if len(m["sections"]) != 2:
         _fail(f"pptx slides→sections wrong: {[s['heading'] for s in m['sections']]}")

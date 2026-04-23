@@ -60,13 +60,13 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-# Add repo root to path so `longcat_design` imports work when running this
+# Add repo root to path so `open_design` imports work when running this
 # script directly.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from longcat_design.schema import DistillTrajectory  # noqa: E402
-from longcat_design.tools import TOOL_SCHEMAS  # noqa: E402
+from open_design.schema import DistillTrajectory  # noqa: E402
+from open_design.tools import TOOL_SCHEMAS  # noqa: E402
 
 
 def _load_planner_system_prompt() -> str:

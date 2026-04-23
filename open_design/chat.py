@@ -1,6 +1,6 @@
-"""Conversational CLI shell — `longcat-design chat` entry point.
+"""Conversational CLI shell — `open-design chat` entry point.
 
-Multi-turn REPL over LongcatDesign: user types a brief (or follow-up like
+Multi-turn REPL over OpenDesign: user types a brief (or follow-up like
 "make the title bigger"), agent runs full PlannerLoop, artifacts land in
 `out/runs/<run_id>/`, session state persists to `sessions/<id>.json`.
 
@@ -51,7 +51,7 @@ except ImportError:
 
 
 BANNER = (
-    "LongcatDesign v0.1 — open-source conversational design agent\n"
+    "OpenDesign v0.1 — open-source conversational design agent\n"
     "Describe what you want to make, or type :help\n"
 )
 

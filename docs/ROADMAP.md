@@ -16,16 +16,16 @@ Validated with two real runs:
 - 5-layer 国宝回家 poster (100 s, $1.41, score 0.86)
 - 18-layer CVPR academic poster (196 s, $2.49, score 0.86)
 
-**Positioning at the time**: research prototype for Longcat-Next training-data capture. Pivoted 2026-04-18 to **LongcatDesign** open-source product — trajectory machinery preserved as internal session state; no longer the primary pitch.
+**Positioning at the time**: research prototype for Longcat-Next training-data capture. Pivoted 2026-04-18 to **OpenDesign** open-source product — trajectory machinery preserved as internal session state; no longer the primary pitch.
 
-### v1.0 — LongcatDesign public MVP (2026-04-18 → 2026-04-20, **code complete**)
+### v1.0 — OpenDesign public MVP (2026-04-18 → 2026-04-20, **code complete**)
 
-Three-artifact conversational design agent, MIT-licensed, `pip install longcat-design`-able. All 10 code items (#1 – #8.75) shipped across the commit series below; the only remaining launch-blocker is a screencast demo video (non-code, item #10 in [V1-MVP-PLAN.md](V1-MVP-PLAN.md)).
+Three-artifact conversational design agent, MIT-licensed, `pip install open-design`-able. All 10 code items (#1 – #8.75) shipped across the commit series below; the only remaining launch-blocker is a screencast demo video (non-code, item #10 in [V1-MVP-PLAN.md](V1-MVP-PLAN.md)).
 
 | # | Item | Commit |
 |---|---|---|
 | 1 | **KB/docs pivot** (narrative → open-source product) | 2026-04-18 docs batch |
-| 2 | **Package rename** `design_agent` → `longcat_design` | [`ffd4389`](https://github.com/Yaxin9Luo/OpenDesign/commit/ffd4389) |
+| 2 | **Package rename** `design_agent` → `open_design` | [`ffd4389`](https://github.com/Yaxin9Luo/OpenDesign/commit/ffd4389) |
 | 3 | **`switch_artifact_type` tool** + `ArtifactType` enum + `DesignSpec.artifact_type` | [`21dc44f`](https://github.com/Yaxin9Luo/OpenDesign/commit/21dc44f) |
 | 4 | **CLI chat shell** — multi-turn REPL, 8 slash commands, `ChatSession` persistence (absorbs item #7) | [`03517ba`](https://github.com/Yaxin9Luo/OpenDesign/commit/03517ba) |
 | 5 | **`edit_layer` tool** — targeted subset-diff onto a single text layer (`text / font / fill / bbox / effects / …`); re-renders just that PNG, no implicit composite | [`eabaab9`](https://github.com/Yaxin9Luo/OpenDesign/commit/eabaab9) |
@@ -40,7 +40,7 @@ Three-artifact conversational design agent, MIT-licensed, `pip install longcat-d
 
 **Dogfood validation**:
 - 国宝回家 poster (v0 baseline): 100 s / $1.41 / score 0.86 · CVPR academic poster: 196 s / $2.49 / score 0.86
-- LongcatDesign launch poster (2026-04-18): 5 min / $3.74 / 5 layers / pass 0.82 (2-iter critique loop)
+- OpenDesign launch poster (2026-04-18): 5 min / $3.74 / 5 layers / pass 0.82 (2-iter critique loop)
 - 茉语 milk-tea landing (claymorphism, 2026-04-19): 207 s / $2.20 / 5 NBP images across 4 sections / pass 0.94
 
 **Remaining launch blocker**:
@@ -75,7 +75,7 @@ Four commits over one work session closed the remaining gaps between "ingest run
   - `page.get_drawings()` + proximity clustering + 300 dpi render for vector diagrams.
   - Zero LLM guessing for localization.
 - **Default ingest_model = `qwen/qwen-vl-max`** via OpenRouter (~5× cheaper than Sonnet 4.6 for "read paper + match captions"). VLM only handles structure extraction + per-figure caption matching + fake-figure filtering (logos / page headers / equation renders).
-- New `longcat_design/util/vlm.py` dispatches between Anthropic SDK (Claude path) and OpenAI SDK (Qwen path) by model id. Planner / critic stay 100 % on Anthropic SDK so tool_use protocol is untouched.
+- New `open_design/util/vlm.py` dispatches between Anthropic SDK (Claude path) and OpenAI SDK (Qwen path) by model id. Planner / critic stay 100 % on Anthropic SDK so tool_use protocol is untouched.
 - `runner._materialize_layer_graph` skips layers with `bbox=None` so planner-unplaced ingest candidates don't crash trajectory serialization.
 
 ### v1.2.1 — `kind="table"` layer + native table rendering (commit `da664a5`)
@@ -118,7 +118,7 @@ Smoke **16/16** green. Tool count unchanged at 11.
 
 Closed two of the four parked paper2any polish items in one pass.
 
-- **Composite text-overlap detector** (`longcat_design/tools/composite.py`) — new `_detect_text_overlaps` + `_effective_text_extent` helpers compute each `kind: "text"` layer's glyph-inclusive vertical footprint (`max(bbox.h, font_size_px × 1.20)`) and flag every colliding pair. Emits `composite.text_overlap_warning` log events AND appends a ⚠ line to the tool_result summary so the planner sees the collision on the next turn without waiting for a full critique pass. Caught the cached `L_title`↔`L_sub` descender crash on the 2026-04-21 longcat-next run (y_overlap=16 px).
+- **Composite text-overlap detector** (`open_design/tools/composite.py`) — new `_detect_text_overlaps` + `_effective_text_extent` helpers compute each `kind: "text"` layer's glyph-inclusive vertical footprint (`max(bbox.h, font_size_px × 1.20)`) and flag every colliding pair. Emits `composite.text_overlap_warning` log events AND appends a ⚠ line to the tool_result summary so the planner sees the collision on the next turn without waiting for a full critique pass. Caught the cached `L_title`↔`L_sub` descender crash on the 2026-04-21 longcat-next run (y_overlap=16 px).
 - **Figure ↔ text cross-reference detector** (`_placed_ingest_display_map` + `_detect_missing_figure_xrefs`) — assigns display numbers (Fig. 1 / Table 1 / …) in placed-layer reading order, then checks every text layer's `.text` for `Fig. N` / `Figure N` / `Table N` literals (case-insensitive, period-optional). Orphan figures surface in the composite tool_result + log.
 - **Planner prompt** (`prompts/planner.md`) gains two poster-workflow rules: "Text-layer vertical rhythm" (descender clearance geometry + stacked-layer spacing formula + mixed-script concrete template) and "Figure ↔ text cross-reference" (display-number scheme + citation patterns + `edit_layer` fix recipe).
 - **Critic rubric** (`prompts/critic.md`) adds typography `−0.15` per text-text bbox collision pair (all posters, not just paper) AND visual-density `−0.10` per orphan figure (capped at −0.30) with `major` severity.
@@ -142,7 +142,7 @@ Closed the last three parked paper2any gaps in one pass.
 
 ---
 
-**North Star.** Today a brief is a single text line. The ideal LongcatDesign: user drops in a paper / PDF / docx / markdown / image bundle → we generate the matching poster, landing page, or slide deck → user iterates through the in-HTML edit toolbar and `apply-edits` round-trip. This is the **paper2poster / paper2page / paper2deck** surface. Not a side feature — *this is the product's end state*. v1.0 ships the single-brief story; v1.1 closes the loop.
+**North Star.** Today a brief is a single text line. The ideal OpenDesign: user drops in a paper / PDF / docx / markdown / image bundle → we generate the matching poster, landing page, or slide deck → user iterates through the in-HTML edit toolbar and `apply-edits` round-trip. This is the **paper2poster / paper2page / paper2deck** surface. Not a side feature — *this is the product's end state*. v1.0 ships the single-brief story; v1.1 closes the loop.
 
 The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through ingestion: every extracted section, figure, and heading lands as a named `LayerNode`, so the user can reorder / retype / recolor after generation exactly like a single-brief artifact. Ingestion adds an input surface, it does NOT break downstream edits.
 
@@ -154,7 +154,7 @@ The round-trip editability guarantee (v1.0 #5 / #6 / #6.5) extends through inges
   - `paper.pdf` → 3:4 academic poster (title + authors + 4 sections + figures + QR)
   - `paper.pdf` + "landing" → marketing landing (abstract as hero, method/results as sections, figures inlined)
   - `paper.pdf` + "deck" → slide deck (one section per slide, figures captioned)
-- **CLI entry**: `longcat-design run --from-file paper.pdf "poster for CVPR"` and REPL slash `:attach <path>` that binds a file to the next brief.
+- **CLI entry**: `open-design run --from-file paper.pdf "poster for CVPR"` and REPL slash `:attach <path>` that binds a file to the next brief.
 - **Round-trip smoke**: `paper.pdf → landing.html → user edits title + reorders sections → apply-edits → new run preserves original figures + user edits`. Gates merge.
 
 **Risk**: Claude's PDF vision has a per-call page cap. Long papers (50+ pages) may need a multi-call "summarize each section" fallback. Time-box exploration: if single-call handles 30-page papers cleanly, ship it; longer-paper handling pushes to v1.1.5.
@@ -206,7 +206,7 @@ From static HTML pages to production-grade marketing pages. Four user-visible im
 - **New tool contract**: `ToolResultRecord` replaces `ToolObservation`; `obs_ok(payload)` / `obs_error(message, category, payload)` — **no more `summary` / `next_actions` / `artifacts` kwargs**. These "hint fields" were removed at the tool layer (not just stripped from JSON) to eliminate train↔deploy distribution shift in RL. Workflow contract lives entirely in `prompts/planner.md` now.
 - **`StepType` slimmed** to `{input, reasoning, tool_call, tool_result, finalize}` (dropped `thought` / `artifact_switch` / `design_spec` / `critique` — recoverable from tool_call args + tool_result payload). `AgentTraceStep` drops `timestamp` / `spec_snapshot` / `observation` too.
 - **`ThinkingBlockRecord`** captures extended-thinking verbatim with `signature` (Anthropic) or empty (OpenAI-compat). Both plain + redacted blocks preserved for faithful replay.
-- **Multi-provider LLM backend** (`longcat_design/llm_backend.py`): `LLMBackend` Protocol + `AnthropicBackend` + `OpenAICompatBackend`. **9 protocol differences normalized** (reasoning field, tool calling, system prompt placement, vision blocks, stop reason vocab, thinking control, interleaved beta, cache telemetry, replay constraints). Planner + critic have zero provider-aware branches.
+- **Multi-provider LLM backend** (`open_design/llm_backend.py`): `LLMBackend` Protocol + `AnthropicBackend` + `OpenAICompatBackend`. **9 protocol differences normalized** (reasoning field, tool calling, system prompt placement, vision blocks, stop reason vocab, thinking control, interleaved beta, cache telemetry, replay constraints). Planner + critic have zero provider-aware branches.
 - **Default planner + critic → `moonshotai/kimi-k2.6`** (OpenRouter). Kimi costs ~$3.58/run with 12 reasoning steps captured in full plaintext (vs Claude Opus 4.7 at ~$8-12/run with ~80% thinking redacted). Claude is one env var away: `PLANNER_MODEL=anthropic/claude-opus-4.7`. Mix-and-match (e.g. planner on Claude + critic on DeepSeek-R1) works out of the box.
 
 ### v2.1 — Versioned intermediate artifacts ([c264545](https://github.com/Yaxin9Luo/OpenDesign/commit/c264545))
@@ -240,7 +240,7 @@ VLM ingest returns both full caption AND `short_caption ≤ 15 chars` ("Architec
 
 ### v2.3.3 — Poster templates ([b3a4e21](https://github.com/Yaxin9Luo/OpenDesign/commit/b3a4e21))
 
-`longcat-design run --template NAME` resolves 5 bundled canvas presets:
+`open-design run --template NAME` resolves 5 bundled canvas presets:
 
 | Template | Canvas | Aspect | Use |
 |---|---|---|---|
@@ -319,7 +319,7 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 12. **Negative constraints.** Always list "never substitute NBP for X / never leave empty placeholders / never pre-rasterize" explicitly — negative rules bite harder than positive ones in brief-following.
 
 **Deliverables**:
-- `longcat_design/agents/prompt_enhancer.py` — the stage, reuses `LLMBackend` with Opus 4.7 default
+- `open_design/agents/prompt_enhancer.py` — the stage, reuses `LLMBackend` with Opus 4.7 default
 - `prompts/prompt_enhancer.md` — the system-prompt/skill encoding the 12 rules above
 - `runner.py` wiring — run enhancer before `planner.start`, log `prompt.enhance.request/done` events
 - `--skip-enhancer` CLI flag for users who want raw pass-through
@@ -329,7 +329,7 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 
 ### v2.4.2 — Font library expansion
 
-**Why**: Today only `NotoSansSC-Bold` + `NotoSerifSC-Bold` are bundled ([config.py:101](../longcat_design/config.py:101)). Users routinely want more weight / style variety (regular, medium, display, mono, decorative).
+**Why**: Today only `NotoSansSC-Bold` + `NotoSerifSC-Bold` are bundled ([config.py:101](../open_design/config.py:101)). Users routinely want more weight / style variety (regular, medium, display, mono, decorative).
 
 **Scope**:
 - Add 6–8 more OFL-licensed families under `assets/fonts/`: NotoSansSC-Regular, NotoSerifSC-Regular, NotoSansMono, Inter (regular + bold), a display serif (e.g. Playfair Display), a modern sans (e.g. IBM Plex Sans). All OFL or SIL license.
@@ -349,7 +349,7 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 - **PSD**: already editable in Photoshop natively — no work needed.
 - **Poster PNG**: skip — flat raster, by definition not draggable. Designers export to PSD for editing.
 
-**Sub-scope**: a "Designer preview" mode (`longcat-design preview <run-id>`) that opens the landing `index.html` in a local server with draggable/resizable layer overlays + a "Lock positions" toggle.
+**Sub-scope**: a "Designer preview" mode (`open-design preview <run-id>`) that opens the landing `index.html` in a local server with draggable/resizable layer overlays + a "Lock positions" toggle.
 
 **Risk**: interact.js drag handles can conflict with section-level scroll-snap. Contain handles inside section bounds; disable drag on mobile viewport (< 768 px).
 
@@ -379,7 +379,7 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 **Why**: Claude Design's big UX win is "upload your brand PDF, every artifact respects your palette/typography/imagery." We need parity for teams with existing brand guidelines.
 
 **Scope** (~300 lines):
-- `longcat-design brand ingest <path.pdf>` CLI command
+- `open-design brand ingest <path.pdf>` CLI command
 - Uses Claude vision to extract: palette (named hex values), typography rules (font roles), logo files, imagery mood.
 - Stored in `brands/<name>/brandkit.json`.
 - Planner loads `brandkit.json` into DesignSpec when user says "use the Acme brand kit" or `--brand acme`.
@@ -392,8 +392,8 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 **Why**: After successful runs, the (brief → trajectory) pair is a template. Lovart calls these "Skills" and they're a strong retention feature.
 
 **Scope**:
-- `longcat-design skill save <session_id> --name "academic-poster-cvpr"` → extract design_spec + key prompts as reusable template.
-- `longcat-design skill apply <name> --override "title=新标题"` → instantiate new session from skill with overrides.
+- `open-design skill save <session_id> --name "academic-poster-cvpr"` → extract design_spec + key prompts as reusable template.
+- `open-design skill apply <name> --override "title=新标题"` → instantiate new session from skill with overrides.
 - Skills in `skills/<name>.yaml`.
 
 ---
@@ -423,7 +423,7 @@ Three-item slice motivated by 2026-04-22 dogfood session (BAGEL landing, LLMSurg
 
 **Why**: Some users won't ever adopt a CLI tool. A thin browser UI over the same core agent could unlock broader adoption.
 
-**Scope**: separate project. Not a v1.x priority. Probably ships as `longcat-design-web` as a separate repo that imports the Python package.
+**Scope**: separate project. Not a v1.x priority. Probably ships as `open-design-web` as a separate repo that imports the Python package.
 
 ---
 
@@ -443,7 +443,7 @@ Continuous improvements, not feature ships:
 - **Cost estimator accuracy**: replace heuristic with real `usage.cost` from OpenRouter response (already returned, just not aggregated).
 - **Critic rubric evolution**: audit frequent issue categories, re-balance rubric weights.
 - **Prompt cache tuning**: set `cache_control` on planner system prompt + tool catalog (stable turn-to-turn).
-- **Font fallback diagnostic**: `longcat-design audit <session>` flags fallback events the planner silently accepted.
+- **Font fallback diagnostic**: `open-design audit <session>` flags fallback events the planner silently accepted.
 - **Showcase gallery**: maintain a `showcase/` directory in repo with ~10 diverse high-quality example artifacts + their session JSONs.
 
 ---
@@ -452,7 +452,7 @@ Continuous improvements, not feature ships:
 
 - **Pricing / support model for OSS**: pure MIT + donation link? Enterprise support tier? Not decided.
 - **Brand Kit format**: invent our own schema, or adopt Figma tokens / Adobe XD style format for import compat?
-- **How heavily do we market the Longcat-Next tie-in**: enough to signal team credibility, without implying LongcatDesign is just a Longcat-Next sales funnel. Needs a marketing decision.
+- **How heavily do we market the Longcat-Next tie-in**: enough to signal team credibility, without implying OpenDesign is just a Longcat-Next sales funnel. Needs a marketing decision.
 - **Docs site**: mkdocs on GitHub Pages vs dedicated docs domain vs README-only.
 
 ---

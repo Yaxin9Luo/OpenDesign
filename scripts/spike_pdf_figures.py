@@ -1,6 +1,6 @@
 """Spike / debug tool: extract figures from a PDF using pymupdf ONLY.
 
-Thin wrapper around `longcat_design.util.pdf` — same code paths the
+Thin wrapper around `open_design.util.pdf` — same code paths the
 production ingest uses, so what you see here is what ingest gets
 before the VLM does caption matching. No LLM calls.
 
@@ -27,7 +27,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 import fitz  # pymupdf
 
-from longcat_design.util.pdf import (
+from open_design.util.pdf import (
     dedup_raster_vector,
     detect_scanned_pdf,
     extract_embedded_rasters,

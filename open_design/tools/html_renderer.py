@@ -113,7 +113,7 @@ def _head_block(cw: int, ch: int, font_face_css: str, title: str,
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
-        '<meta name="generator" content="LongcatDesign">\n'
+        '<meta name="generator" content="OpenDesign">\n'
         + run_id_meta
         + f"<title>{html.escape(title)}</title>\n"
         "<style>\n"
@@ -225,7 +225,7 @@ def _modal_css() -> str:
 def _user_comment() -> str:
     return (
         "<!--\n"
-        "  LongcatDesign HTML output.\n"
+        "  OpenDesign HTML output.\n"
         "  \n"
         "  Click any text layer to activate its edit toolbar:\n"
         "    • double-click text to edit content (contenteditable)\n"
@@ -234,7 +234,7 @@ def _user_comment() -> str:
         "  Click 💾 Save to copy the edited HTML or download it.\n"
         "  \n"
         "  Edits live in this browser page only. To propagate them to the\n"
-        "  PSD / SVG / PNG outputs, run `longcat-design apply-edits <file>`\n"
+        "  PSD / SVG / PNG outputs, run `open-design apply-edits <file>`\n"
         "  on the downloaded HTML (v1.0 #6.5).\n"
         "  \n"
         "  Layer state: authoritative source is the data-* attrs on each\n"
@@ -459,7 +459,7 @@ def _save_modal_html() -> str:
         '      <button class="ld-secondary" id="ld-close">Cancel</button>\n'
         "    </div>\n"
         "    <p>To regenerate PSD/SVG/PNG from these edits, run on the downloaded file:<br>\n"
-        "      <code>longcat-design apply-edits &lt;downloaded-file&gt;</code></p>\n"
+        "      <code>open-design apply-edits &lt;downloaded-file&gt;</code></p>\n"
         "  </div>\n"
         "</div>"
     )
@@ -807,7 +807,7 @@ def _landing_head_block(cw: int, font_face_css: str, title: str,
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
-        '<meta name="generator" content="LongcatDesign">\n'
+        '<meta name="generator" content="OpenDesign">\n'
         '<meta name="ld-artifact-type" content="landing">\n'
         f'<meta name="ld-design-system" content="{_attr(style_name)}">\n'
         + run_id_meta
@@ -1014,13 +1014,13 @@ def _landing_base_css(cw: int) -> str:
 def _landing_user_comment(style: str = "minimalist") -> str:
     return (
         "<!--\n"
-        f"  LongcatDesign landing page · design-system: {style}\n"
+        f"  OpenDesign landing page · design-system: {style}\n"
         "  \n"
         "  Sections stack in flow layout — no pixel positioning. Click any\n"
         "  text to edit with the floating toolbar (font/size/color) or\n"
         "  double-click for content edits. Save button copies/downloads.\n"
         "  \n"
-        "  `longcat-design apply-edits <file>` round-trips edits back into\n"
+        "  `open-design apply-edits <file>` round-trips edits back into\n"
         "  a fresh trajectory + new HTML (no PSD/SVG for landing mode).\n"
         "-->"
     )
@@ -1347,4 +1347,4 @@ def _doc_title(ctx: ToolContext) -> str:
         brief = getattr(spec, "brief", None)
         if brief:
             return brief[:80]
-    return "LongcatDesign output"
+    return "OpenDesign output"

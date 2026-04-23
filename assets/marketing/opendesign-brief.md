@@ -1,4 +1,4 @@
-# LongcatDesign — Open-Source Conversational Design Agent × Training-Data Pipeline
+# OpenDesign — Open-Source Conversational Design Agent × Training-Data Pipeline
 
 > A terminal-first design agent that turns one-line briefs (or whole research papers) into **layered, editable** posters, landing pages, and slide decks — with real figures, real tables, and real editability in PSD / SVG / HTML / PPTX. Every run simultaneously produces a distillation-ready training sample for layered design generation models.
 
@@ -7,7 +7,7 @@
 **Open source. Terminal-first. Layered, editable output. Training-data-ready by default.**
 The open alternative to Claude Design — model-agnostic, format-agnostic, yours to fork. Your runs become the dataset.
 
-## What LongcatDesign does
+## What OpenDesign does
 
 Three artifact types, generated conversationally from a CLI chat shell:
 
@@ -23,7 +23,7 @@ Built on a **handwritten tool loop** with a pluggable `LLMBackend` abstraction �
 
 ### 2. Three first-class output families, one DesignSpec
 
-Most design tools lock you into their export format. LongcatDesign renders **one `DesignSpec` into three format families** via a single `composite` tool that dispatches on `spec.artifact_type`:
+Most design tools lock you into their export format. OpenDesign renders **one `DesignSpec` into three format families** via a single `composite` tool that dispatches on `spec.artifact_type`:
 
 - POSTER: PSD + SVG + HTML + PNG preview (layered, vector text, contenteditable)
 - LANDING: index.html (6 design systems + CTA + nav + reveal) + PNG preview
@@ -55,7 +55,7 @@ Every run produces a **`DistillTrajectory` JSON** alongside the product artifact
 
 ## Dogfood: the landing page you're reading
 
-This landing page was built by LongcatDesign itself. The three figures below are the agent's own architecture diagrams, pulled in via `ingest_document`:
+This landing page was built by OpenDesign itself. The three figures below are the agent's own architecture diagrams, pulled in via `ingest_document`:
 
 - **Figure 1** (`ingest_fig_01` / agent_architecture.png) — the agent architecture: User → ChatREPL → PipelineRunner → PlannerLoop ↔ Critic + the 11 registered tools + output dispatch to POSTER / LANDING / DECK.
 - **Figure 2** (`ingest_fig_02` / rendering_pipeline.png) — the 3-artifact rendering pipeline: one DesignSpec, per-type renderers (PSD + SVG + HTML | HTML | PPTX), plus the four cross-cutting composite features (aspect-preserve, text-overlap detector, figure↔text xref, paper→editable tables).
@@ -86,11 +86,11 @@ Verified end-to-end on a real 43-page / 17 MB research paper (LongCat-Next):
 ## How to try it
 
 ```bash
-pip install longcat-design
-longcat-design                                         # chat (default)
-longcat-design run "your brief"                        # one-shot
-longcat-design run --from-file paper.pdf "poster"      # paper → artifact
-longcat-design apply-edits ~/Downloads/edited.html     # round-trip
+pip install open-design
+open-design                                         # chat (default)
+open-design run "your brief"                        # one-shot
+open-design run --from-file paper.pdf "poster"      # paper → artifact
+open-design apply-edits ~/Downloads/edited.html     # round-trip
 
 # Training-data pipeline
 python scripts/export_sft_jsonl.py \
@@ -119,11 +119,11 @@ BYO OpenRouter key (covers both Anthropic-compat and OpenAI-compat backends) + G
 
 ## Why open source
 
-Design tools live in walled gardens. The generation prompts, the tool definitions, the critic rubric — all hidden. LongcatDesign is MIT-licensed and the prompts + schema + critic live in-repo. Fork it, swap models, run locally, capture trajectories for training — the project is the agent, not the SaaS front-end.
+Design tools live in walled gardens. The generation prompts, the tool definitions, the critic rubric — all hidden. OpenDesign is MIT-licensed and the prompts + schema + critic live in-repo. Fork it, swap models, run locally, capture trajectories for training — the project is the agent, not the SaaS front-end.
 
 ## Links
 
 - GitHub repo: `https://github.com/Yaxin9Luo/OpenDesign`
-- Primary CTA: `pip install longcat-design`
+- Primary CTA: `pip install open-design`
 - Secondary CTA: `See the architecture` (anchors to the architecture section)
 - Docs: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/WORKFLOWS.md`, `docs/DECISIONS.md`

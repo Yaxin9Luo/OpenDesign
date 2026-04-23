@@ -1,4 +1,4 @@
-"""Generate the three canonical architecture diagrams for LongcatDesign.
+"""Generate the three canonical architecture diagrams for OpenDesign.
 
 We draw them with Pillow primitives (no matplotlib / graphviz dep) because
 (a) Pillow is already in the runtime deps, (b) the diagrams are simple
@@ -186,7 +186,7 @@ def diagram_agent_architecture(out_path: Path) -> None:
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
 
-    _title(d, W, "LongcatDesign · Agent Architecture",
+    _title(d, W, "OpenDesign · Agent Architecture",
            "LLMBackend abstraction (Kimi K2.6 default · Claude via env var) · handwritten tool loop · no LangGraph / CrewAI")
 
     # ── Band 1: entry column (left) ──────────────────────────────────────
@@ -315,7 +315,7 @@ def diagram_rendering_pipeline(out_path: Path) -> None:
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
 
-    _title(d, W, "LongcatDesign · 3-Artifact Rendering Pipeline",
+    _title(d, W, "OpenDesign · 3-Artifact Rendering Pipeline",
            "One DesignSpec → three first-class output families · round-trip editable")
 
     # Top: DesignSpec (the shared input)
@@ -431,7 +431,7 @@ def diagram_paper2any_flow(out_path: Path) -> None:
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
 
-    _title(d, W, "LongcatDesign · paper2any · Ingestion Flow",
+    _title(d, W, "OpenDesign · paper2any · Ingestion Flow",
            "Any paper / deck / doc → structured manifest + ingest_fig_NN / ingest_table_NN layers")
 
     # Left column: input types

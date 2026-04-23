@@ -1,4 +1,4 @@
-"""CLI entry: `longcat-design [chat|run|apply-edits] ...`.
+"""CLI entry: `open-design [chat|run|apply-edits] ...`.
 
 Subcommands:
   chat                     (default) launch conversational REPL
@@ -6,11 +6,11 @@ Subcommands:
   apply-edits <html>       round-trip an edited poster HTML → new PSD/SVG/HTML/PNG
 
 Examples:
-  longcat-design                             # starts chat shell
-  longcat-design chat                        # same
-  longcat-design chat --resume <sid>         # resume existing session
-  longcat-design run "a 3:4 poster for X"    # one-shot, old behavior
-  longcat-design apply-edits ~/poster.edited.html  # re-render from edits
+  open-design                             # starts chat shell
+  open-design chat                        # same
+  open-design chat --resume <sid>         # resume existing session
+  open-design run "a 3:4 poster for X"    # one-shot, old behavior
+  open-design apply-edits ~/poster.edited.html  # re-render from edits
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ from .runner import PipelineRunner
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="longcat-design",
+        prog="open-design",
         description=(
-            "LongcatDesign — open-source conversational design agent. "
+            "OpenDesign — open-source conversational design agent. "
             "Generates editable posters, slide decks, and landing pages "
             "via chat-driven LLM orchestration."
         ),
@@ -74,6 +74,17 @@ def main(argv: list[str] | None = None) -> int:
               "canvas (w_px / h_px / dpi / aspect_ratio) is injected "
               "into the brief prologue so the planner uses it."),
     )
+    run_p.add_argument(
+        "--skip-enhancer",
+        action="store_true",
+        default=False,
+        help=("Skip the v2.4 Prompt Enhancer pre-planner stage. "
+              "Default: ON (Opus 4.7 rewrites raw briefs into "
+              "structured multi-section briefs before planner.start). "
+              "Pass this flag to feed the raw brief to the planner "
+              "verbatim — useful for power users with hand-crafted "
+              "briefs or for A/B comparisons."),
+    )
 
     # apply-edits (round-trip edited HTML)
     ae_p = subparsers.add_parser(
@@ -105,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             args.brief,
             getattr(args, "from_file", []) or [],
             template=getattr(args, "template", None),
+            skip_enhancer=getattr(args, "skip_enhancer", False),
         )
 
     if args.subcommand == "apply-edits":
@@ -115,7 +127,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_oneshot(brief: str, from_file: list[str],
-                 *, template: str | None = None) -> int:
+                 *, template: str | None = None,
+                 skip_enhancer: bool = False) -> int:
     """One-shot mode — single brief (+ optional attachments) → single trajectory."""
     # v1.1: resolve --from-file attachments into Path objects and validate early.
     attachments: list[Path] = []
@@ -141,7 +154,8 @@ def _run_oneshot(brief: str, from_file: list[str],
     settings = load_settings()
     runner = PipelineRunner(settings)
     traj, traj_path = runner.run(brief, attachments=attachments,
-                                  template=template)
+                                  template=template,
+                                  skip_enhancer=skip_enhancer)
 
     # v2 trajectory carries no product paths. Locate run dir from the
     # trajectory file's sibling structure. v2.2 versioning: composites
@@ -155,6 +169,13 @@ def _run_oneshot(brief: str, from_file: list[str],
     print()
     if attachments:
         print(f"  Ingested:        {', '.join(str(p.name) for p in attachments)}")
+    meta = traj.metadata
+    if meta.enhancer_skipped:
+        print(f"  Prompt Enhancer: skipped ({meta.enhancer_skip_reason or '—'})")
+    else:
+        print(f"  Prompt Enhancer: {meta.enhancer_model}  "
+              f"|  +{meta.enhancer_input_tokens}→{meta.enhancer_output_tokens} tok  "
+              f"|  {meta.enhancer_wall_time_s}s")
     print(f"  Trajectory:      {traj_path}")
     print(f"  Run dir:         {run_dir}")
     for fname in ("preview.png", "poster.psd", "poster.svg",

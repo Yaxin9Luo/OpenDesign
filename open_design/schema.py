@@ -348,6 +348,23 @@ class TrainingMetadata(BaseModel):
     estimated_cost_usd: float
     wall_time_s: float
     source: Literal["agent_run", "apply_edits"] = "agent_run"
+    # v2.4 Prompt Enhancer provenance — present when the pre-planner
+    # stage ran. `enhancer_skipped=True` means the stage was bypassed
+    # (disabled, --skip-enhancer, or the model errored); in that case
+    # `original_brief` equals the top-level `brief` and the enhancer
+    # token counts are 0.
+    enhancer_model: str = ""
+    enhancer_skipped: bool = True
+    enhancer_skip_reason: str = ""
+    enhancer_input_tokens: int = 0
+    enhancer_output_tokens: int = 0
+    enhancer_wall_time_s: float = 0.0
+    # Raw user brief before enhancement (with any Template: / Attached
+    # files: prologues the runner injected). Kept here so the trajectory
+    # is self-describing for A/B analysis (enhancer on vs off). When
+    # the enhancer was skipped, this is empty string and the top-level
+    # `brief` is authoritative.
+    original_brief: str = ""
 
 
 class DistillTrajectory(BaseModel):

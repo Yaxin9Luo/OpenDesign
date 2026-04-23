@@ -48,6 +48,13 @@ DEFAULT_CRITIC_MODEL = "moonshotai/kimi-k2.6"            # same
 ANTHROPIC_FALLBACK_PLANNER = "claude-opus-4-7"           # if user only has ANTHROPIC_API_KEY
 ANTHROPIC_FALLBACK_CRITIC = "claude-opus-4-7"
 
+# v2.4 Prompt Enhancer — runs once before planner.start, converting a raw
+# user brief into a structured multi-section enhanced brief. Defaults to
+# Opus 4.7 because brief-authoring is a single-turn reasoning task where
+# model capability dominates latency/cost; users can override via env.
+DEFAULT_ENHANCER_MODEL = "anthropic/claude-opus-4-7"
+ANTHROPIC_FALLBACK_ENHANCER = "claude-opus-4-7"
+
 
 ProviderChoice = Literal["auto", "anthropic", "openai_compat"]
 
@@ -66,6 +73,15 @@ class Settings:
     critic_model: str
     planner_provider: ProviderChoice = "auto"
     critic_provider: ProviderChoice = "auto"
+
+    # v2.4 Prompt Enhancer stage — runs before planner.start. Defaults to
+    # Opus 4.7 (anthropic/claude-opus-4-7); users can pin any model via
+    # ENHANCER_MODEL env var. `enable_prompt_enhancer` gates the whole
+    # stage; the `--skip-enhancer` CLI flag sets it to False per-run.
+    enhancer_model: str = DEFAULT_ENHANCER_MODEL
+    enhancer_provider: ProviderChoice = "auto"
+    enhancer_thinking_budget: int = 10000
+    enable_prompt_enhancer: bool = True
 
     # OpenAI-compat backend connection (used when provider resolves to openai_compat)
     openai_compat_api_key: str | None = None    # falls back to anthropic_api_key when OR
@@ -150,6 +166,23 @@ def load_settings() -> Settings:
     planner_provider = _parse_provider(os.getenv("PLANNER_PROVIDER", "auto"))
     critic_provider = _parse_provider(os.getenv("CRITIC_PROVIDER", "auto"))
 
+    # v2.4 enhancer resolution — default is Opus 4.7, but if the user only
+    # has ANTHROPIC_API_KEY (no OpenRouter), strip the `anthropic/` prefix
+    # so the stock Anthropic endpoint accepts the model id.
+    if or_key:
+        enhancer_default = DEFAULT_ENHANCER_MODEL
+    else:
+        enhancer_default = ANTHROPIC_FALLBACK_ENHANCER
+    enhancer_model = os.getenv("ENHANCER_MODEL", "").strip() or enhancer_default
+    enhancer_provider = _parse_provider(os.getenv("ENHANCER_PROVIDER", "auto"))
+    enhancer_budget = _parse_int_env("ENHANCER_THINKING_BUDGET", 10000)
+    # SKIP_PROMPT_ENHANCER=1 disables the stage at settings-load time;
+    # the `--skip-enhancer` CLI flag also toggles this per-run.
+    skip_enhancer_env = os.getenv("SKIP_PROMPT_ENHANCER", "").strip() in (
+        "1", "true", "True", "yes",
+    )
+    enable_prompt_enhancer = not skip_enhancer_env
+
     if or_key:
         ingest_default = "qwen/qwen-vl-max"
     else:
@@ -174,6 +207,10 @@ def load_settings() -> Settings:
         critic_model=critic_model,
         planner_provider=planner_provider,
         critic_provider=critic_provider,
+        enhancer_model=enhancer_model,
+        enhancer_provider=enhancer_provider,
+        enhancer_thinking_budget=enhancer_budget,
+        enable_prompt_enhancer=enable_prompt_enhancer,
         ingest_model=ingest_model,
         ingest_http_timeout=ingest_timeout,
         planner_thinking_budget=planner_budget,

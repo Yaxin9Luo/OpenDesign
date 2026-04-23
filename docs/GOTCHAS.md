@@ -79,7 +79,7 @@ for list_key in ("sections", "figures", "tables", "authors", "key_quotes"):
 
 **Symptom**: Dogfooding a 10-slide deck (or 30+ layer poster, long landing) causes the runner to exit with `RuntimeError: planner exited without proposing a DesignSpec` after exactly `max_planner_turns` (30) planner.turn events. Logs show `propose_design_spec` never appearing in `tool.call` events even though the planner clearly intends to call it. Same brief at smaller complexity (3 slides) works instantly.
 
-**Root cause**: `longcat_design/planner.py` previously capped `client.messages.create(..., max_tokens=4096, ...)`. A full deck DesignSpec with 10 slides × ~5 text/image children × bbox+text+font metadata easily exceeds 4096 output tokens. Anthropic truncates the assistant output at the cap; the `tool_use` block is emitted without its argument JSON being complete; the SDK silently produces an assistant message with no `tool_use` items. The planner then sees `stop_reason != "end_turn"` + empty tool_uses → does NOT break → loops back into the next turn with the (still-empty) tool-result message history → repeats until `max_planner_turns` → runner errors.
+**Root cause**: `open_design/planner.py` previously capped `client.messages.create(..., max_tokens=4096, ...)`. A full deck DesignSpec with 10 slides × ~5 text/image children × bbox+text+font metadata easily exceeds 4096 output tokens. Anthropic truncates the assistant output at the cap; the `tool_use` block is emitted without its argument JSON being complete; the SDK silently produces an assistant message with no `tool_use` items. The planner then sees `stop_reason != "end_turn"` + empty tool_uses → does NOT break → loops back into the next turn with the (still-empty) tool-result message history → repeats until `max_planner_turns` → runner errors.
 
 **Fix**: Bumped `max_tokens` to `16384` (Opus supports up to 32K output tokens). Also added `log("tool.call", tool=...)` + `log("tool.result", tool=..., status=..., summary=...)` events inside `_invoke` so future debugging doesn't require trajectory introspection.
 
@@ -155,12 +155,12 @@ for list_key in ("sections", "figures", "tables", "authors", "key_quotes"):
 
 ## 2026-04-18 — macOS marks pip-installed `.pth` files as UF_HIDDEN, Python silently skips them → `ModuleNotFoundError` via script entry
 
-**Symptom**: After `pip install -e .` on macOS (≥14.x / Sequoia-era), the editable install works via `python -m longcat_design.cli ...` BUT fails via the `longcat-design` console script with `ModuleNotFoundError: No module named 'longcat_design'`. Same Python interpreter, different invocation, different result.
+**Symptom**: After `pip install -e .` on macOS (≥14.x / Sequoia-era), the editable install works via `python -m open_design.cli ...` BUT fails via the `open-design` console script with `ModuleNotFoundError: No module named 'open_design'`. Same Python interpreter, different invocation, different result.
 
 **Root cause**: macOS's file provenance system applies the `UF_HIDDEN` chflag (and a `com.apple.provenance` xattr) to files pip unpacks into `site-packages/`, including the `__editable__.<pkg>-<ver>.pth` file. Python's `site.py` on 3.13+ explicitly skips `.pth` files marked hidden — verbose trace shows:
 
 ```
-Skipping hidden .pth file: '.venv/lib/python3.14/site-packages/__editable__.longcat_design-0.1.0.pth'
+Skipping hidden .pth file: '.venv/lib/python3.14/site-packages/__editable__.open_design-0.1.0.pth'
 ```
 
 Without the `.pth` processed, `site-packages` has no path entry for the editable package. `python -m` still finds the package via CWD being on `sys.path[0]`, but the console script (whose `sys.path[0]` is `.venv/bin/`) has no way to find the package → `ModuleNotFoundError`.
@@ -175,7 +175,7 @@ xattr -c .venv/lib/python3.14/site-packages/*.pth   # optional, clears com.apple
 Then verify:
 
 ```bash
-.venv/bin/longcat-design --help   # should show usage, not traceback
+.venv/bin/open-design --help   # should show usage, not traceback
 ```
 
 **Fix (long-term, persistent)**: wrap `pip install` in a shell alias or makefile target that always runs `chflags nohidden` afterward. Example:
@@ -202,7 +202,7 @@ install:
 **Detection**: The smoking gun is the verbose import trace:
 
 ```bash
-.venv/bin/python3.14 -v -c "import longcat_design" 2>&1 | grep -i "skipping hidden"
+.venv/bin/python3.14 -v -c "import open_design" 2>&1 | grep -i "skipping hidden"
 ```
 
 If you see `Skipping hidden .pth file`, apply the fix.

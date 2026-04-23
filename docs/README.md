@@ -1,6 +1,6 @@
-# LongcatDesign — Knowledge Base
+# OpenDesign — Knowledge Base
 
-This directory is the **single source of truth** for what LongcatDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
+This directory is the **single source of truth** for what OpenDesign is, why it exists, how it's built, and what's next. If you (or future-you, or a Longcat-Next teammate) come back to this project after a break and want to pick up cold without re-reading all of Slack, **start here**.
 
 > **Status (2026-04-22)**: **v2 training-data pipeline + v2.3 paper2any Tier-1 polish shipped** (PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1) + 5 follow-up commits on main). The project IS both a product (OSS design agent) AND a training-data producer for layered design generation — every run is simultaneously a design artifact AND a distillation-ready `DistillTrajectory` JSON. 11 tools wired, smoke **20/20 green**.
 >
@@ -30,7 +30,7 @@ This directory is the **single source of truth** for what LongcatDesign is, why 
 > **v1.3 milestones still shipped** (layered below):
 > - [383f7db](https://github.com/Yaxin9Luo/OpenDesign/commit/383f7db) — interactive landing pages: `LayerKind "cta"` + auto-nav + reveal-on-scroll + semantic `<header>/<main>/<footer>`.
 > - [b88a04a](https://github.com/Yaxin9Luo/OpenDesign/commit/b88a04a) — paper-landing imagery policy (ingested figures over NBP; default style `editorial` for paper landings).
-> - [31d2fe9](https://github.com/Yaxin9Luo/OpenDesign/commit/31d2fe9) — self-landing dogfood (LongcatDesign's own landing page built by itself in 94 s, pass 0.92, 3 own architecture diagrams as ingested figures).
+> - [31d2fe9](https://github.com/Yaxin9Luo/OpenDesign/commit/31d2fe9) — self-landing dogfood (OpenDesign's own landing page built by itself in 94 s, pass 0.92, 3 own architecture diagrams as ingested figures).
 >
 > **v2 self-landing dogfood** (run `20260422-162157-d0f37cba`, Kimi K2.6 end-to-end, re-runs the self-landing from [31d2fe9](https://github.com/Yaxin9Luo/OpenDesign/commit/31d2fe9) on the v2 stack):
 > - **Terminal**: `pass` · **Reward**: 1.0 · **Wall**: 4:00 · **Cost**: $2.90 · **Model**: `moonshotai/kimi-k2.6` (planner + critic) · **Backend**: `openai_compat`
@@ -42,9 +42,9 @@ This directory is the **single source of truth** for what LongcatDesign is, why 
 
 ---
 
-## What LongcatDesign is in 30 seconds
+## What OpenDesign is in 30 seconds
 
-An **open-source, terminal-first conversational design agent AND a training-data pipeline** for layered design generation. Describe what you want (poster / slide deck / landing page); LongcatDesign builds and iterates with you via a CLI chat shell, exporting to **HTML (first-class, contenteditable + apply-edits round-trip) + PPTX (native PowerPoint TextFrames) + editable PSD/SVG**. Every run **simultaneously** writes a structured `DistillTrajectory` JSON built for SFT distillation + DPO / RL post-training — the product's output IS the dataset's input.
+An **open-source, terminal-first conversational design agent AND a training-data pipeline** for layered design generation. Describe what you want (poster / slide deck / landing page); OpenDesign builds and iterates with you via a CLI chat shell, exporting to **HTML (first-class, contenteditable + apply-edits round-trip) + PPTX (native PowerPoint TextFrames) + editable PSD/SVG**. Every run **simultaneously** writes a structured `DistillTrajectory` JSON built for SFT distillation + DPO / RL post-training — the product's output IS the dataset's input.
 
 Commercial-grade by default: landing pages and decks call **Gemini 3 Pro Image Preview (NBP)** for inline imagery with per-artifact style prefixes, so output is "investor-ready," not wireframe. Model-agnostic at the planner + critic layer — default stack is **Kimi K2.6** (plaintext reasoning, ~$3.58/run), **Claude Opus 4.7** one env var away, **any OpenAI-compatible endpoint** (DeepSeek-R1, Doubao, vLLM, self-hosted) works out of the box.
 
@@ -52,7 +52,7 @@ Positioned as both:
 - the **open-source alternative to [Claude Design](https://www.anthropic.com/news/claude-design-anthropic-labs)** — terminal-first instead of browser-only, open formats instead of Canva-locked, model-agnostic instead of tied to one subscription;
 - the **training-data collection vehicle for the [Longcat](https://github.com/) layered / interleaved image-text ecosystem** — intermediate artifacts (revise loops, layer edits) are versioned on disk so DPO pairs and layered-gen SFT samples can be extracted without re-running anything.
 
-> **Evolution note (2026-04-18 → 2026-04-22)**: This project started as "Design-Agent," a research prototype for capturing training trajectories for the Longcat-Next layered-generation model. After Claude Design shipped, we pivoted to ship **LongcatDesign** as an open-source product (pivot 2026-04-18). Four days later (2026-04-22), PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1) **closed the loop**: the product is now an explicit training-data pipeline again — the agent's designs go to users, and its trajectories + versioned intermediate artifacts feed Longcat-Next training. Both missions run on the same code. See [DECISIONS.md](DECISIONS.md) 2026-04-22 entries for the full rationale.
+> **Evolution note (2026-04-18 → 2026-04-22)**: This project started as "Design-Agent," a research prototype for capturing training trajectories for the Longcat-Next layered-generation model. After Claude Design shipped, we pivoted to ship **OpenDesign** as an open-source product (pivot 2026-04-18). Four days later (2026-04-22), PR [#1](https://github.com/Yaxin9Luo/OpenDesign/pull/1) **closed the loop**: the product is now an explicit training-data pipeline again — the agent's designs go to users, and its trajectories + versioned intermediate artifacts feed Longcat-Next training. Both missions run on the same code. See [DECISIONS.md](DECISIONS.md) 2026-04-22 entries for the full rationale.
 
 ---
 
@@ -79,7 +79,7 @@ Positioned as both:
 
 | File | Purpose | When to read |
 |---|---|---|
-| [VISION.md](VISION.md) | Product pitch (LongcatDesign as OSS Claude Design alt); paper2any North Star; differentiation | First read; any time scope is being debated |
+| [VISION.md](VISION.md) | Product pitch (OpenDesign as OSS Claude Design alt); paper2any North Star; differentiation | First read; any time scope is being debated |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, files, data flow, the 11 tools, composite dispatch per artifact type, dual-SDK LLM routing (Anthropic + OpenAI for Qwen) | Before touching code |
 | [V1-MVP-PLAN.md](V1-MVP-PLAN.md) | Concrete shipping plan for v1.0 MVP launch (work breakdown + estimates + per-item status) | Before starting implementation |
 | [DATA-CONTRACT.md](DATA-CONTRACT.md) | Session-state / trajectory schema (internal detail post-pivot) | Before touching `schema.py` |

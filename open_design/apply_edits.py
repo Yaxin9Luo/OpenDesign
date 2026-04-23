@@ -1,6 +1,6 @@
 """apply-edits — round-trip an edited HTML back into PSD / SVG / HTML / PNG.
 
-Reads an edited LongcatDesign HTML (typically the file downloaded from the
+Reads an edited OpenDesign HTML (typically the file downloaded from the
 browser's ⬇️ Save button), extracts per-layer state from the `data-*` attrs
 and inline images, re-renders text layers from scratch via `render_text_layer`,
 recomposites, and writes a new run_dir + trajectory with `metadata.
@@ -122,7 +122,7 @@ def apply_edits(
         if not ctx.state["rendered_layers"]:
             raise RuntimeError(
                 f"no layers recovered from {edited_html} "
-                "(is the HTML an actual LongcatDesign output?)"
+                "(is the HTML an actual OpenDesign output?)"
             )
         log("apply.poster.restored",
             count=len(ctx.state["rendered_layers"]),
@@ -131,7 +131,7 @@ def apply_edits(
     else:
         raise ValueError(
             f"neither a poster `.canvas` nor a landing `.ld-landing` container "
-            f"found in {edited_html} — is this a LongcatDesign HTML?"
+            f"found in {edited_html} — is this a OpenDesign HTML?"
         )
 
     result = composite({}, ctx=ctx)

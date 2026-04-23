@@ -1,6 +1,6 @@
 # Landing Design Systems
 
-LongcatDesign ships six pre-tuned landing-page design systems. The planner picks one per landing artifact based on the brief; the HTML renderer loads the matching CSS file from `assets/design-systems/` and inlines it into the generated page.
+OpenDesign ships six pre-tuned landing-page design systems. The planner picks one per landing artifact based on the brief; the HTML renderer loads the matching CSS file from `assets/design-systems/` and inlines it into the generated page.
 
 All systems share the same layout primitives (`<main class="ld-landing">`, `<section class="ld-section" data-section-variant="hero|features|cta|footer">`, `<div class="layer text">`) — they differ in tokens (colors, fonts, shadows, radii) and section-variant styling. This means **a single DesignSpec can swap styles by changing just `design_system.style`**, with no schema changes.
 

@@ -6,11 +6,11 @@ When someone asks "but what about X?" — read the relevant section here first. 
 
 > **⚠️ POST-PIVOT + POST-v1.0-#7 NOTICE (2026-04-20)**
 >
-> After the [pivot to LongcatDesign](DECISIONS.md) (2026-04-18) and the v1.0 #7 deck shipping (2026-04-20), the audits below have partially aged out. The **factual audits** (architecture, editability mechanism, output formats) remain accurate; the **"why this doesn't kill our positioning"** sections were written under the old "trajectory-as-product" framing and the "deck renderer pending" framing — both stale now.
+> After the [pivot to OpenDesign](DECISIONS.md) (2026-04-18) and the v1.0 #7 deck shipping (2026-04-20), the audits below have partially aged out. The **factual audits** (architecture, editability mechanism, output formats) remain accurate; the **"why this doesn't kill our positioning"** sections were written under the old "trajectory-as-product" framing and the "deck renderer pending" framing — both stale now.
 >
 > **Updated as of 2026-04-20**:
 >
-> - LongcatDesign now ships full **3-artifact coverage**: poster (PSD + SVG + HTML) + landing (HTML with 6 bundled design systems) + deck (native PPTX with TextFrames). See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) status line.
+> - OpenDesign now ships full **3-artifact coverage**: poster (PSD + SVG + HTML) + landing (HTML with 6 bundled design systems) + deck (native PPTX with TextFrames). See [V1-MVP-PLAN.md](V1-MVP-PLAN.md) status line.
 > - Our deck renderer (`tools/pptx_renderer.py`, v1.0 #7) now uses the **same `python-pptx` native-TextFrame approach** as Paper2Any's renderer — that was the explicit "what we should steal" in the audit below. Paper2Any's PPTX approach is now our PPTX approach.
 > - Our current differentiation vs Paper2Any: we're **multi-artifact + agentic** (poster + landing + deck from one CLI + conversational iteration), they're **single-artifact + pipelined** (poster-from-paper via a 7-agent LangGraph DAG). We also have round-trip HTML editing (Path A) which they don't.
 > - Our current differentiation vs Claude Design: **open-source + terminal-first + open output formats**, not tied to any subscription. The shipped v1.0 proves the thesis works.

@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .agents import EnhancerResult, PromptEnhancer
+from .agents.prompt_enhancer import load_enhancer_system_prompt
 from .config import Settings
 from .planner import PlannerLoop
 from .schema import (
@@ -33,7 +35,8 @@ class PipelineRunner:
 
     def run(self, brief: str,
             attachments: list[Path] | None = None,
-            template: str | None = None) -> tuple[DistillTrajectory, Path]:
+            template: str | None = None,
+            skip_enhancer: bool = False) -> tuple[DistillTrajectory, Path]:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
@@ -50,8 +53,16 @@ class PipelineRunner:
         effective_brief = _apply_attachment_prologue(effective_brief, attachments)
 
         log("run.start", run_id=run_id, brief_chars=len(effective_brief),
-            attachments=len(attachments), template=template or "(none)")
+            attachments=len(attachments), template=template or "(none)",
+            skip_enhancer=skip_enhancer)
         wall_start = time.monotonic()
+
+        # v2.4 Prompt Enhancer — runs before PlannerLoop. `--skip-enhancer`
+        # bypasses unconditionally; otherwise the settings gate decides.
+        enhancer_result = _run_enhancer(
+            self.settings, effective_brief, skip_enhancer=skip_enhancer,
+        )
+        planner_input_brief = enhancer_result.enhanced_brief
 
         ctx = ToolContext(
             settings=self.settings, run_dir=run_dir,
@@ -60,7 +71,7 @@ class PipelineRunner:
 
         system_prompt = (self.settings.prompts_dir / "planner.md").read_text(encoding="utf-8")
         planner = PlannerLoop(self.settings, system_prompt)
-        trace = planner.run(effective_brief, ctx)
+        trace = planner.run(planner_input_brief, ctx)
 
         # Both spec + composition are runtime-only state now; we still
         # require them to have been produced (sanity check that the planner
@@ -76,16 +87,24 @@ class PipelineRunner:
         wall_s = round(time.monotonic() - wall_start, 2)
         in_tok, out_tok = planner.token_totals
         cache_read, cache_create = planner.cache_totals
-        cost = _estimate_cost(in_tok, out_tok, n_critiques=len(ctx.state["critique_results"]))
+        cost = _estimate_cost(
+            in_tok, out_tok,
+            n_critiques=len(ctx.state["critique_results"]),
+            enhancer_in=enhancer_result.input_tokens,
+            enhancer_out=enhancer_result.output_tokens,
+        )
 
         terminal_status, final_reward = _derive_episode_outcome(
             ctx, finalized=ctx.state.get("finalized", False),
             spec_present=spec is not None, composition_present=composition is not None,
         )
 
+        # The trajectory's top-level `brief` is what the planner actually
+        # saw (post-enhancement when the stage ran). `original_brief` in
+        # metadata preserves the pre-enhancement input for A/B analysis.
         traj = DistillTrajectory(
             run_id=run_id,
-            brief=effective_brief,
+            brief=planner_input_brief,
             agent_trace=trace,
             final_reward=final_reward,
             terminal_status=terminal_status,
@@ -104,6 +123,14 @@ class PipelineRunner:
                 estimated_cost_usd=cost,
                 wall_time_s=wall_s,
                 source="agent_run",
+                enhancer_model=enhancer_result.model,
+                enhancer_skipped=enhancer_result.skipped,
+                enhancer_skip_reason=enhancer_result.skip_reason,
+                enhancer_input_tokens=enhancer_result.input_tokens,
+                enhancer_output_tokens=enhancer_result.output_tokens,
+                enhancer_wall_time_s=enhancer_result.wall_time_s,
+                original_brief=(effective_brief
+                                if not enhancer_result.skipped else ""),
             ),
         )
 
@@ -115,6 +142,42 @@ class PipelineRunner:
             n_steps=len(trace), n_critiques=len(ctx.state["critique_results"]))
 
         return traj, traj_path
+
+
+def _run_enhancer(
+    settings: Settings, effective_brief: str, *, skip_enhancer: bool,
+) -> EnhancerResult:
+    """Run the v2.4 Prompt Enhancer pre-planner stage.
+
+    Returns an `EnhancerResult` either way — when skipped, its
+    `enhanced_brief` equals the raw `effective_brief` so the runner can
+    use it uniformly as the planner input. API failures also fall back
+    to pass-through rather than crashing the run.
+    """
+    if skip_enhancer or not settings.enable_prompt_enhancer:
+        reason = "--skip-enhancer" if skip_enhancer else "disabled in settings"
+        log("prompt.enhance.skipped", reason=reason)
+        return EnhancerResult(
+            enhanced_brief=effective_brief,
+            original_brief=effective_brief,
+            model=settings.enhancer_model,
+            skipped=True,
+            skip_reason=reason,
+        )
+    try:
+        system_prompt = load_enhancer_system_prompt(settings)
+    except FileNotFoundError as e:
+        log("prompt.enhance.missing_prompt", error=str(e),
+            fallback="pass-through-raw-brief")
+        return EnhancerResult(
+            enhanced_brief=effective_brief,
+            original_brief=effective_brief,
+            model=settings.enhancer_model,
+            skipped=True,
+            skip_reason="system_prompt_missing",
+        )
+    enhancer = PromptEnhancer(settings, system_prompt)
+    return enhancer.enhance(effective_brief)
 
 
 def _derive_episode_outcome(
@@ -152,13 +215,22 @@ def _derive_episode_outcome(
     return "pass" if finalized else "abort", None
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int, *, n_critiques: int) -> float:
-    """Rough estimate; tighten after measuring real runs."""
+def _estimate_cost(
+    input_tokens: int, output_tokens: int, *,
+    n_critiques: int,
+    enhancer_in: int = 0, enhancer_out: int = 0,
+) -> float:
+    """Rough estimate; tighten after measuring real runs.
+
+    Enhancer is priced at Opus 4.7 rates (that's the default model);
+    users who override to a cheaper model will see the cost slightly
+    overstated — acceptable for a ballpark."""
     opus_in_per_mtok = 15.0
     opus_out_per_mtok = 75.0
     nbp_per_image_2k = 0.15
     planner_cost = (input_tokens / 1e6) * opus_in_per_mtok + (output_tokens / 1e6) * opus_out_per_mtok
-    return round(planner_cost + nbp_per_image_2k + 0.05 * max(n_critiques, 0), 4)
+    enhancer_cost = (enhancer_in / 1e6) * opus_in_per_mtok + (enhancer_out / 1e6) * opus_out_per_mtok
+    return round(planner_cost + enhancer_cost + nbp_per_image_2k + 0.05 * max(n_critiques, 0), 4)
 
 
 def _apply_attachment_prologue(brief: str, attachments: list[Path]) -> str:

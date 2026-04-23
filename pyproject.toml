@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "longcat-design"
+name = "open-design"
 version = "0.1.0"
 description = "Layered poster generation pipeline: agent + NBP + editable PSD/SVG output + training-ready trajectories."
 readme = "README.md"
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-longcat-design = "longcat_design.cli:main"
+open-design = "open_design.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["longcat_design*"]
+include = ["open_design*"]
