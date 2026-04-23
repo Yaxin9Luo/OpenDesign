@@ -161,8 +161,34 @@ def _toolbar_css() -> str:
         "                    user-select: none; display: none;\n"
         "                    box-shadow: 0 2px 6px rgba(0,0,0,0.4);\n"
         "                    font-family: system-ui; z-index: 10; }\n"
-        "  .layer.text.ld-active .ld-drag-handle { display: block; }\n"
+        "  .layer.text.ld-active .ld-drag-handle,\n"
+        "  .layer.image.ld-active .ld-drag-handle { display: block; }\n"
         "  .ld-drag-handle.ld-grabbing { cursor: grabbing; background: #4a9eff; }\n"
+        # v2.4.3 — resize handles on .draggable-resizable images (landing)
+        "  .layer.image.draggable-resizable { position: relative; }\n"
+        "  .layer.image.draggable-resizable .ld-resize-handle {\n"
+        "                    position: absolute; width: 12px; height: 12px;\n"
+        "                    background: rgba(120,180,255,0.95); border: 1.5px solid #fff;\n"
+        "                    border-radius: 2px; display: none; z-index: 10;\n"
+        "                    box-shadow: 0 1px 3px rgba(0,0,0,0.4); user-select: none; }\n"
+        "  .layer.image.ld-active .ld-resize-handle { display: block; }\n"
+        "  .ld-resize-handle.ld-rh-nw { top: -6px; left: -6px; cursor: nwse-resize; }\n"
+        "  .ld-resize-handle.ld-rh-ne { top: -6px; right: -6px; cursor: nesw-resize; }\n"
+        "  .ld-resize-handle.ld-rh-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }\n"
+        "  .ld-resize-handle.ld-rh-se { bottom: -6px; right: -6px; cursor: nwse-resize; }\n"
+        "  .ld-resize-handle.ld-grabbing { background: #4a9eff; }\n"
+        "  .layer.image.draggable-resizable:hover {\n"
+        "                    outline: 1px dashed rgba(120,180,255,0.35);\n"
+        "                    outline-offset: 4px; }\n"
+        "  .layer.image.ld-active {\n"
+        "                    outline: 1px solid rgba(120,180,255,0.9);\n"
+        "                    outline-offset: 4px; }\n"
+        # Mobile: disable drag/resize UI (ROADMAP v2.4.3 risk note)
+        "  @media (max-width: 768px) {\n"
+        "    .layer.image.draggable-resizable .ld-drag-handle,\n"
+        "    .layer.image.draggable-resizable .ld-resize-handle { display: none !important; }\n"
+        "    .layer.image.draggable-resizable { pointer-events: auto; }\n"
+        "  }\n"
         "  .ld-toolbar { position: fixed; display: none; z-index: 100;\n"
         "                background: #1f2024; color: #eee;\n"
         "                border: 1px solid #3a3d44;\n"
@@ -434,6 +460,8 @@ def _edit_toolbar_html(families: list[str]) -> str:
     opts = "".join(
         f'<option value="{_attr(f)}">{html.escape(f)}</option>' for f in families
     )
+    # The layout.json button is only functional on landing pages (v2.4.3);
+    # it's always in the DOM but JS hides it unless ld-artifact-type="landing".
     return (
         '<div class="ld-toolbar" id="ld-toolbar">\n'
         '  <span class="ld-label">font</span>\n'
@@ -443,6 +471,10 @@ def _edit_toolbar_html(families: list[str]) -> str:
         '  <span class="ld-label">color</span>\n'
         '  <input type="color" id="ld-color">\n'
         '  <button class="ld-save" id="ld-save">💾 Save</button>\n'
+        '  <button class="ld-layout" id="ld-layout" '
+        'style="display:none" '
+        'title="Download positions/sizes as layout.json">'
+        '📐 layout.json</button>\n'
         "</div>"
     )
 
@@ -466,7 +498,14 @@ def _save_modal_html() -> str:
 
 
 def _edit_script(families: list[str]) -> str:
-    """Return the inline JS as a plain string. No external deps."""
+    """Return the inline JS as a plain string. No external deps.
+
+    v2.4.3: the image-drag/resize branch activates only on
+    `.layer.image.draggable-resizable` (landing pages — the class isn't
+    emitted on poster images). State lives on `data-bbox-tx/ty/w/h` and
+    is mirrored to `localStorage` under the run-id key for persistence
+    across reloads.
+    """
     families_json = json.dumps(families)
     # Use a raw template. Keep it readable; no f-strings so curly braces don't clash.
     template = r"""
@@ -477,12 +516,23 @@ def _edit_script(families: list[str]) -> str:
   const sizeInp = document.getElementById('ld-size');
   const colorInp = document.getElementById('ld-color');
   const saveBtn = document.getElementById('ld-save');
+  const layoutBtn = document.getElementById('ld-layout');
   const modal = document.getElementById('ld-modal-backdrop');
   const copyBtn = document.getElementById('ld-copy');
   const dlBtn = document.getElementById('ld-download');
   const closeBtn = document.getElementById('ld-close');
   let active = null;
-  let dragging = null;
+  let dragging = null;      // text drag (absolute bbox) OR image drag (transform)
+  let resizing = null;      // image resize via corner handle
+
+  // v2.4.3 — detect landing mode (determines layout.json button visibility
+  // + enables transform-based image drag/resize).
+  const artifactTypeMeta = document.querySelector('meta[name="ld-artifact-type"]');
+  const isLanding = artifactTypeMeta && artifactTypeMeta.content === 'landing';
+  const runIdMeta = document.querySelector('meta[name="ld-run-id"]');
+  const runId = runIdMeta ? (runIdMeta.content || '') : '';
+  const LS_KEY = runId ? 'opendesign.layout.' + runId : '';
+  if (isLanding && layoutBtn) layoutBtn.style.display = 'inline-block';
 
   // --- activation ---
   document.querySelectorAll('.layer.text').forEach(el => {
@@ -492,9 +542,18 @@ def _edit_script(families: list[str]) -> str:
       setActive(el);
     });
   });
+  // v2.4.3 — image layers become selectable too. Click activates them
+  // (toolbar hidden since images have no font/size/color — handles only).
+  document.querySelectorAll('.layer.image.draggable-resizable').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      if (e.target.classList && (e.target.classList.contains('ld-drag-handle')
+          || e.target.classList.contains('ld-resize-handle'))) return;
+      setActive(el);
+    });
+  });
 
   document.addEventListener('mousedown', e => {
-    const layer = e.target.closest && e.target.closest('.layer.text');
+    const layer = e.target.closest && e.target.closest('.layer.text, .layer.image.draggable-resizable');
     const insideToolbar = e.target.closest && e.target.closest('.ld-toolbar, .ld-modal-backdrop');
     if (!layer && !insideToolbar) setActive(null);
   });
@@ -512,17 +571,21 @@ def _edit_script(families: list[str]) -> str:
     active = el;
     if (!el) { toolbar.classList.remove('ld-visible'); return; }
     el.classList.add('ld-active');
-    // Populate toolbar from data-* attrs
-    const fam = el.getAttribute('data-font-family') || FAMILIES[0];
-    if (!Array.from(familySel.options).some(o => o.value === fam)) {
-      const opt = document.createElement('option');
-      opt.value = fam; opt.textContent = fam + ' (not bundled)'; familySel.appendChild(opt);
+    // Text toolbar is text-only; hide it for image selection.
+    if (el.classList.contains('text')) {
+      const fam = el.getAttribute('data-font-family') || FAMILIES[0];
+      if (!Array.from(familySel.options).some(o => o.value === fam)) {
+        const opt = document.createElement('option');
+        opt.value = fam; opt.textContent = fam + ' (not bundled)'; familySel.appendChild(opt);
+      }
+      familySel.value = fam;
+      sizeInp.value = el.getAttribute('data-font-size-px') || '';
+      colorInp.value = normalizeColor(el.getAttribute('data-fill') || '#000000');
+      positionToolbar(el);
+      toolbar.classList.add('ld-visible');
+    } else {
+      toolbar.classList.remove('ld-visible');
     }
-    familySel.value = fam;
-    sizeInp.value = el.getAttribute('data-font-size-px') || '';
-    colorInp.value = normalizeColor(el.getAttribute('data-fill') || '#000000');
-    positionToolbar(el);
-    toolbar.classList.add('ld-visible');
   }
 
   function positionToolbar(el) {
@@ -539,69 +602,207 @@ def _edit_script(families: list[str]) -> str:
     toolbar.style.left = left + 'px';
   }
 
-  window.addEventListener('resize', () => { if (active) positionToolbar(active); });
-  window.addEventListener('scroll', () => { if (active) positionToolbar(active); }, true);
+  window.addEventListener('resize', () => { if (active && active.classList.contains('text')) positionToolbar(active); });
+  window.addEventListener('scroll', () => { if (active && active.classList.contains('text')) positionToolbar(active); }, true);
 
   // --- inputs ---
   familySel.addEventListener('change', () => {
-    if (!active) return;
+    if (!active || !active.classList.contains('text')) return;
     const f = familySel.value;
     active.setAttribute('data-font-family', f);
     active.style.fontFamily = "'" + f + "'";
   });
   sizeInp.addEventListener('input', () => {
-    if (!active) return;
+    if (!active || !active.classList.contains('text')) return;
     const n = parseInt(sizeInp.value, 10);
     if (!(n > 0)) return;
     active.setAttribute('data-font-size-px', String(n));
     active.style.fontSize = n + 'px';
   });
   colorInp.addEventListener('input', () => {
-    if (!active) return;
+    if (!active || !active.classList.contains('text')) return;
     const c = colorInp.value;
     active.setAttribute('data-fill', c);
     active.style.color = c;
   });
 
-  // --- drag ---
+  // --- drag (text + image) ---
   document.addEventListener('pointerdown', e => {
     if (!e.target.classList || !e.target.classList.contains('ld-drag-handle')) return;
-    const layer = e.target.closest('.layer.text');
-    if (!layer) return;
+    // Dispatch by parent layer kind.
+    const imageLayer = e.target.closest('.layer.image.draggable-resizable');
+    if (imageLayer) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.target.classList.add('ld-grabbing');
+      const startX = e.clientX, startY = e.clientY;
+      const tx0 = parseFloat(imageLayer.getAttribute('data-bbox-tx') || '0');
+      const ty0 = parseFloat(imageLayer.getAttribute('data-bbox-ty') || '0');
+      dragging = {
+        kind: 'image', layer: imageLayer, handle: e.target,
+        startX, startY, tx0, ty0,
+      };
+      return;
+    }
+    const textLayer = e.target.closest('.layer.text');
+    if (!textLayer) return;
     e.preventDefault();
     e.stopPropagation();
     e.target.classList.add('ld-grabbing');
     const canvas = document.querySelector('.canvas');
     const startX = e.clientX, startY = e.clientY;
-    const x0 = parseInt(layer.getAttribute('data-bbox-x') || '0', 10);
-    const y0 = parseInt(layer.getAttribute('data-bbox-y') || '0', 10);
-    dragging = { layer, startX, startY, x0, y0, canvas, handle: e.target };
-    layer.setPointerCapture && layer.setPointerCapture(e.pointerId);
-  });
-  document.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const cRect = dragging.canvas.getBoundingClientRect();
-    // Canvas may be scaled by browser zoom, but since our CSS uses fixed px,
-    // scale factor is (cRect.width / canvas.clientWidth)
-    const scale = cRect.width / dragging.canvas.offsetWidth || 1;
-    const dx = (e.clientX - dragging.startX) / scale;
-    const dy = (e.clientY - dragging.startY) / scale;
-    const nx = Math.round(dragging.x0 + dx);
-    const ny = Math.round(dragging.y0 + dy);
-    dragging.layer.setAttribute('data-bbox-x', String(nx));
-    dragging.layer.setAttribute('data-bbox-y', String(ny));
-    dragging.layer.style.left = nx + 'px';
-    dragging.layer.style.top = ny + 'px';
-    if (active === dragging.layer) positionToolbar(dragging.layer);
-  });
-  document.addEventListener('pointerup', () => {
-    if (!dragging) return;
-    dragging.handle.classList.remove('ld-grabbing');
-    dragging = null;
+    const x0 = parseInt(textLayer.getAttribute('data-bbox-x') || '0', 10);
+    const y0 = parseInt(textLayer.getAttribute('data-bbox-y') || '0', 10);
+    dragging = { kind: 'text', layer: textLayer, startX, startY, x0, y0, canvas, handle: e.target };
+    textLayer.setPointerCapture && textLayer.setPointerCapture(e.pointerId);
   });
 
-  // --- contenteditable text tracking (keep data-* in sync is optional —
-  // text content is read directly from innerText in apply-edits; no data-* needed) ---
+  // v2.4.3 — resize pointerdown (images only).
+  document.addEventListener('pointerdown', e => {
+    if (!e.target.classList || !e.target.classList.contains('ld-resize-handle')) return;
+    const layer = e.target.closest('.layer.image.draggable-resizable');
+    if (!layer) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.target.classList.add('ld-grabbing');
+    const rect = layer.getBoundingClientRect();
+    const w0 = rect.width;
+    const h0 = rect.height;
+    const img = layer.querySelector('img');
+    const aspect = (img && img.naturalWidth && img.naturalHeight)
+      ? (img.naturalWidth / img.naturalHeight)
+      : (w0 / Math.max(h0, 1));
+    // Corner determines which edges move. "nw" both shift (drag adjusts
+    // anchor too); for simplicity we fix the opposite corner by pretending
+    // the top-left anchor is stable and applying scale from there.
+    const corner =
+      e.target.classList.contains('ld-rh-nw') ? 'nw' :
+      e.target.classList.contains('ld-rh-ne') ? 'ne' :
+      e.target.classList.contains('ld-rh-sw') ? 'sw' : 'se';
+    resizing = {
+      layer, handle: e.target, startX: e.clientX, startY: e.clientY,
+      w0, h0, aspect, corner,
+      tx0: parseFloat(layer.getAttribute('data-bbox-tx') || '0'),
+      ty0: parseFloat(layer.getAttribute('data-bbox-ty') || '0'),
+    };
+  });
+
+  document.addEventListener('pointermove', e => {
+    if (dragging && dragging.kind === 'text') {
+      const cRect = dragging.canvas.getBoundingClientRect();
+      const scale = cRect.width / dragging.canvas.offsetWidth || 1;
+      const dx = (e.clientX - dragging.startX) / scale;
+      const dy = (e.clientY - dragging.startY) / scale;
+      const nx = Math.round(dragging.x0 + dx);
+      const ny = Math.round(dragging.y0 + dy);
+      dragging.layer.setAttribute('data-bbox-x', String(nx));
+      dragging.layer.setAttribute('data-bbox-y', String(ny));
+      dragging.layer.style.left = nx + 'px';
+      dragging.layer.style.top = ny + 'px';
+      if (active === dragging.layer) positionToolbar(dragging.layer);
+      return;
+    }
+    if (dragging && dragging.kind === 'image') {
+      // Transform-based: preserves flow layout for sibling elements.
+      const dx = e.clientX - dragging.startX;
+      const dy = e.clientY - dragging.startY;
+      const tx = Math.round(dragging.tx0 + dx);
+      const ty = Math.round(dragging.ty0 + dy);
+      dragging.layer.setAttribute('data-bbox-tx', String(tx));
+      dragging.layer.setAttribute('data-bbox-ty', String(ty));
+      applyImageTransform(dragging.layer);
+      return;
+    }
+    if (resizing) {
+      const dx = e.clientX - resizing.startX;
+      const dy = e.clientY - resizing.startY;
+      let nw, nh;
+      // Sign of width/height change depends on which corner is dragged.
+      const sx = (resizing.corner === 'ne' || resizing.corner === 'se') ? 1 : -1;
+      const sy = (resizing.corner === 'sw' || resizing.corner === 'se') ? 1 : -1;
+      nw = Math.max(40, resizing.w0 + sx * dx);
+      nh = Math.max(40, resizing.h0 + sy * dy);
+      if (e.shiftKey && resizing.aspect) {
+        // Lock aspect — pick the dominant axis.
+        if (Math.abs(dx) > Math.abs(dy)) nh = nw / resizing.aspect;
+        else nw = nh * resizing.aspect;
+      }
+      nw = Math.round(nw); nh = Math.round(nh);
+      resizing.layer.style.width = nw + 'px';
+      resizing.layer.style.height = nh + 'px';
+      resizing.layer.setAttribute('data-bbox-w', String(nw));
+      resizing.layer.setAttribute('data-bbox-h', String(nh));
+      // NW / N / SW corners anchor by moving tx/ty so the far corner
+      // stays put visually; NE and SE don't need offset.
+      if (resizing.corner === 'nw' || resizing.corner === 'sw') {
+        const tx = Math.round(resizing.tx0 + (resizing.w0 - nw));
+        resizing.layer.setAttribute('data-bbox-tx', String(tx));
+      }
+      if (resizing.corner === 'nw' || resizing.corner === 'ne') {
+        const ty = Math.round(resizing.ty0 + (resizing.h0 - nh));
+        resizing.layer.setAttribute('data-bbox-ty', String(ty));
+      }
+      applyImageTransform(resizing.layer);
+    }
+  });
+
+  document.addEventListener('pointerup', () => {
+    if (dragging) {
+      dragging.handle.classList.remove('ld-grabbing');
+      if (dragging.kind === 'image') persistLayout();
+      dragging = null;
+    }
+    if (resizing) {
+      resizing.handle.classList.remove('ld-grabbing');
+      persistLayout();
+      resizing = null;
+    }
+  });
+
+  function applyImageTransform(el) {
+    const tx = parseFloat(el.getAttribute('data-bbox-tx') || '0');
+    const ty = parseFloat(el.getAttribute('data-bbox-ty') || '0');
+    el.style.transform = 'translate(' + tx + 'px, ' + ty + 'px)';
+  }
+
+  // --- localStorage persist / restore ---
+  function persistLayout() {
+    if (!LS_KEY) return;
+    const state = {};
+    document.querySelectorAll('.layer.image.draggable-resizable').forEach(el => {
+      const id = el.getAttribute('data-layer-id');
+      if (!id) return;
+      const tx = parseFloat(el.getAttribute('data-bbox-tx') || '0');
+      const ty = parseFloat(el.getAttribute('data-bbox-ty') || '0');
+      const w = el.getAttribute('data-bbox-w') || '';
+      const h = el.getAttribute('data-bbox-h') || '';
+      if (tx || ty || w || h) {
+        state[id] = { tx, ty, w: w ? parseInt(w, 10) : null, h: h ? parseInt(h, 10) : null };
+      }
+    });
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (err) {}
+  }
+
+  function restoreLayout() {
+    if (!LS_KEY) return;
+    let raw;
+    try { raw = localStorage.getItem(LS_KEY); } catch (err) { return; }
+    if (!raw) return;
+    let state;
+    try { state = JSON.parse(raw); } catch (err) { return; }
+    Object.keys(state).forEach(id => {
+      const el = document.querySelector('.layer.image.draggable-resizable[data-layer-id="' + CSS.escape(id) + '"]');
+      if (!el) return;
+      const s = state[id];
+      if (typeof s.tx === 'number') el.setAttribute('data-bbox-tx', String(s.tx));
+      if (typeof s.ty === 'number') el.setAttribute('data-bbox-ty', String(s.ty));
+      if (s.w) { el.style.width = s.w + 'px'; el.setAttribute('data-bbox-w', String(s.w)); }
+      if (s.h) { el.style.height = s.h + 'px'; el.setAttribute('data-bbox-h', String(s.h)); }
+      applyImageTransform(el);
+    });
+  }
+
+  if (isLanding) restoreLayout();
 
   // --- save modal ---
   saveBtn.addEventListener('click', () => {
@@ -612,11 +813,15 @@ def _edit_script(families: list[str]) -> str:
   function closeModal() { modal.classList.remove('ld-visible'); }
 
   function buildEditedHTML() {
-    // Strip drag-handle spans so the output is clean and the HTML doesn't
-    // accumulate nested copies if the file is round-tripped.
+    // Strip drag/resize handles + toolbar + modal + script so the output
+    // is clean and the HTML doesn't accumulate nested copies if the file
+    // is round-tripped. The data-bbox-* attrs + inline styles are kept so
+    // the next apply-edits (or browser reload) sees the adjusted layout.
     const clone = document.documentElement.cloneNode(true);
-    clone.querySelectorAll('.ld-drag-handle, .ld-toolbar, .ld-modal-backdrop, script').forEach(n => n.remove());
-    clone.querySelectorAll('.layer.text.ld-active').forEach(el => el.classList.remove('ld-active'));
+    clone.querySelectorAll(
+      '.ld-drag-handle, .ld-resize-handle, .ld-toolbar, .ld-modal-backdrop, script'
+    ).forEach(n => n.remove());
+    clone.querySelectorAll('.layer.ld-active').forEach(el => el.classList.remove('ld-active'));
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
 
@@ -644,6 +849,37 @@ def _edit_script(families: list[str]) -> str:
     dlBtn.textContent = '✓ Downloaded';
     setTimeout(() => { dlBtn.textContent = '⬇️ Download edited HTML'; }, 1500);
   });
+
+  // v2.4.3 — layout.json export (landing only; button hidden on poster).
+  if (layoutBtn) {
+    layoutBtn.addEventListener('click', () => {
+      const state = {};
+      document.querySelectorAll('.layer.image.draggable-resizable').forEach(el => {
+        const id = el.getAttribute('data-layer-id');
+        if (!id) return;
+        state[id] = {
+          tx: parseFloat(el.getAttribute('data-bbox-tx') || '0'),
+          ty: parseFloat(el.getAttribute('data-bbox-ty') || '0'),
+          w: el.getAttribute('data-bbox-w') ? parseInt(el.getAttribute('data-bbox-w'), 10) : null,
+          h: el.getAttribute('data-bbox-h') ? parseInt(el.getAttribute('data-bbox-h'), 10) : null,
+        };
+      });
+      const payload = {
+        schema: 'opendesign.layout.v1',
+        run_id: runId || null,
+        images: state,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)],
+        { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'layout.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      layoutBtn.textContent = '✓ layout.json';
+      setTimeout(() => { layoutBtn.textContent = '📐 layout.json'; }, 1500);
+    });
+  }
 
   function normalizeColor(c) {
     // <input type=color> only accepts #rrggbb. Expand #rgb to #rrggbb;
@@ -1113,7 +1349,15 @@ def _landing_table_html(table_node: Any) -> str:
 
 
 def _landing_image_html(image_node: Any) -> str:
-    """Inline image layer inside a landing section — embedded as data: URI."""
+    """Inline image layer inside a landing section — embedded as data: URI.
+
+    v2.4.3: images become draggable + resizable in the browser. Drag is
+    applied via CSS `transform: translate(tx, ty)` (preserves flow layout
+    for siblings); resize sets inline `width` (height follows aspect).
+    State rides on `data-bbox-tx/ty/w/h` attrs; clicking an image exposes
+    a drag handle + 4 corner resize handles. Mobile (<768 px) hides
+    handles via media query.
+    """
     src_path = getattr(image_node, "src_path", None)
     if not src_path:
         return ""
@@ -1123,13 +1367,21 @@ def _landing_image_html(image_node: Any) -> str:
     aspect = getattr(image_node, "aspect_ratio", None) or ""
     alt = name.replace("_", " ")
     return (
-        f'    <figure class="layer image" '
+        f'    <figure class="layer image draggable-resizable" '
         f'data-layer-id="{_attr(layer_id)}" '
         f'data-kind="image" '
         f'data-z-index="{int(getattr(image_node, "z_index", 0) or 0)}" '
         f'data-layer-name="{_attr(name)}" '
-        f'data-aspect-ratio="{_attr(aspect)}">'
+        f'data-aspect-ratio="{_attr(aspect)}" '
+        f'data-bbox-tx="0" data-bbox-ty="0" '
+        f'data-bbox-w="" data-bbox-h="">'
         f'<img src="{data_uri}" alt="{_attr(alt)}" loading="lazy">'
+        f'<span class="ld-drag-handle" aria-hidden="true" '
+        f'title="drag to reposition">⤢</span>'
+        f'<span class="ld-resize-handle ld-rh-nw" aria-hidden="true"></span>'
+        f'<span class="ld-resize-handle ld-rh-ne" aria-hidden="true"></span>'
+        f'<span class="ld-resize-handle ld-rh-sw" aria-hidden="true"></span>'
+        f'<span class="ld-resize-handle ld-rh-se" aria-hidden="true"></span>'
         f'</figure>'
     )
 
