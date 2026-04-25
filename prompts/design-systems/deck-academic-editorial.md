@@ -58,9 +58,45 @@ Every `kind: "text"` / `"image"` / `"table"` child of a slide should set `templa
 - **content (2)**: `section_label` (Inter 14pt oxblood uppercase, e.g. "01 · METHOD"), `title` (PlayfairDisplay 36pt), `body` (Inter 22pt) + auto `footer` + auto `slide_number`
 - **content_with_figure (3)**: same chrome as content + `image_slot` (right 768px)
 - **content_with_table (4)**: same chrome as content + `table_anchor` (right 904px — anchor's bbox wins; planner doesn't position the table)
-- **closing (5)**: `title` ("Thank you", PlayfairDisplay 96pt), `subtitle` ("Q&A"), `links` (oxblood)
+- **closing (5)**: `title` ("Thank you", PlayfairDisplay 96pt), `subtitle` ("Q&A"), `links` (oxblood — see real-URLs rule below)
 
 `footer` and `slide_number` are auto-populated by the renderer (paper title + slide N/total). Don't write children for those slots — the renderer handles them.
+
+### `links` slot must be REAL URLs, not placeholders (v2.5.2.2)
+
+The closing-slide `links` slot must contain real URLs derived from the ingested paper, NOT placeholder labels like `"Paper · Code · Demo"`. The audience cannot click decorative text on a slide; placeholders ship a debug artifact, not a deliverable.
+
+Format: `"arxiv.org/abs/<id> · github.com/<org>/<repo> · <project-page-url>"` (use ` · ` middle-dot separators, drop "https://" prefix to save horizontal space — readers infer it).
+
+Sources to mine from the ingest manifest / paper text:
+- arxiv URL: from the paper's first-page DOI block, or the abstract's `arXiv:YYYY.NNNNN` token
+- github URL: from the abstract / introduction / acknowledgments line starting `Code:` or `https://github.com/...`
+- project page: from acknowledgments or footer of the paper
+
+If only one URL is known, emit just that one (e.g. `"arxiv.org/abs/2026.05421"`). Do NOT pad with placeholder labels. If NO URLs can be resolved from ingest, omit the `links` child entirely — the closing slide degrades to "Thank you / Q&A" gracefully.
+
+Bad → Good:
+- `"Paper · Code · Demo"` → `"arxiv.org/abs/2026.05421 · github.com/meituan/longcat-next"`
+- `"https://...."` → `"longcat-next.github.io"` (no protocol)
+- `"see the paper"` → omit the `links` child entirely
+
+### `section_label` format contract (v2.5.2.2)
+
+The `section_label` slot MUST follow the format `"NN · UPPERCASE_TOPIC"`. Bare numbers like `"01"` defeat the slide's wayfinding purpose — the audience has no clue which chapter of the talk they're in.
+
+Examples:
+- `"01 · MOTIVATION"` (problem statement slides)
+- `"02 · METHOD"` (architecture / algorithm slides — consecutive method slides share `"02 · METHOD"`, no per-slide variants)
+- `"03 · RESULTS"` (benchmarks / quantitative)
+- `"04 · ANALYSIS"` (ablations / scaling / qualitative)
+- `"05 · CONCLUSION"` (takeaways)
+
+Number prefix tracks chapters, not slide indices. So a 12-slide deck typically has 4-5 distinct `section_label` values, each repeated across that chapter's 2-3 slides. Caps + `· ` middle-dot separator are non-negotiable — they're the typographic signal the audience reads as "section header".
+
+Bad → Good:
+- `"01"` → `"01 · MOTIVATION"`
+- `"Method"` → `"02 · METHOD"`
+- `"02 · method overview"` → `"02 · METHOD"` (uppercase, drop slide-specific suffix; that goes in title)
 
 ## Spec-shape example (one method slide referencing a paper figure)
 
