@@ -716,6 +716,39 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
 
    Word counts are rough — the principle is: don't pair a 200-word body with `content_with_figure`'s 920px-wide body slot, the body will overflow or shrink. Don't pair a 15-word headline with `content_with_figure`'s 920px body slot either, you'll waste 80% of the slide.
 
+8. **Callout overlays (v2.6).** When the slide's body claims something specific about a figure or table region ("the bottom-right panel", "the BAGEL row", "the +5.2 column"), emit a `kind: "callout"` child to point at it. The audience can't follow your prose unless the visual itself is annotated.
+
+   Use callouts for:
+   - Highlighting a winner row / cell on a benchmark table that you couldn't subset further
+   - Labeling a panel on a multi-panel ablation grid
+   - Marking a specific data point on a scaling curve / loss plot
+   - Circling a region on a qualitative example
+
+   Callout JSON shape:
+   ```json
+   {
+     "layer_id": "callout_07_a",
+     "name": "winner_cell",
+     "kind": "callout",
+     "z_index": 20,
+     "anchor_layer_id": "ingest_table_01",
+     "callout_style": "highlight",  // or "label" or "circle"
+     "callout_region": {"x": 1200, "y": 480, "w": 80, "h": 24, "purpose": "body"},
+     "callout_text": "+5.2",  // label style only
+     "arrow": false  // label + true → connector from label to region
+   }
+   ```
+
+   Coordinate system: `callout_region` is in slide-pixel coords (top-left origin, same as every other bbox). `anchor_layer_id` references a sibling `kind="image"` or `"table"` on the same slide; the renderer uses the anchor's actual placed bbox so the callout follows the figure even if it shifted to a different slot.
+
+   Style guidance:
+   - **`highlight`** for winner cells / important rows: rectangle outline, no fill, oxblood. Use when the audience needs to find a specific cell or row.
+   - **`label`** for naming a region: textbox with text + thin border, auto-positioned next to the region. Use `callout_text ≤ 3 words` — labels are signal, not sentences.
+   - **`circle`** for individual data points / regions on plots: ellipse outline. Use sparingly; rectangles read clearer than circles on most layouts.
+   - **`arrow=true`** (label-only) for ambiguous regions where the label needs to "point" at something: thin connector from label center to region center.
+
+   A `content_with_figure` or `content_with_table` slide whose body claims something specific (named numbers, named rows, "look at X") MUST emit ≥ 1 callout. If the body is generic ("we evaluate on standard benchmarks") no callout needed.
+
 7. **Wide-table subset rule (v2.5.3).** A `content_with_table` slide is bounded by `table_anchor`'s ~904×740 px region. A native PPTX table with 15 columns × 12 rows renders each cell at ~60×49 px — illegible at deck scale. The 2026-04-25 dogfood shipped exactly this on the Main Results slide.
 
    - **`ingest_table_NN` with > 8 columns → planner MUST emit a subset** to deck slides. Subset to **4-6 columns**: model name column + the column relevant to the slide's headline metric (the one called out in body bullets). Drop columns the body text doesn't reference.

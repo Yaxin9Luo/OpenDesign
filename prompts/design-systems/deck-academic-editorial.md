@@ -138,6 +138,51 @@ Bad → Good:
 
 Note the `image` child's `layer_id` is `ingest_fig_03` (references the ingested paper figure by its existing layer_id — see hard rule #5 in `prompts/planner.md` paper2deck section). `template_slot: "image_slot"` tells the renderer to use the cover layout's `image_slot` shape's bbox.
 
+## Callout overlays (v2.6)
+
+When a body bullet calls out a specific figure region or table cell ("the BAGEL row", "the bottom-right panel"), emit a `kind: "callout"` child to point at it visually. See planner.md paper2deck rule #8 for full callout schema.
+
+Style picks specific to academic-editorial:
+- All callouts use the master accent `#7F1D1D` oxblood — DO NOT override the color (preserves the single-accent discipline of the system)
+- `highlight` is the workhorse — use it for winner cells and important rows. The 2px outline reads as "look here" without obscuring the underlying text
+- `label` for short text annotations (≤ 3 words). Labels render with cream fill + oxblood border, auto-positioned right of the region (or below if right overflows)
+- `circle` is reserved for individual data points on plots; use sparingly
+- `arrow=true` only when the label is far from the region (>200px) — short arrows look noisy
+
+Worked example for a `content_with_table` slide with table subsetting + callout on the winning row:
+
+```json
+{
+  "layer_id": "slide_07",
+  "kind": "slide",
+  "role": "content_with_table",
+  "children": [
+    {"layer_id": "slide_07_label", "kind": "text", "z_index": 10,
+     "template_slot": "section_label", "text": "03 · RESULTS"},
+    {"layer_id": "slide_07_title", "kind": "text", "z_index": 10,
+     "template_slot": "title", "text": "Main Results"},
+    {"layer_id": "slide_07_body", "kind": "text", "z_index": 10,
+     "template_slot": "body",
+     "text": "+5.2 on MathVista vs BAGEL\n+3.1 on OCRBench vs Janus-Pro\nFull suite (13 models × 12 tasks) in paper Table 3."},
+    {"layer_id": "slide_07_table", "kind": "table", "z_index": 5,
+     "template_slot": "table_anchor",
+     "headers": ["Model", "MathVista", "OCRBench"],
+     "rows": [
+       ["BAGEL", "61.7", "82.4"],
+       ["Janus-Pro", "63.5", "84.2"],
+       ["LongCat-Next", "66.9", "87.3"]
+     ],
+     "col_highlight_rule": ["", "max", "max"]},
+    {"layer_id": "callout_07_a", "kind": "callout", "z_index": 20,
+     "anchor_layer_id": "slide_07_table",
+     "callout_style": "highlight",
+     "callout_region": {"x": 920, "y": 520, "w": 904, "h": 80, "purpose": "body"}}
+  ]
+}
+```
+
+The callout's `callout_region` overlays a rectangle on the LongCat-Next row (y ≈ 520, full table width). Audience eye lands on the winning row immediately. Body bullets give the headline numbers; full table provides the receipts.
+
 ## Imagery prompt prefix (cover NBP only)
 
 The cover slide's hero image is the only place where NBP is acceptable on a paper deck. Style prefix:
