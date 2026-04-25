@@ -53,7 +53,7 @@ For a 16-slide research talk (NeurIPS oral): expand the content tier; keep divid
 
 Every `kind: "text"` / `"image"` / `"table"` child of a slide should set `template_slot` to the name of the template shape it fills. Slot names per layout:
 
-- **cover (0)**: `title` (PlayfairDisplay 56pt), `authors` (Inter 22pt muted), `badge` (Inter 13pt cream-on-oxblood), `image_slot` (right 50% hero)
+- **cover (0)**: `title` (PlayfairDisplay 56pt), `authors` (Inter 22pt muted), `badge` (Inter 13pt cream-on-oxblood), `image_slot` (right 50% hero — see "Cover image_slot policy" below)
 - **section_divider (1)**: `section_number` (Inter 24pt oxblood, e.g. "01 ·"), `title` (PlayfairDisplay 120pt, e.g. "Method →"), `subtitle` (Inter 18pt muted italic preview line)
 - **content (2)**: `section_label` (Inter 14pt oxblood uppercase, e.g. "01 · METHOD"), `title` (PlayfairDisplay 36pt), `body` (Inter 22pt) + auto `footer` + auto `slide_number`
 - **content_with_figure (3)**: same chrome as content + `image_slot` (right 768px)
@@ -61,6 +61,21 @@ Every `kind: "text"` / `"image"` / `"table"` child of a slide should set `templa
 - **closing (5)**: `title` ("Thank you", PlayfairDisplay 96pt), `subtitle` ("Q&A"), `links` (oxblood — see real-URLs rule below)
 
 `footer` and `slide_number` are auto-populated by the renderer (paper title + slide N/total). Don't write children for those slots — the renderer handles them.
+
+### Cover `image_slot` policy (v2.5.3)
+
+The cover slide's `image_slot` (right 50%) is the audience's first visual impression. It MUST NOT carry context the audience can't make sense of.
+
+**Default: NBP ambient.** Call `generate_image` with the cover style prefix from "Imagery prompt prefix" below. The cover hero is one of two NBP slots in the entire deck (cover + optional closing); the rest of the deck uses ingested figures.
+
+**Use `ingest_fig_NN` for the cover ONLY when the planner can verify the figure has NO:**
+- inline pixel-dimension labels (e.g. `Width: 1372`, `Height: 720` — these are in many papers' Fig. 1 to demonstrate native-resolution outputs, but on a cover they look like debug leakage)
+- baseline / prior-art model names that the audience would mistake for the paper's contribution (e.g. the longcat-next paper's Fig. 1 contains "LongCat-Flash" since that's the prior model — on a cover titled "LongCat-Next" this creates naming ambiguity)
+- caption text inside the crop (paper figures often have `Fig. 1: ...` baked into the raster — fine on a method slide, distracting on a cover)
+
+If unsure, default to NBP. The cover is the wrong place to test edge cases — a slightly less paper-faithful but cleaner ambient hero is preferable to a paper-faithful but visually-busy hero.
+
+**Anti-pattern from 2026-04-25 dogfood**: cover hero was `ingest_fig_01` (system architecture diagram) which carried `Width: 1372 Height: 720` annotations + `LongCat-Flash` baseline labels. Reads like a debug screenshot, not a launch cover.
 
 ### `links` slot must be REAL URLs, not placeholders (v2.5.2.2)
 
