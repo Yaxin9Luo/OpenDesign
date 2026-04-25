@@ -259,8 +259,15 @@ def _render_templated_slide(
         key=lambda c: int(getattr(c, "z_index", 0) or 0),
     )
 
+    # v2.6 callout — track placed anchor bboxes (in EMU) so callouts can
+    # locate their target shapes after picture/table placement. Pass 1
+    # places everything except callouts; pass 2 places callouts.
+    placed_anchors: dict[str, tuple[int, int, int, int]] = {}
+
     for child in children:
         kind = getattr(child, "kind", None)
+        if kind == "callout":
+            continue  # deferred to pass 2 below
         slot_name = getattr(child, "template_slot", None)
 
         if kind == "text":
@@ -278,6 +285,7 @@ def _render_templated_slide(
                     slot.left, slot.top, slot.width, slot.height,
                 )
                 src = getattr(child, "src_path", None)
+                placed_bbox = (left, top, width, height)
                 if src and Path(src).exists():
                     fit_left, fit_top, fit_w, fit_h = _aspect_fit_emu(
                         src, left, top, width, height,
@@ -285,6 +293,7 @@ def _render_templated_slide(
                     slide.shapes.add_picture(
                         src, fit_left, fit_top, width=fit_w, height=fit_h,
                     )
+                    placed_bbox = (fit_left, fit_top, fit_w, fit_h)
                 # Remove the placeholder rectangle so it doesn't show under image.
                 slot._element.getparent().remove(slot._element)
                 # Keep inv consistent for later children that look up image_slot.
@@ -292,9 +301,19 @@ def _render_templated_slide(
                     del inv[slot_name]
                 elif "image_slot" in inv and inv["image_slot"] is slot:
                     del inv["image_slot"]
+                # v2.6 — record the picture's actual EMU bbox so callouts
+                # can resolve anchor references against it.
+                lid = getattr(child, "layer_id", None)
+                if lid:
+                    placed_anchors[lid] = placed_bbox
             else:
                 # No slot — fall back to absolute bbox.
                 _add_picture(slide, child, slide_w, slide_h)
+                lid = getattr(child, "layer_id", None)
+                if lid and getattr(child, "bbox", None) is not None:
+                    placed_anchors[lid] = _bbox_to_emu(
+                        child.bbox, slide_w, slide_h,
+                    )
 
         elif kind == "table":
             slot = inv.get(slot_name) if slot_name else inv.get("table_anchor")
@@ -313,13 +332,27 @@ def _render_templated_slide(
                     del inv[slot_name]
                 elif "table_anchor" in inv:
                     del inv["table_anchor"]
+                # v2.6 — record table EMU bbox for callout anchor lookup.
+                lid = getattr(child, "layer_id", None)
+                if lid:
+                    placed_anchors[lid] = (slot.left, slot.top, slot.width, slot.height)
             else:
                 _add_table(slide, child, slide_w, slide_h)
+                lid = getattr(child, "layer_id", None)
+                if lid and getattr(child, "bbox", None) is not None:
+                    placed_anchors[lid] = _bbox_to_emu(
+                        child.bbox, slide_w, slide_h,
+                    )
 
         elif kind == "background":
             # If the layout's background_fill is decorative cream, prefer the
             # planner-supplied background as a full-bleed picture on top.
             _add_background(slide, child, slide_w, slide_h)
+
+    # v2.6 — pass 2: place callouts after all anchors are known.
+    for child in children:
+        if getattr(child, "kind", None) == "callout":
+            _add_callout(slide, child, placed_anchors, slide_w, slide_h)
 
     # Speaker notes — same path as blank-Presentation case.
     notes = getattr(slide_node, "speaker_notes", None)
@@ -425,6 +458,122 @@ def _add_background(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
         default_bbox=(0, 0, slide_w, slide_h),
     )
     slide.shapes.add_picture(src, left, top, width=width, height=height)
+
+
+def _add_callout(
+    slide: Any, node: Any,
+    placed_anchors: dict[str, tuple[int, int, int, int]],
+    slide_w: int, slide_h: int,
+) -> None:
+    """v2.6 — overlay an annotation shape on top of a sibling picture/table.
+
+    Resolves `node.callout_region` (in slide-pixel coordinates, top-left
+    origin) against optional `node.anchor_layer_id` (looked up in
+    `placed_anchors`). Renders one of three shape styles:
+
+    - "highlight" → MSO_SHAPE.RECTANGLE with no fill, oxblood outline 2px
+    - "circle"    → MSO_SHAPE.OVAL,      no fill, oxblood outline 2px
+    - "label"     → text box w/ thin border + cream fill + Inter 12pt text;
+                    optional thin connector from label center to region
+                    center if `arrow=True`
+
+    All three target the same EMU bbox computed from callout_region. If
+    region is None and anchor exists, uses the whole anchor bbox. If
+    nothing resolves, silent no-op (defensive — callout shouldn't crash
+    a slide that's otherwise fine).
+    """
+    from pptx.dml.color import RGBColor as _RGBColor
+    from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR_TYPE
+
+    style = (getattr(node, "callout_style", None) or "highlight").lower()
+    region = getattr(node, "callout_region", None)
+    anchor_id = getattr(node, "anchor_layer_id", None)
+    anchor_bbox = placed_anchors.get(anchor_id) if anchor_id else None
+
+    # Compute target EMU bbox.
+    if region is not None:
+        # callout_region is in slide-pixel coords (top-left origin, same
+        # as every other LayerNode bbox in the codebase).
+        cx_emu = Emu(int(region.x) * PX_TO_EMU)
+        cy_emu = Emu(int(region.y) * PX_TO_EMU)
+        cw_emu = Emu(int(region.w) * PX_TO_EMU)
+        ch_emu = Emu(int(region.h) * PX_TO_EMU)
+    elif anchor_bbox is not None:
+        cx_emu, cy_emu, cw_emu, ch_emu = anchor_bbox
+    else:
+        return  # nothing to render
+
+    accent = _RGBColor(0x7F, 0x1D, 0x1D)
+    cream = _RGBColor(0xFA, 0xF7, 0xF0)
+    ink = _RGBColor(0x0F, 0x17, 0x2A)
+
+    if style == "highlight":
+        rect = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, cx_emu, cy_emu, cw_emu, ch_emu,
+        )
+        rect.fill.background()
+        rect.line.color.rgb = accent
+        rect.line.width = Emu(2 * PX_TO_EMU)
+        rect.name = getattr(node, "layer_id", None) or "callout_highlight"
+
+    elif style == "circle":
+        oval = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL, cx_emu, cy_emu, cw_emu, ch_emu,
+        )
+        oval.fill.background()
+        oval.line.color.rgb = accent
+        oval.line.width = Emu(2 * PX_TO_EMU)
+        oval.name = getattr(node, "layer_id", None) or "callout_circle"
+
+    elif style == "label":
+        text = (getattr(node, "callout_text", None) or "").strip()
+        # Label dims — heuristic, ~12pt Inter at ~9px per char + padding.
+        label_w_px = max(80, len(text) * 11 + 24)
+        label_h_px = 36
+        # Try to place to the right of the region; fall back below.
+        slide_right_emu = Emu(slide_w * PX_TO_EMU)
+        right_emu = cx_emu + cw_emu + Emu(8 * PX_TO_EMU)
+        label_w_emu = Emu(label_w_px * PX_TO_EMU)
+        label_h_emu = Emu(label_h_px * PX_TO_EMU)
+        if right_emu + label_w_emu <= slide_right_emu:
+            lx, ly = right_emu, cy_emu
+        else:
+            lx = cx_emu
+            ly = cy_emu + ch_emu + Emu(8 * PX_TO_EMU)
+        tb = slide.shapes.add_textbox(lx, ly, label_w_emu, label_h_emu)
+        tb.fill.solid()
+        tb.fill.fore_color.rgb = cream
+        tb.line.color.rgb = accent
+        tb.line.width = Emu(1 * PX_TO_EMU)
+        tb.name = getattr(node, "layer_id", None) or "callout_label"
+        tf = tb.text_frame
+        tf.margin_left = Emu(4 * PX_TO_EMU)
+        tf.margin_right = Emu(4 * PX_TO_EMU)
+        tf.margin_top = Emu(4 * PX_TO_EMU)
+        tf.margin_bottom = Emu(4 * PX_TO_EMU)
+        p = tf.paragraphs[0]
+        run = p.add_run()
+        run.text = text
+        run.font.name = "Inter"
+        run.font.size = Pt(12)
+        run.font.color.rgb = ink
+
+        # Optional arrow: thin connector from region center to label center.
+        if getattr(node, "arrow", False):
+            region_cx = cx_emu + cw_emu // 2
+            region_cy = cy_emu + ch_emu // 2
+            label_cx = lx + label_w_emu // 2
+            label_cy = ly + label_h_emu // 2
+            try:
+                conn = slide.shapes.add_connector(
+                    MSO_CONNECTOR_TYPE.STRAIGHT,
+                    region_cx, region_cy, label_cx, label_cy,
+                )
+                conn.line.color.rgb = accent
+                conn.line.width = Emu(1 * PX_TO_EMU)
+            except Exception:
+                # Connector not supported on this python-pptx version — skip.
+                pass
 
 
 def _add_picture(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
