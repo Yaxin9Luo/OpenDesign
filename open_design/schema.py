@@ -54,6 +54,34 @@ class DesignSystem(BaseModel):
     show_nav: bool | None = None
 
 
+# v2.5.2 deck design system — separate enum from LandingStyle because deck
+# visual idioms (footer, slide numbers, divider slides) have no landing
+# analog. First system: academic-editorial (cream + oxblood + PlayfairDisplay).
+# Add additional members here as future systems land (e.g. "tech-keynote",
+# "consumer-pitch") + ship matching `assets/deck_templates/<style>.pptx` and
+# `prompts/design-systems/deck-<style>.md`.
+DeckStyle = Literal["academic-editorial"]
+
+
+class DeckDesignSystem(BaseModel):
+    """Deck-specific design-system selector (v2.5.2).
+
+    Mirrors `DesignSystem` for landing but routes to a `.pptx` template
+    rather than a CSS bundle. The renderer opens
+    `assets/deck_templates/<style>.pptx`, clones layouts per `slide.role`,
+    fills text shapes by `template_slot`, and places images at slot bboxes.
+    """
+    style: DeckStyle = "academic-editorial"
+    accent_color: str | None = None      # override the template's accent token
+    footer_text: str | None = None       # paper title (or short_title) shown in
+                                         # content-slide footers; renderer auto-
+                                         # populates if None and brief contains
+                                         # an obvious title.
+    badge_text: str | None = None        # cover badge ("NeurIPS 2026", "arXiv");
+                                         # planner can override or runner derives
+                                         # from ingest metadata.
+
+
 class ArtifactType(str, Enum):
     """What kind of design artifact is being produced in the current session slot.
 
@@ -193,6 +221,22 @@ class LayerNode(BaseModel):
     # so the notes show in PowerPoint / Keynote presenter view but not on slides.
     speaker_notes: str | None = None
 
+    # v2.5.2 deck templating — slide-only (kind="slide"); names which template
+    # layout to clone. Renderer maps role → layout index; falls back to
+    # "content" when None. Ignored when DesignSpec.deck_design_system is None
+    # (blank-Presentation path).
+    role: Literal[
+        "cover", "content", "content_with_figure",
+        "content_with_table", "section_divider", "closing",
+    ] | None = None
+
+    # v2.5.2 deck templating — child-of-slide; names the template shape this
+    # child fills (e.g. "title", "body", "image_slot", "table_anchor"). The
+    # renderer looks up the shape by name in the cloned layout and fills it.
+    # Falls back to absolute bbox positioning when None or when the layout
+    # has no shape with that name.
+    template_slot: str | None = None
+
 
 class DesignSpec(BaseModel):
     brief: str
@@ -205,6 +249,7 @@ class DesignSpec(BaseModel):
     layer_graph: list[LayerNode] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     design_system: DesignSystem | None = None  # landing-only (v1.0 #8.5)
+    deck_design_system: DeckDesignSystem | None = None  # deck-only (v2.5.2)
 
     @model_validator(mode="after")
     def _canvas_required_keys(self) -> "DesignSpec":
