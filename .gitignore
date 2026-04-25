@@ -44,8 +44,10 @@ dataset/
 # ---- Private workspace / scratch ----
 docs/.obsidian/
 docs/MEETING-*.md
-# iCloud-sync duplicates (macOS creates ` 2.py` / ` 3.py` when a file is synced
-# while Python is reading it — never commit these, they diverge from canonical).
-* [0-9].py
+# iCloud / Finder duplicates (macOS creates `foo 2.py` / `bar 3.png` when a
+# file is synced mid-read OR Cmd-D'd in Finder — they diverge from canonical
+# and survive renames as orphans, e.g. `longcatdesign-brief 2.md` lingered
+# after the v2.4.1 LongcatDesign→OpenDesign rename. Catch all extensions.
+* [0-9].*
 # One-off scratch file left at repo root; harmless but not product surface.
 /design
