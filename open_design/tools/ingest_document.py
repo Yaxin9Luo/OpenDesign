@@ -543,11 +543,16 @@ def _ingest_pdf(fp: Path, ctx: ToolContext) -> dict[str, Any]:
         )
 
     all_registered = registered_layer_ids + registered_table_ids
+    # v2.7 — keep the verbatim page text (already computed for manifest
+    # extraction) so the composite-stage provenance validator can
+    # substring-match LayerNode.evidence_quote against it. Cost: ~200 KB
+    # on a 40-page paper, negligible vs the 5+ MB run-dir.
     return {
         "file": str(fp), "type": "pdf", "manifest": manifest,
         "registered_layer_ids": all_registered,
         "registered_figure_ids": registered_layer_ids,
         "registered_table_ids": registered_table_ids,
+        "raw_text": "\n\n".join(page_texts),
         "summary": f"{manifest.get('title', '?')} — "
                    f"{len(registered_layer_ids)} figure(s), "
                    f"{len(registered_table_ids)} table(s), "
@@ -1331,11 +1336,16 @@ def _ingest_docx(fp: Path, ctx: ToolContext) -> dict[str, Any]:
     log("ingest.docx.done", file=fp.name,
         sections=len(sections), figures=len(registered_figure_ids))
 
+    # v2.7 — verbatim body text for provenance validator (paired with the
+    # PDF branch's `raw_text`). docx body is already in memory as
+    # body_paras tuples; flatten them.
+    docx_raw_text = "\n".join(t for _, t in body_paras)
     return {
         "file": str(fp), "type": "docx", "manifest": manifest,
         "registered_layer_ids": registered_figure_ids,
         "registered_figure_ids": registered_figure_ids,
         "registered_table_ids": [],
+        "raw_text": docx_raw_text,
         "summary": f"{manifest['title']} — "
                    f"{len(registered_figure_ids)} figure(s), "
                    f"{len(sections)} section(s)",
