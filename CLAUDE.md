@@ -108,15 +108,21 @@ trust the code:
   Mono, Playfair Display, ...). Older `prompts/prompt_enhancer.md` may still
   claim 2 fonts — verify against `open_design/config.py` before editing prompt
   copy.
-- **Provider routing** (v2.5.1, 2026-04-25): planner is
-  `deepseek/deepseek-v3.2-exp`, critic is `qwen/qwen-vl-max` (multimodal),
-  enhancer is `moonshotai/kimi-k2.6`. Switched away from full-Kimi after
-  the 2026-04-25 dogfood — Kimi K2.6 hit `max_turns` on paper2deck and
-  burned $11 wall-time on paper2landing. `anthropic/claude-opus-4-7` is
-  one env var away per role (`PLANNER_MODEL` / `CRITIC_MODEL` /
-  `ENHANCER_MODEL`); use it for paper-poster (Kimi/V3.2 still stall on
-  bbox geometry per `docs/DECISIONS.md` 2026-04-22). Any code that
-  hard-codes a model id is a bug; all LLM calls go through `LLMBackend`.
+- **Provider routing** (v2.7, 2026-04-25): planner is
+  `moonshotai/kimi-k2.6`, critic is `qwen/qwen-vl-max` (multimodal),
+  enhancer is `moonshotai/kimi-k2.6`. Planner reverted to Kimi after
+  the v2.7 provenance dogfood — DeepSeek V3.2-exp produced reward 0.88
+  but emitted 21 fabricated numeric tokens (caught by validator);
+  `iter 2` it tried to cite and FABRICATED quotes (7 quote_not_in_source
+  failures). Kimi K2.6 is an agent-coding model expected to follow the
+  "MUST be a verbatim substring of ingest" hard constraint better. The
+  earlier (v2.5.1) Kimi max_turns failure was on the v2.5 prompt
+  density; after v2.6.1 enhancer compression + v2.7 schema clarity,
+  prompt is leaner. `anthropic/claude-opus-4-7` is one env var away
+  (`PLANNER_MODEL` / `CRITIC_MODEL` / `ENHANCER_MODEL`); use it for
+  paper-poster (bbox geometry, per `docs/DECISIONS.md` 2026-04-22). Any
+  code that hard-codes a model id is a bug; all LLM calls go through
+  `LLMBackend`.
 - **Image generation IS provider-swappable as of 2026-04-25 (v2.5).**
   `image_backend.py` mirrors `llm_backend.py`: `make_image_backend(settings)`
   routes by `IMAGE_MODEL` prefix (`gemini-*` / `imagen-*` → Gemini, else

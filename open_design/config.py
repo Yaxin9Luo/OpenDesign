@@ -52,11 +52,20 @@ OPENROUTER_BASE_URL_OPENAI = "https://openrouter.ai/api/v1"
 #
 # v2.5.1 (2026-04-25): planner switched to DeepSeek V3.2-exp (164k ctx,
 # better paper2any convergence than Kimi K2.6 — Kimi stalled out on
-# paper-deck max_turns; V3.2 produced a real 12-slide deck on the same
-# input). Critic switched to Qwen-VL-Max for multimodal vision support
-# across ALL artifact types — text-only critic was a known blind spot
-# on landing/deck (couldn't see whether figures actually rendered).
-DEFAULT_PLANNER_MODEL = "deepseek/deepseek-v3.2-exp"      # long-context, sparse-attn, agentic
+# paper-deck max_turns; V3.2 produced a real 12-slide deck). Critic
+# switched to Qwen-VL-Max for multimodal vision.
+#
+# v2.7 (2026-04-25): planner reverted to Kimi K2.6 after the v2.7
+# provenance dogfood — V3.2-exp emitted body bullets with raw numbers
+# AND, when forced to cite by the v2.7 evidence_quote rule, FABRICATED
+# the quotes (iter 2 produced 7 quote_not_in_source failures). The
+# validator caught everything, but V3.2 demonstrably can't follow the
+# "MUST be verbatim substring of ingest" hard constraint. Kimi K2.6 is
+# an agent-coding model with stronger structured-output discipline, and
+# the v2.5.1 max_turns failure was on the v2.5 prompt density — after
+# v2.6.1 enhancer compression + v2.7 schema clarity, the prompt is
+# leaner and Kimi should reach a complete deck spec.
+DEFAULT_PLANNER_MODEL = "moonshotai/kimi-k2.6"            # agent-coding model
 DEFAULT_CRITIC_MODEL = "qwen/qwen-vl-max"                 # multimodal — sees what got rendered
 ANTHROPIC_FALLBACK_PLANNER = "claude-opus-4-7"            # if user only has ANTHROPIC_API_KEY
 ANTHROPIC_FALLBACK_CRITIC = "claude-opus-4-7"
