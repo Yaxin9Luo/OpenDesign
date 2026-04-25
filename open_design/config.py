@@ -10,8 +10,11 @@ Multi-provider LLM backend (v2.1):
   backend (defaults to OpenRouter base_url).
 - Override per-role: `PLANNER_PROVIDER=anthropic|openai_compat|auto`
   (same for `CRITIC_PROVIDER`).
-- Default planner is `moonshotai/kimi-k2.6` (cheap + agentic + reasoning
-  not redacted), keeping Claude one env var away (`PLANNER_MODEL=anthropic/claude-opus-4.7`).
+- Default planner is `deepseek/deepseek-v3.2-exp` (164k context + sparse
+  attention designed for long inputs — paper2any-friendly). Critic is
+  `qwen/qwen-vl-max` (multimodal — can grade rendered output, not just
+  the structural tree). Both swappable via env: `PLANNER_MODEL=...`,
+  `CRITIC_MODEL=anthropic/claude-opus-4.7`, etc.
 
 Credentials (any subset works depending on which providers you call):
 - `OPENROUTER_API_KEY`: powers BOTH Anthropic-via-OpenRouter and the
@@ -46,9 +49,16 @@ OPENROUTER_BASE_URL_ANTHROPIC = "https://openrouter.ai/api"
 OPENROUTER_BASE_URL_OPENAI = "https://openrouter.ai/api/v1"
 
 # Multi-provider model defaults — user can override via env vars.
-DEFAULT_PLANNER_MODEL = "moonshotai/kimi-k2.6"           # cheap + agentic
-DEFAULT_CRITIC_MODEL = "moonshotai/kimi-k2.6"            # same
-ANTHROPIC_FALLBACK_PLANNER = "claude-opus-4-7"           # if user only has ANTHROPIC_API_KEY
+#
+# v2.5.1 (2026-04-25): planner switched to DeepSeek V3.2-exp (164k ctx,
+# better paper2any convergence than Kimi K2.6 — Kimi stalled out on
+# paper-deck max_turns; V3.2 produced a real 12-slide deck on the same
+# input). Critic switched to Qwen-VL-Max for multimodal vision support
+# across ALL artifact types — text-only critic was a known blind spot
+# on landing/deck (couldn't see whether figures actually rendered).
+DEFAULT_PLANNER_MODEL = "deepseek/deepseek-v3.2-exp"      # long-context, sparse-attn, agentic
+DEFAULT_CRITIC_MODEL = "qwen/qwen-vl-max"                 # multimodal — sees what got rendered
+ANTHROPIC_FALLBACK_PLANNER = "claude-opus-4-7"            # if user only has ANTHROPIC_API_KEY
 ANTHROPIC_FALLBACK_CRITIC = "claude-opus-4-7"
 
 # v2.4 Prompt Enhancer — runs once before planner.start, converting a raw

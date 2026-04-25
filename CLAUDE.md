@@ -108,11 +108,15 @@ trust the code:
   Mono, Playfair Display, ...). Older `prompts/prompt_enhancer.md` may still
   claim 2 fonts — verify against `open_design/config.py` before editing prompt
   copy.
-- **Provider routing**: default planner, critic, AND enhancer are all
-  `moonshotai/kimi-k2.6` via OpenRouter (enhancer cost-cut from Opus 4.7 on
-  2026-04-25). `anthropic/claude-opus-4-7` is one env var away per role
-  (`PLANNER_MODEL` / `CRITIC_MODEL` / `ENHANCER_MODEL`). Any code that
-  hard-codes Claude is a bug; all LLM calls go through `LLMBackend`.
+- **Provider routing** (v2.5.1, 2026-04-25): planner is
+  `deepseek/deepseek-v3.2-exp`, critic is `qwen/qwen-vl-max` (multimodal),
+  enhancer is `moonshotai/kimi-k2.6`. Switched away from full-Kimi after
+  the 2026-04-25 dogfood — Kimi K2.6 hit `max_turns` on paper2deck and
+  burned $11 wall-time on paper2landing. `anthropic/claude-opus-4-7` is
+  one env var away per role (`PLANNER_MODEL` / `CRITIC_MODEL` /
+  `ENHANCER_MODEL`); use it for paper-poster (Kimi/V3.2 still stall on
+  bbox geometry per `docs/DECISIONS.md` 2026-04-22). Any code that
+  hard-codes a model id is a bug; all LLM calls go through `LLMBackend`.
 - **Image generation IS provider-swappable as of 2026-04-25 (v2.5).**
   `image_backend.py` mirrors `llm_backend.py`: `make_image_backend(settings)`
   routes by `IMAGE_MODEL` prefix (`gemini-*` / `imagen-*` → Gemini, else

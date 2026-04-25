@@ -190,8 +190,12 @@ Gemini-only through v2.4).
 
 Default routing in `config.py`:
 
-- planner: `moonshotai/kimi-k2.6`
-- critic: `moonshotai/kimi-k2.6`
+- planner: `deepseek/deepseek-v3.2-exp` (164k ctx, sparse-attn — was
+  Kimi K2.6 through v2.5; switched 2026-04-25 after Kimi stalled out
+  with `terminal_status=max_turns` on paper2deck dogfood)
+- critic: `qwen/qwen-vl-max` (multimodal — was Kimi K2.6 through v2.5;
+  switched 2026-04-25 so critic can grade rendered output across all
+  artifact types, not just poster)
 - enhancer: `moonshotai/kimi-k2.6` (was Opus 4.7 in v2.4.1; cost-cut 2026-04-25)
 - image generation: `bytedance-seed/seedream-4.5` via OpenRouter
   (was `gemini-3-pro-image-preview` through v2.4; cost-cut 2026-04-25)
