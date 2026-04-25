@@ -274,6 +274,25 @@ The 2026-04-25 v2.5.2 dogfood failed because the enhanced brief omitted these in
 
 Add 2-3 situational negatives relevant to the specific brief (e.g. "never translate author names — keep the paper's original script").
 
+### 14. Body bullets are takeaways, not paper-abstract sentences (v2.5.3 — decks only)
+
+Paper-abstract phrasing ("Outperforms prior unified models on 10/12 benchmarks, establishing SOTA for generation-understanding models") is correct but unmemorable. The audience won't write it down. The 2026-04-25 dogfood's Main Results slide shipped exactly this prose and GPT-5.4's review flagged it (obs #5).
+
+Convert each deck content-slide bullet into a **presentation takeaway**:
+
+- **MUST contain a number + comparison**: `"+5.2 pts on MathVista vs BAGEL"` not `"outperforms baselines"`. Numbers come from the paper's tables; comparisons name the rival model.
+- **MUST identify the rival model by name** when the bullet claims a beat (Janus-Pro, BAGEL, Gemini-Vision, Claude-3, etc.). "outperforms baselines" is not a takeaway.
+- **BAN paper-abstract phrasings**: `"establishes SOTA"`, `"demonstrates effectiveness"`, `"shows that"`, `"we propose"`, `"in this work we"`. Replace with the actual number/finding.
+- **Bullet length ≤ 12 words.** Longer means you're paraphrasing instead of distilling. Two short bullets > one long bullet.
+- **Speaker notes can elaborate** — bullets are the slide-readable signal, notes carry the elaboration. Don't pre-empt the speaker by stuffing context into bullets.
+
+Bad → Good:
+- `"Outperforms prior unified models on 10/12 benchmarks"` → `"+5.2 on MathVista vs BAGEL · +3.1 on OCRBench"`
+- `"Demonstrates effectiveness of discrete tokenization"` → `"Same arch beats VQ-VAE by 4.8 on FID at 64K vocab"`
+- `"We propose Discrete Native Autoregression (DiNA) paradigm"` → `"DiNA: one decoder, no modality routing"`
+
+This rule applies ONLY to deck artifacts. Landings + posters tolerate longer prose; decks must be projector-readable in 20 seconds.
+
 ---
 
 # Worked examples (read these before responding)
