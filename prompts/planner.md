@@ -688,6 +688,84 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
    - 0 NBP for method / results / benchmark / qualitative slides — those get `ingest_fig_NN` layers
    - NBP "abstract glyph of attention pattern" for a method slide is the **anti-pattern this rule exists to kill** — it erases the paper's actual visual identity and confuses the audience.
 4. **Math: Unicode, NOT LaTeX.** python-pptx does not render `$$...$$` — those delimiters end up as literal characters on the slide (real 2026-04-25 dogfood failure). Use Unicode symbols (Σ, λ, θ, ∇, ∂, 𝔼, →, ≤, ≥, ≈) directly: `L = -Σ_t log p(x_t | x_{<t}) + λ · L_recon`. Wrap the math line in a `kind: "text"` layer with a monospace-friendly font (NotoSansMono if registered, otherwise NotoSansSC-Bold).
+5. **Reference ingest_fig_NN layers BY THEIR EXISTING `layer_id` — do NOT create fresh IDs.** This is the most-missed rule. The 2026-04-25 dogfood failure was a 12-slide deck where the planner declared `kind: "image"` children with fresh layer_ids like `slide_04_fig`, `slide_05_fig`, ..., expecting the system to auto-fill them. **It does not.** The hydration step (`_hydrate_deck_image_srcs` in `composite.py`) looks each image child's `layer_id` up in `rendered_layers` and copies `src_path` over. `ingest_document` registers paper figures as `rendered_layers["ingest_fig_NN"]`. So the spec child's `layer_id` MUST literally be `ingest_fig_NN` (or `ingest_fig_NN_<panel>` for sub-panels) for hydration to work. A made-up ID like `slide_04_fig` is invisible to hydration → `src_path` stays null → the PPTX renderer's `_add_picture` silently returns → 0 figures placed.
+
+   The same applies to `kind: "table"` for `ingest_table_NN` and `kind: "image"` for sub-panels (`ingest_fig_NN_a`, `_b`, `_c`).
+
+   `generate_image` is required ONLY for cover/closing NBP backgrounds where the layer_id is fresh AND you want NBP to fill it.
+
+### Spec-shape example — paper deck slide referencing an ingested figure
+
+```json
+{
+  "layer_id": "slide_04",
+  "name": "method_overview",
+  "kind": "slide",
+  "z_index": 4,
+  "children": [
+    {
+      "layer_id": "slide_04_label", "kind": "text", "z_index": 10,
+      "bbox": {"x": 120, "y": 80, "w": 600, "h": 32},
+      "text": "04 · METHOD OVERVIEW",
+      "font_family": "NotoSansSC-Bold", "font_size_px": 18,
+      "fill": "#2563EB"
+    },
+    {
+      "layer_id": "slide_04_title", "kind": "text", "z_index": 10,
+      "bbox": {"x": 120, "y": 140, "w": 1680, "h": 100},
+      "text": "LongCat-Next pipeline",
+      "font_family": "NotoSerifSC-Bold", "font_size_px": 56
+    },
+    {
+      "// THIS is the critical part — layer_id is the ingest_fig_NN ID, NOT a fresh slide-scoped ID": "",
+      "layer_id": "ingest_fig_01",
+      "name": "method_diagram",
+      "kind": "image",
+      "z_index": 5,
+      "bbox": {"x": 760, "y": 280, "w": 1080, "h": 700},
+      "aspect_ratio": "16:9"
+    },
+    {
+      "layer_id": "slide_04_caption", "kind": "text", "z_index": 10,
+      "bbox": {"x": 760, "y": 990, "w": 1080, "h": 40},
+      "text": "Fig. 1 · DiNA paradigm tokenizes vision, text, and audio.",
+      "font_family": "NotoSansSC-Bold", "font_size_px": 16,
+      "fill": "#475569"
+    }
+  ]
+}
+```
+
+The DesignSpec just `propose_design_spec`s this — **no `generate_image` call needed** for `ingest_fig_01`, because `ingest_document` already populated `rendered_layers["ingest_fig_01"]` with the cropped paper figure on disk. The composite step's hydration copies `src_path` onto the spec child, then `_add_picture` writes it into the slide.
+
+For a results-slide table:
+
+```json
+{
+  "layer_id": "slide_07_table",
+  "name": "benchmark_table",
+  "kind": "table",
+  "z_index": 5,
+  "bbox": {"x": 120, "y": 200, "w": 1680, "h": 760}
+}
+```
+
+Wait — note the layer_id here. **For tables you have a choice**: either reference `ingest_table_NN` directly (clean — like the figure pattern), OR use a fresh ID like `slide_07_table` and let the planner attach `headers`/`rows`/`col_highlight_rule` directly on the spec node (the renderer accepts both shapes for back-compat). Prefer the `ingest_table_NN` reference — same hydration mechanism as figures, no transcription drift.
+
+For a cover NBP background, a fresh ID + `generate_image` is correct:
+
+```json
+{
+  "layer_id": "slide_01_bg",
+  "name": "cover_ambient",
+  "kind": "background",
+  "z_index": 1,
+  "bbox": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+  "aspect_ratio": "16:9"
+}
+```
+
+then `generate_image(layer_id="slide_01_bg", prompt="<style-prefix> + abstract editorial photography ...", aspect_ratio="16:9", image_size="2K")`.
 
 ### Default mapping (paper → deck slides)
 
