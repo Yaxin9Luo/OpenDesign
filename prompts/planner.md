@@ -672,6 +672,65 @@ Write the prefix into `composition_notes` of the DesignSpec so the intent is cap
 - At ~$0.05-0.10 per 1K image and ~$0.15-0.20 per 2K image, a 10-slide deck with 8 images ≈ **$0.80-1.50 in NBP cost** on top of planner + critic. Fine.
 - If the user brief explicitly asks for a "text-only" or "minimal" deck, fall back to the text-only path — but make the user explicitly say that, don't assume it.
 
+## Paper deck imagery policy — INGESTED FIGURES FIRST (v2.5.1)
+
+The "Imagery is REQUIRED" section above describes **commercial decks** (pitch / brand / product / report). For **academic decks** generated from an attached paper (`ingest_document` ran and registered ≥ 5 `ingest_fig_NN` / `ingest_table_NN` layers), the imagery rules invert: use the paper's **actual** figures, NOT NBP stock photography. This is the deck equivalent of the `Paper landing imagery policy` (v1.3.1) further up — same intent, deck-shaped.
+
+This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner produced a 12-slide deck of the longcat-next paper with **0 placed figures and 0 placed tables** — every content slide was text-only. The commercial-deck recipe above told the planner "every substantive slide gets an NBP image", but for paper2deck the right answer is "every method/results/qualitative slide gets an `ingest_fig_NN`."
+
+### Hard rules for paper2deck
+
+1. **At least 4 ingested figure layers** must appear across the deck's content slides if the ingest summary showed ≥ 5 available. At least 6 if ≥ 10 available. These belong on **method / results / qualitative / ablation / scaling** slides — not just one teaser thumbnail on the cover.
+2. **Ingested benchmark tables go on the results slide** as `kind: "table"` layers — the deck renderer produces a native PPTX `add_table` (editable in PowerPoint / Keynote with column-width autoscale + winner-cell bolding). If the paper registered `ingest_table_NN`, it MUST appear on the deck — describing the table in prose ("LongCat-Next outperforms baselines") instead of placing it is the anti-pattern.
+3. **NBP (`generate_image`) is RESERVED for ambient backgrounds**, not for technical content:
+   - 1 NBP `generate_image` for the cover slide background (full-bleed mood shot — abstract, no text)
+   - 0-1 NBP for the closing slide ambient background
+   - 0 NBP for method / results / benchmark / qualitative slides — those get `ingest_fig_NN` layers
+   - NBP "abstract glyph of attention pattern" for a method slide is the **anti-pattern this rule exists to kill** — it erases the paper's actual visual identity and confuses the audience.
+4. **Math: Unicode, NOT LaTeX.** python-pptx does not render `$$...$$` — those delimiters end up as literal characters on the slide (real 2026-04-25 dogfood failure). Use Unicode symbols (Σ, λ, θ, ∇, ∂, 𝔼, →, ≤, ≥, ≈) directly: `L = -Σ_t log p(x_t | x_{<t}) + λ · L_recon`. Wrap the math line in a `kind: "text"` layer with a monospace-friendly font (NotoSansMono if registered, otherwise NotoSansSC-Bold).
+
+### Default mapping (paper → deck slides)
+
+| Slide role | Imagery source |
+|---|---|
+| `cover` | cover title + 1 NBP ambient background (full-bleed mood) |
+| `motivation` / `problem` | text + 1 ingest_fig (the paper's "challenge" or scaling-pain figure) |
+| `recap` / `background` | text-only OR 1 ingest_fig of the prior-art baseline |
+| `method overview` | the paper's pipeline / system-diagram ingest_fig (almost always Fig. 1 or Fig. 2) |
+| `method detail × 1-3` | sub-component ingest_figs (encoder diagram, training loop, tokenizer detail). Use sub-panels (`ingest_fig_NN_a`, `_b`, `_c`) when available. |
+| `optimization` / `training recipe` | text + a Unicode-math equation line + the loss-curve ingest_fig if available |
+| `benchmarks` / `quantitative` | the `ingest_table_NN` rendered as native PPTX table |
+| `component & scaling analysis` | 1-2 ingest_figs of ablation / scaling plots |
+| `qualitative` / `case study` | 1-2 ingest_figs of generated samples or comparison panels |
+| `takeaways` / `conclusion` | text-only |
+| `thank-you` / `Q&A` | text + optional 1 NBP ambient |
+
+### Picking from the ingest summary
+
+The ingest tool_result lists up to 20 figure candidates ranked by `(has_caption, is_vector, min_side_px, -page)`. Route by caption substring:
+
+- "architecture" / "pipeline" / "overview" / "framework" → method overview slide.
+- "tokenizer" / "encoder" / "training" / "objective" → method detail slides.
+- "samples" / "examples" / "qualitative" / "comparison" / "case" → qualitative slide.
+- "benchmark" / "results" / "comparison vs" → benchmarks slide (alongside the ingest_table).
+- "ablation" / "scaling" / "loss curve" / "convergence" → analysis slide.
+
+Prefer figures where the shorter side ≥ 600 px; skip < 400 px figures unless nothing better exists.
+
+### Cover background prompt
+
+The single NBP call for the cover should be derived from the paper's domain mood, not generic stock. Examples:
+
+- Multimodal generative model paper → `"abstract editorial photography, light-on-dark composition with diffuse pastel gradients, conveying multimodality and emergence — no text, no characters"`
+- Systems / efficiency paper → `"clean isometric architectural illustration, off-white background, single-color accent, conveying scalability and structure — no text"`
+- Theory paper → `"minimal conceptual illustration, restrained palette, paper-texture background, conveying mathematical structure — no text"`
+
+Include the same prefix in `composition_notes` for the optional closing-slide ambient.
+
+### Budget
+
+A 12-slide paper deck typically uses: 1-2 NBP calls (cover + optional closing) + 6-8 ingest_fig placements + 1 ingest_table. NBP cost ≈ $0.20-0.40, far below the $0.80-1.50 of a commercial deck. If you find yourself calling `generate_image` more than 2 times for a paper deck, you are violating this policy — the right move is to re-route to `ingest_fig_NN` layers instead.
+
 ## Shape of the DesignSpec.layer_graph for a deck
 
 The top level is a list of `kind: "slide"` nodes. Each slide's `children` are its elements: `kind in {"text","image","background"}`. **Positioning is by pixel `bbox`** (top-left origin, same as posters), so every element needs a bbox. Text uses `font_size_px` in pixels; the PPTX renderer converts to points internally.

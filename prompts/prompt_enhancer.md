@@ -144,9 +144,17 @@ When the brief is a paper (ingest ran, figures registered), content sections —
 
 Any table directive in the outline must require: "transcribe concrete header + row cell values from the PDF. If transcription fails (e.g. table is a rendered image, no VLM parse), OMIT the table layer — do NOT emit `rows=[]` as a placeholder." This is a negative constraint; restate it in the "Negative constraints" section.
 
-### 4. Equations: KaTeX display math
+### 4. Equations: artifact-type-aware math rendering
 
-For theory-heavy papers (diffusion SDEs, RL equations, loss functions, optimization objectives, information-theory theorems), declare specific equations that appear as `$$...$$` display math blocks in the outline's relevant section. Example outline entry: `**Method** — ... Imagery: KaTeX display math: the surgery objective $$\\mathcal{L}_{surgery}(\\theta) = \\mathbb{E}_{(x,y)} \\ldots$$ and the gradient-approximation step.` The renderer auto-injects the KaTeX vendor bundle when any `$...$` or `$$...$$` delimiter appears — you just need to request the content. For engineering-heavy papers with zero equations: skip entirely.
+For theory-heavy papers (diffusion SDEs, RL equations, loss functions, optimization objectives, information-theory theorems), declare which central equations appear in the outline. **The math syntax MUST match the artifact's renderer** — emitting raw LaTeX where the renderer can't typeset it produces literal `$$\mathcal{L}=...$$` text in the output (an actual 2026-04-25 dogfood failure mode):
+
+- **Landing** → use `$$...$$` / `$...$` LaTeX delimiters. The renderer auto-injects the self-hosted KaTeX vendor bundle when any delimiter appears — write LaTeX source verbatim. Example outline: `**Method** — ... Imagery: KaTeX display math: $$\mathcal{L}_{surgery}(\theta) = \mathbb{E}_{(x,y)} \ldots$$`.
+- **Deck** → use **Unicode math** (NOT LaTeX). python-pptx has no LaTeX renderer; `$$...$$` ends up as raw text in the slide. Transliterate Greek letters (`λ`, `θ`, `Σ`, `∇`, `∂`), summation/product (`Σ_t`, `∏_i`), subscripts (`x_t`, `x_<t`), set membership (`∈`), expectations (`𝔼`), arrows (`→`), and inequalities (`≤ ≥ ≈`). Example: instead of `$$\mathcal{L} = -\sum_t \log p(x_t \mid x_{<t}) + \lambda \cdot \mathcal{L}_{recon}$$`, write `L = -Σ_t log p(x_t | x_{<t}) + λ · L_recon`. State this in the outline as plain prose: `Imagery: Unicode math line — the joint loss as L = -Σ_t log p(x_t | x_{<t}) + λ · L_recon`.
+- **Poster** → use **Unicode math** for the same reason (PSD / SVG / PNG paths have no LaTeX renderer either). Poster HTML output technically supports KaTeX but the canonical export path is PSD+SVG, so default to Unicode for consistency across export formats.
+
+For engineering-heavy papers with zero equations: skip entirely regardless of artifact type.
+
+Add this constraint to the "Negative constraints" section of every paper-deck and paper-poster brief: *"Do NOT use `$...$` or `$$...$$` LaTeX delimiters — they render as raw text. Use Unicode math symbols (Σ, λ, θ, ∇, →, ≤) directly."*
 
 ### 5. Style-prefix verbatim
 
