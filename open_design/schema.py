@@ -284,6 +284,35 @@ class CritiqueIssue(BaseModel):
     description: str
     suggested_fix: str
 
+    @field_validator("category", mode="before")
+    @classmethod
+    def _coerce_unknown_category(cls, v: Any) -> Any:
+        """Map unknown category strings to "artifact" rather than failing
+        the whole CritiqueResult payload.
+
+        Motivated by 2026-04-25 dogfood: Qwen-VL-Max returned
+        `category="per-slide density"` (a sensible label, just not in our
+        Literal). Pydantic's literal_error bubbled up, the entire critique
+        was rejected, and the run terminated with reward=0.0 even though
+        the deck itself was fine. Soft-coercing keeps the critic's signal
+        usable while the rest of the schema stays strict.
+        """
+        if isinstance(v, str):
+            allowed = {
+                "typography", "composition", "brand", "legibility",
+                "cultural", "artifact", "copy", "content",
+            }
+            if v not in allowed:
+                # Best-effort substring match before falling back to "artifact"
+                # so "design_system_drift" still routes to "brand", etc.
+                lower = v.lower()
+                for cand in ("typography", "composition", "brand", "legibility",
+                             "cultural", "copy", "content"):
+                    if cand in lower:
+                        return cand
+                return "artifact"
+        return v
+
 
 class CritiqueResult(BaseModel):
     """Runtime model used by Critic. The full result is dumped into the
