@@ -48,19 +48,33 @@ overrides.>
 
 ## Design system
 
-<Pick ONE design system from: minimalist / editorial / claymorphism /
-liquid-glass / glassmorphism / neubrutalism. For paper landings prefer
-editorial (default) or minimalist. Declare explicit palette hex + typography
-by font-name. Both are MANDATORY — no prose like "warm earth tones" without
-hex values.>
+For **landings**: pick ONE from `minimalist / editorial / claymorphism /
+liquid-glass / glassmorphism / neubrutalism`. For paper landings prefer
+`editorial` (default) or `minimalist`. The planner sets
+`design_system.style="<choice>"` on the DesignSpec. Declare explicit palette
+hex + typography by font-name in this section — both are MANDATORY, no
+prose like "warm earth tones" without hex values.
 
-Palette:
+For **decks**: pick ONE from `academic-editorial` (only system shipped in
+v2.5.2; default for paper2deck). The planner sets
+`deck_design_system.style="academic-editorial"` on the DesignSpec. The
+template at `assets/deck_templates/academic-editorial.pptx` carries the
+master palette + fonts (cream `#FAF7F0` + ink `#0F172A` + oxblood
+`#7F1D1D` + PlayfairDisplay + Inter), so the brief just declares
+"`deck_design_system.style="academic-editorial"`" and skips the palette/typography
+block — the renderer applies them. **DO NOT propose a custom deck palette
+or fonts** — it will conflict with the template master.
+
+For **posters**: no design system field today; declare palette/typography
+in this section (legacy path).
+
+Palette (landings + posters only — skip for decks):
 - <role1 (e.g. ink)>: #xxxxxx
 - <role2>: #xxxxxx
 - <accent>: #xxxxxx
 - (3-5 colors total; exactly ONE accent)
 
-Typography:
+Typography (landings + posters only — skip for decks):
 - Title: <font family from the available set>
 - Body: <font family from the available set>
 
@@ -95,6 +109,31 @@ is a hard requirement — the planner MUST prepend it to every NBP prompt.>
 <Continue for all sections. Landings usually get 6-12 sections; decks get the
 slide count you declared in Canvas; posters get a single-page layout
 described as "top band / hero / body grid / results strip / footer" bands.>
+
+### Deck-specific outline format (when artifact_type=deck — v2.5.2)
+
+When emitting a deck outline, prepend each entry with **`role:`** and per-content **`slot:`** declarations so the planner emits the templated DesignSpec correctly. The 6 valid roles map to template layouts:
+
+- `role: cover` — first slide. Slots: `title`, `authors`, `badge`, `image_slot` (hero, optional)
+- `role: section_divider` — visual breakpoint. Slots: `section_number`, `title`, `subtitle` (optional)
+- `role: content` — text-only content. Slots: `section_label`, `title`, `body`
+- `role: content_with_figure` — body left + figure right. Slots: `section_label`, `title`, `body`, `image_slot` (use `ingest_fig_NN` layer_id)
+- `role: content_with_table` — body left + native table right. Slots: `section_label`, `title`, `body`, `table_anchor` (use `ingest_table_NN` layer_id)
+- `role: closing` — last slide. Slots: `title`, `subtitle`, `links`
+
+Example deck outline entry:
+
+```
+1. **Cover** — `role: cover` ·
+   Content: title + authors + venue badge
+   Slots: title="LongCat-Next: Lexicalizing Modalities as Discrete Tokens"
+        | authors="Meituan LongCat Team"
+        | badge="NeurIPS 2026"
+        | image_slot=`ingest_fig_01` (the paper's Fig. 1 system diagram)
+   Length: title ≤ 9 words; authors ≤ 1 line
+```
+
+DO NOT outline `footer` or `slide_number` slots — the renderer auto-fills both per content slide. DO NOT propose absolute bbox positions on deck slides — the template's named slots own positioning.
 
 ## Callback & narrative coherence
 
@@ -200,6 +239,22 @@ Always include the `## Negative constraints` section with at least 5 bullets. Ne
 - Never emit an empty `<table>` / empty `rows=[]` — omit the layer if transcription fails
 - Never rasterize the PDF to shrink it before ingest
 - Never use `background-image: url(...)` CSS hacks — imagery is a `kind: "image"` layer inside section `children[]`
+
+### 13. Deck templated-path contract (v2.5.2 — paper2deck only)
+
+When `artifact_type=deck` AND attachments include a paper, the enhanced brief MUST instruct the planner to use the templated path. Specifically, include in the `## Design system` section:
+
+> `deck_design_system.style = "academic-editorial"` — paper-deck default. Renderer opens `assets/deck_templates/academic-editorial.pptx` and clones layouts per `slide.role`. Planner MUST set `slide.role` on every `kind: "slide"` node and `template_slot` on every text/image/table child.
+
+In the `## Section outline` block, every entry must declare `role:` (one of `cover / section_divider / content / content_with_figure / content_with_table / closing`) and `Slots:` listing per-content `<slot_name>=<value>` pairs.
+
+In the `## Negative constraints` block, add:
+
+- Never set absolute `bbox` on deck children — the template's named slots own positioning
+- Never write `footer` or `slide_number` slot children — the renderer auto-fills both
+- Never propose a custom deck palette / fonts — the template master applies them
+
+The 2026-04-25 v2.5.2 dogfood failed because the enhanced brief omitted these instructions; the planner read the legacy `Style: editorial` palette section instead and emitted a v2.5.1 absolute-bbox spec, bypassing the templated renderer entirely.
 - Never exceed text-density caps for the artifact type
 
 Add 2-3 situational negatives relevant to the specific brief (e.g. "never translate author names — keep the paper's original script").
