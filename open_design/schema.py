@@ -126,6 +126,10 @@ LayerKind = Literal[
                      # src_path holds a PIL-drawn PNG fallback for PSD/SVG paths.
     "cta",           # v1.3 landing call-to-action button — renders as <a role="button">
                      # with href + variant. Per-design-system styling via .ld-cta--*.
+    "callout",       # v2.6 deck annotation: highlight a sub-region of a sibling
+                     # picture/table, optional text label + arrow connector.
+                     # Slide-only (kind="slide" parent). Renderer adds shapes
+                     # ON TOP of the anchor's bbox via python-pptx primitives.
 ]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
@@ -236,6 +240,33 @@ class LayerNode(BaseModel):
     # Falls back to absolute bbox positioning when None or when the layout
     # has no shape with that name.
     template_slot: str | None = None
+
+    # v2.6 callout — kind="callout" only; child of a slide alongside the
+    # picture/table it annotates. Renderer overlays a shape (rectangle
+    # highlight, ellipse circle, or textbox label) on top of the anchor's
+    # bbox. Optional thin connector line from label to highlight. Used
+    # for "presentation-native" emphasis on dense paper figures (e.g.
+    # highlight the winning row of a benchmark table, label a panel of
+    # an ablation grid).
+    anchor_layer_id: str | None = None
+                                  # references a sibling kind="image" /
+                                  # "table" on the same slide; renderer
+                                  # reads that shape's bbox to scope the
+                                  # callout's coordinate space.
+    callout_style: Literal["highlight", "label", "circle"] | None = None
+                                  # highlight = rectangle outline only
+                                  # label     = text box with thin border
+                                  # circle    = ellipse outline
+    callout_text: str | None = None  # label content (label style only)
+    callout_region: SafeZone | None = None
+                                  # sub-region within anchor.bbox to point
+                                  # at, in image-pixel coords (top-left
+                                  # origin relative to the anchor's bbox
+                                  # top-left). If None, callout points at
+                                  # the anchor's full bbox.
+    arrow: bool = False           # if True + style=label, draw a thin
+                                  # connector from label center to the
+                                  # callout_region's nearest edge.
 
 
 class DesignSpec(BaseModel):
