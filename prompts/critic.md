@@ -66,7 +66,11 @@ Output **a single fenced JSON code block, nothing else**:
     {
       "severity": "blocker" | "major" | "minor",
       "layer_id": "L1_title" | null,
-      "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact",
+      "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact" | "copy" | "content",
+      // ^^ MUST be exactly one of those 8 strings. NOT a rubric criterion
+      //    name — the schema literal-validates and a wrong value makes the
+      //    whole critique unusable. "copy" + "content" added in v1.0 #8.5;
+      //    older poster prompts may show only the first 6.
       "description": "What's wrong, in one sentence.",
       "suggested_fix": "Concrete change the planner can apply via render_text_layer args (e.g. 'Move title bbox y from 120 to 200, reduce font_size from 220 to 180.')."
     }

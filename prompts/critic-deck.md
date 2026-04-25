@@ -44,6 +44,14 @@ Output **a single fenced JSON code block, nothing else**:
       "severity": "blocker" | "major" | "minor",
       "layer_id": "S1" | "S3_title" | null,
       "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact" | "copy" | "content",
+      // ^^ MUST be exactly one of those 8 strings. NOT a rubric criterion name
+      //    like "per-slide density" or "slide-count balance" — the schema
+      //    literal-validates and a wrong value makes the whole critique
+      //    unusable. Map rubric criteria to categories like this:
+      //      Brief fidelity / Information arc → "content"
+      //      Slide-count balance / Per-slide density / Consistency → "composition"
+      //      Typography hierarchy → "typography"
+      //      Anything that would only show in the rendered file → "artifact"
       "description": "What's wrong with the DesignSpec / slide tree, in one sentence.",
       "suggested_fix": "Concrete change (e.g. 'Split S3 into two slides — problem + solution', 'Reduce S7 bullets from 9 to 5', 'Raise all title.font_size_px from 40 to 64')."
     }

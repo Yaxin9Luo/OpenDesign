@@ -44,6 +44,11 @@ Output **a single fenced JSON code block, nothing else**:
       "severity": "blocker" | "major" | "minor",
       "layer_id": "S1" | "H1" | null,
       "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact" | "copy" | "content",
+      // ^^ MUST be exactly one of those 8 strings. NOT a rubric criterion
+      //    name — the schema literal-validates and a wrong value makes the
+      //    whole critique unusable. When in doubt: pick "content" for
+      //    text-quality issues, "composition" for layout/balance, "artifact"
+      //    for anything that would only show in rendered output.
       "description": "What's wrong with the DesignSpec / section tree, in one sentence.",
       "suggested_fix": "Concrete change (e.g. 'Change hero_headline.font_size_px from 40 to 96', 'Add a cta section between S2 and S4', 'Switch design_system.style from glassmorphism to minimalist — brief is fintech enterprise, not flashy consumer')."
     }
