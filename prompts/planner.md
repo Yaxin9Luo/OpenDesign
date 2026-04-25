@@ -716,6 +716,14 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
 
    Word counts are rough — the principle is: don't pair a 200-word body with `content_with_figure`'s 920px-wide body slot, the body will overflow or shrink. Don't pair a 15-word headline with `content_with_figure`'s 920px body slot either, you'll waste 80% of the slide.
 
+7. **Wide-table subset rule (v2.5.3).** A `content_with_table` slide is bounded by `table_anchor`'s ~904×740 px region. A native PPTX table with 15 columns × 12 rows renders each cell at ~60×49 px — illegible at deck scale. The 2026-04-25 dogfood shipped exactly this on the Main Results slide.
+
+   - **`ingest_table_NN` with > 8 columns → planner MUST emit a subset** to deck slides. Subset to **4-6 columns**: model name column + the column relevant to the slide's headline metric (the one called out in body bullets). Drop columns the body text doesn't reference.
+   - The subset is a NEW kind="table" child with `headers` and `rows` filled inline (NOT referencing `ingest_table_NN`'s layer_id), because we're transcribing a subset, not the original. Keep `col_highlight_rule` only for the columns kept.
+   - The slide body MUST narrate the dropped columns: e.g. `"+5.2 pts on MathVista vs BAGEL · +3.1 on OCRBench. Full benchmark suite (13 models × 12 tasks) in paper Table 3."` — readers who want the full table get pointed to the paper.
+   - For ablation tables: each ablation gets its own subset slide rather than one giant table. A 6×3 ablation across 4 dimensions = 4 separate `content_with_table` slides (or 4 `content_with_figure` slides if the paper provides ablation panel figures).
+   - For tables with ≤ 8 columns: place as-is, no subsetting required.
+
    The same applies to `kind: "table"` for `ingest_table_NN` and `kind: "image"` for sub-panels (`ingest_fig_NN_a`, `_b`, `_c`).
 
    `generate_image` is required ONLY for cover/closing NBP backgrounds where the layer_id is fresh AND you want NBP to fill it.
