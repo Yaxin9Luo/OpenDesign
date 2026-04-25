@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/22] imports")
+    print("[1/23] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/22] tool registry")
+    print("[2/23] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +81,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/22] pydantic schema round-trip (v2)")
+    print("[3/23] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +205,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/22] fonts")
+    print("[4/23] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +225,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/22] composite (no API)")
+    print("[5/23] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +326,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/22] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/23] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -400,7 +400,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/22] chat session save/load")
+    print("[7/23] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -462,7 +462,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/22] edit_layer (no API)")
+    print("[8/23] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -587,7 +587,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/22] apply-edits round-trip (no API)")
+    print("[9/23] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -666,7 +666,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/22] landing mode (no API)")
+    print("[10/23] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -842,7 +842,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/22] design-system styles (no API)")
+    print("[11/23] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -943,7 +943,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/22] landing with images (no API)")
+    print("[12/23] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1062,7 +1062,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/22] deck mode (no API)")
+    print("[13/23] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1240,7 +1240,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/22] deck design system template (no API)")
+    print("[21/23] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1360,7 +1360,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/22] footer leakage check (no API)")
+    print("[22/23] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1463,6 +1463,102 @@ def check_footer_leakage() -> None:
     _ok(f"rendered footer carries paper title: {footer_text!r}")
 
 
+def check_callout_overlay() -> None:
+    """v2.6 callout system: kind="callout" children render as shapes
+    overlaid on top of the anchor picture/table. Verifies all 3 styles
+    (highlight / label / circle) plus the optional arrow connector."""
+    print("[23/23] callout overlay (no API)")
+    from pptx import Presentation as _Reopen
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    from .config import REPO_ROOT, Settings
+    from .schema import (
+        ArtifactType, DeckDesignSystem, DesignSpec, LayerNode, SafeZone,
+    )
+    from .tools import ToolContext
+    from .tools.composite import composite
+
+    out_dir = REPO_ROOT / "out" / "smoke_callout"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    fig_path = layers_dir / "ingest_fig_01.png"
+    Image.new("RGB", (1200, 800), (180, 220, 200)).save(fig_path)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-callout")
+
+    ctx.state["rendered_layers"]["ingest_fig_01"] = {
+        "layer_id": "ingest_fig_01", "kind": "image", "src_path": str(fig_path),
+        "bbox": None, "z_index": 5, "name": "fig", "aspect_ratio": "3:2",
+    }
+
+    spec = DesignSpec(
+        brief="callout overlay smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"},
+        deck_design_system=DeckDesignSystem(style="academic-editorial"),
+        layer_graph=[
+            LayerNode(layer_id="slide_01", name="cover", kind="slide", z_index=1, role="cover", children=[
+                LayerNode(layer_id="slide_01_title", name="title", kind="text", z_index=10,
+                          template_slot="title", text="Callout Test"),
+            ]),
+            LayerNode(layer_id="slide_02", name="method", kind="slide", z_index=2,
+                      role="content_with_figure", children=[
+                LayerNode(layer_id="slide_02_title", name="title", kind="text", z_index=10,
+                          template_slot="title", text="Method"),
+                LayerNode(layer_id="ingest_fig_01", name="diagram", kind="image", z_index=5,
+                          template_slot="image_slot"),
+                LayerNode(layer_id="callout_a", name="hl", kind="callout", z_index=20,
+                          anchor_layer_id="ingest_fig_01",
+                          callout_style="highlight",
+                          callout_region=SafeZone(x=1100, y=300, w=400, h=200, purpose="body")),
+                LayerNode(layer_id="callout_b", name="lbl", kind="callout", z_index=21,
+                          anchor_layer_id="ingest_fig_01",
+                          callout_style="label",
+                          callout_text="+5.2",
+                          callout_region=SafeZone(x=1100, y=300, w=400, h=200, purpose="body"),
+                          arrow=True),
+                LayerNode(layer_id="callout_c", name="circ", kind="callout", z_index=22,
+                          anchor_layer_id="ingest_fig_01",
+                          callout_style="circle",
+                          callout_region=SafeZone(x=1500, y=600, w=120, h=120, purpose="body")),
+            ]),
+        ],
+    )
+    ctx.state["design_spec"] = spec
+
+    res = composite({}, ctx=ctx)
+    if res.status != "ok":
+        _fail(f"composite failed: {res.payload}")
+    pptx_path = ctx.state["composition"].pptx_path
+    prs = _Reopen(str(pptx_path))
+
+    method = prs.slides[1]
+    names = {s.name for s in method.shapes}
+    for required in ("callout_a", "callout_b", "callout_c"):
+        if required not in names:
+            _fail(f"expected callout '{required}' on method slide; got names={sorted(names)}")
+    # Picture should still be there
+    pics = [s for s in method.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    if len(pics) != 1:
+        _fail(f"expected 1 picture on method slide alongside callouts, got {len(pics)}")
+    # Arrow connector should exist (named "Connector N" by python-pptx)
+    connectors = [s for s in method.shapes if s.name.startswith("Connector")]
+    if not connectors:
+        _fail("expected at least 1 arrow connector for label callout w/ arrow=True")
+    # Highlight callout's bbox should match callout_region (1100,300,400,200) in EMU
+    hl = next(s for s in method.shapes if s.name == "callout_a")
+    px_to_emu = 9525
+    if hl.left != 1100 * px_to_emu or hl.top != 300 * px_to_emu:
+        _fail(f"highlight callout EMU position wrong: ({hl.left},{hl.top})")
+    _ok(f"3 callouts (highlight + label+arrow + circle) + 1 connector overlaid alongside picture")
+
+
 def check_reasoning_step_roundtrip() -> None:
     """v2 training-data: derive artifact_type / design_spec / critique
     verdict / layer count from agent_trace alone (no top-level fields).
@@ -1471,7 +1567,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/22] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/23] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1550,7 +1646,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/22] ingest_document markdown (no API)")
+    print("[15/23] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1606,7 +1702,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/22] ingest_document image (no API)")
+    print("[16/23] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1656,7 +1752,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/22] ingest_document docx (no API)")
+    print("[17/23] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -1717,7 +1813,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/22] ingest_document pptx (no API)")
+    print("[18/23] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -1785,7 +1881,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/22] sub-figure extraction (no API)")
+    print("[19/23] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -1880,7 +1976,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/22] versioning + revise-loop preservation (no API)")
+    print("[20/23] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2021,6 +2117,7 @@ def main() -> int:
     check_versioning_no_api()
     check_deck_design_system_template()
     check_footer_leakage()
+    check_callout_overlay()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
