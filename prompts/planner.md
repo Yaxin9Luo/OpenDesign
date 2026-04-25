@@ -630,6 +630,20 @@ Skip when:
 
 A deck is an editable `.pptx` with N slides. The renderer writes **native PowerPoint TextFrames** — no rasterization — so every title / bullet stays type-editable when the user opens the file in PowerPoint / Keynote / Google Slides. Images inside slides are embedded as picture shapes.
 
+## Pick a deck design system FIRST (v2.5.2)
+
+Set `deck_design_system.style` on the DesignSpec. This unlocks the template-backed renderer that produces a designed master + footer + slide numbers + accent colors. When omitted, the renderer falls back to the legacy blank-Presentation path (white slides, no chrome) — only use that for "render exactly what I emit" power-user flows.
+
+| Style | Loudness | When to pick |
+|---|---|---|
+| `academic-editorial` | 3/10 | DEFAULT for paper2deck (NeurIPS / ICLR / CVPR / ACL / arXiv talks, lab readouts, thesis defenses). Cream `#FAF7F0` bg, oxblood `#7F1D1D` accent, PlayfairDisplay + Inter, footer with paper title + slide N/total. |
+
+Future systems (e.g. `tech-keynote`, `consumer-pitch`) drop in by adding `assets/deck_templates/<style>.pptx` + `prompts/design-systems/deck-<style>.md`. **For now, only `academic-editorial` is shipped.**
+
+When using a design system, every `kind: "slide"` node MUST set `slide.role` to one of: `cover` / `section_divider` / `content` / `content_with_figure` / `content_with_table` / `closing`. Each child of a slide should set `template_slot` to the name of the template shape it fills (`title`, `body`, `image_slot`, etc.) — see `prompts/design-systems/deck-<style>.md` for the per-system slot vocabulary.
+
+`footer` and `slide_number` slots are auto-populated by the renderer (paper title from `deck_design_system.footer_text` or first 80 chars of brief; slide_number = "N/total"). DO NOT write children for those slots — the renderer handles them.
+
 ## Canvas and slide count
 
 - Default canvas: `{"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"}`. Use 4:3 (`1920×1440`) only if the user explicitly asks for it.
@@ -680,6 +694,7 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
 
 ### Hard rules for paper2deck
 
+0. **`deck_design_system.style="academic-editorial"` (v2.5.2)** is the default for paper2deck. Set it on the DesignSpec so the renderer uses the templated path with cream + oxblood + PlayfairDisplay + Inter + footer. Each `kind: "slide"` node MUST also set `slide.role` ∈ `{cover, section_divider, content, content_with_figure, content_with_table, closing}` and each child should set `template_slot` to a shape name from the chosen layout's slot vocabulary (see `prompts/design-systems/deck-academic-editorial.md`).
 1. **At least 4 ingested figure layers** must appear across the deck's content slides if the ingest summary showed ≥ 5 available. At least 6 if ≥ 10 available. These belong on **method / results / qualitative / ablation / scaling** slides — not just one teaser thumbnail on the cover.
 2. **Ingested benchmark tables go on the results slide** as `kind: "table"` layers — the deck renderer produces a native PPTX `add_table` (editable in PowerPoint / Keynote with column-width autoscale + winner-cell bolding). If the paper registered `ingest_table_NN`, it MUST appear on the deck — describing the table in prose ("LongCat-Next outperforms baselines") instead of placing it is the anti-pattern.
 3. **NBP (`generate_image`) is RESERVED for ambient backgrounds**, not for technical content:
@@ -694,7 +709,9 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
 
    `generate_image` is required ONLY for cover/closing NBP backgrounds where the layer_id is fresh AND you want NBP to fill it.
 
-### Spec-shape example — paper deck slide referencing an ingested figure
+### Spec-shape example — paper deck slide (v2.5.2 templated path)
+
+When `deck_design_system.style="academic-editorial"` is set (default for paper2deck), each slide uses `slide.role` + `template_slot` instead of absolute bboxes. The renderer fills named slots from the template; bbox positions come from template shapes, so the spec is far smaller than the legacy absolute-bbox style:
 
 ```json
 {
@@ -702,41 +719,25 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
   "name": "method_overview",
   "kind": "slide",
   "z_index": 4,
+  "role": "content_with_figure",
   "children": [
-    {
-      "layer_id": "slide_04_label", "kind": "text", "z_index": 10,
-      "bbox": {"x": 120, "y": 80, "w": 600, "h": 32},
-      "text": "04 · METHOD OVERVIEW",
-      "font_family": "NotoSansSC-Bold", "font_size_px": 18,
-      "fill": "#2563EB"
-    },
-    {
-      "layer_id": "slide_04_title", "kind": "text", "z_index": 10,
-      "bbox": {"x": 120, "y": 140, "w": 1680, "h": 100},
-      "text": "LongCat-Next pipeline",
-      "font_family": "NotoSerifSC-Bold", "font_size_px": 56
-    },
-    {
-      "// THIS is the critical part — layer_id is the ingest_fig_NN ID, NOT a fresh slide-scoped ID": "",
-      "layer_id": "ingest_fig_01",
-      "name": "method_diagram",
-      "kind": "image",
-      "z_index": 5,
-      "bbox": {"x": 760, "y": 280, "w": 1080, "h": 700},
-      "aspect_ratio": "16:9"
-    },
-    {
-      "layer_id": "slide_04_caption", "kind": "text", "z_index": 10,
-      "bbox": {"x": 760, "y": 990, "w": 1080, "h": 40},
-      "text": "Fig. 1 · DiNA paradigm tokenizes vision, text, and audio.",
-      "font_family": "NotoSansSC-Bold", "font_size_px": 16,
-      "fill": "#475569"
-    }
+    {"layer_id": "slide_04_label", "kind": "text", "z_index": 10,
+     "template_slot": "section_label", "text": "02 · METHOD"},
+    {"layer_id": "slide_04_title", "kind": "text", "z_index": 10,
+     "template_slot": "title", "text": "LongCat-Next pipeline"},
+    {"layer_id": "slide_04_body", "kind": "text", "z_index": 10,
+     "template_slot": "body",
+     "text": "DiNA tokenizes vision / text / audio into a shared discrete vocabulary."},
+    {"// CRITICAL — layer_id is ingest_fig_NN, NOT a fresh slide-scoped ID": "",
+     "layer_id": "ingest_fig_01", "kind": "image", "z_index": 5,
+     "template_slot": "image_slot"}
   ]
 }
 ```
 
-The DesignSpec just `propose_design_spec`s this — **no `generate_image` call needed** for `ingest_fig_01`, because `ingest_document` already populated `rendered_layers["ingest_fig_01"]` with the cropped paper figure on disk. The composite step's hydration copies `src_path` onto the spec child, then `_add_picture` writes it into the slide.
+The DesignSpec just `propose_design_spec`s this — **no `generate_image` call needed** for `ingest_fig_01`, because `ingest_document` already populated `rendered_layers["ingest_fig_01"]` with the cropped paper figure on disk. The composite step's hydration copies `src_path` onto the spec child, then the templated renderer reads `image_slot`'s bbox and places the picture letterbox-fit. Footer + slide_number are auto-injected by the renderer — **DON'T write children for `footer` / `slide_number` slots**.
+
+If you skipped `deck_design_system` entirely, the renderer falls back to the legacy blank-Presentation path and you must supply `bbox` on every child (no template slots, no auto-footer). That's only correct for power-user "render exactly what I emit" flows; for paper2deck always use the templated path.
 
 For a results-slide table:
 
