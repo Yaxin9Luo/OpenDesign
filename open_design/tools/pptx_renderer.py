@@ -130,12 +130,8 @@ def _write_pptx_templated(spec: Any, ds: Any, pptx_path: Path,
     prs = Presentation(str(template_path))
     n_template_slides = len(prs.slides)
 
-    # Pre-compute footer + brief text for auto-fills.
-    footer_text = (
-        getattr(ds, "footer_text", None)
-        or (getattr(spec, "brief", "") or "")[:80].strip()
-        or ""
-    )
+    # Pre-compute footer text for auto-fill on content slides.
+    footer_text = _resolve_footer_text(ds, spec, ctx)
 
     spec_slide_nodes = [
         n for n in (spec.layer_graph or []) if getattr(n, "kind", None) == "slide"
@@ -167,6 +163,71 @@ def _write_pptx_templated(spec: Any, ds: Any, pptx_path: Path,
 
     prs.save(str(pptx_path))
     return total
+
+
+# v2.5.2.2 — phrases that indicate the user's command leaked into footer
+# fallback. The original v2.5.2 implementation used `spec.brief[:80]`,
+# which silently shipped strings like "12-slide academic talk deck for
+# the LongCat-Next paper. Speaker-ready with notes per slide" on every
+# content slide. This blacklist is checked case-insensitively as a
+# defensive filter on whatever footer text resolves; matching strings
+# fall through to the next priority in `_resolve_footer_text`.
+_FOOTER_LEAKAGE_PHRASES = (
+    "slide deck",
+    "speaker-ready",
+    "speaker ready",
+    "with notes",
+    "academic talk deck",
+    "12-slide",
+    "10-slide",
+    "16-slide",
+    "8-slide",
+    "lightning talk",
+    "research talk",
+    "for this paper",
+    "paper. speaker",
+)
+
+
+def _is_leakage(text: str) -> bool:
+    """True if `text` contains any user-command phrase that should not
+    appear in a deck footer. Case-insensitive substring match."""
+    if not text:
+        return True
+    low = text.lower()
+    return any(phrase in low for phrase in _FOOTER_LEAKAGE_PHRASES)
+
+
+def _resolve_footer_text(ds: Any, spec: Any, ctx: ToolContext) -> str:
+    """Pick the right footer text for a deck content slide.
+
+    Precedence (first non-leakage match wins):
+      1. `ds.footer_text` — explicit planner override
+      2. `ctx.state["ingested"][i]["manifest"]["title"]` — paper title
+         from ingest_document (truncated to 80 chars). v2.5.2's bug was
+         skipping this layer entirely and falling through to brief.
+      3. Empty string. We deliberately do NOT fall back to `spec.brief`
+         because brief is a user command, not slide-footer content.
+
+    Returns the resolved string (possibly empty). Always sanitized
+    against the v2.5.2.2 leakage blacklist.
+    """
+    # 1. Explicit planner override
+    explicit = (getattr(ds, "footer_text", None) or "").strip()
+    if explicit and not _is_leakage(explicit):
+        return explicit[:80]
+
+    # 2. Paper title from ingest
+    state = getattr(ctx, "state", None) or {}
+    ingested = state.get("ingested") or []
+    for entry in ingested:
+        manifest = (entry or {}).get("manifest") or {}
+        title = (manifest.get("title") or "").strip()
+        if title and not _is_leakage(title):
+            return title[:80]
+
+    # 3. Empty rather than leak the brief
+    return ""
 
 
 def _render_templated_slide(
