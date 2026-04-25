@@ -19,7 +19,7 @@ from PIL import Image
 from psd_tools import PSDImage
 from psd_tools.constants import BlendMode, Compression
 
-from ..util.io import sha256_file
+from ..util.io import atomic_write_json, sha256_file
 from ._contract import ToolContext, obs_error, obs_ok
 from ._deck_preview import build_deck_preview_grid
 from ._font_embed import build_font_face_css
@@ -566,6 +566,30 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     canvas = spec.canvas or {}
     slide_w = int(canvas.get("w_px") or 1920)
     slide_h = int(canvas.get("h_px") or 1080)
+
+    # v2.7 — provenance audit BEFORE write_pptx. When the deck has an
+    # ingested paper source, every body text layer carrying a numeric
+    # token must have an `evidence_quote` matching the ingest text.
+    # Strict mode: replace unverified numbers with [?] markers. Empty
+    # ingest list → no-op (free-text decks unaffected). Report persisted
+    # alongside artifacts for human inspection.
+    pv_failures = 0
+    if ctx.state.get("ingested"):
+        from ..util.provenance import apply_strict_provenance, validate_provenance
+        pv_report = validate_provenance(spec, ctx)
+        if pv_report.has_failures():
+            pv_failures = len(pv_report.failures)
+            n_mut = apply_strict_provenance(spec, pv_report)
+            log("composite.deck.provenance_fail",
+                n_failures=pv_failures, n_mutated=n_mut,
+                failure_ids=[f.layer_id for f in pv_report.failures],
+                failure_reasons=[f.reason for f in pv_report.failures])
+        else:
+            log("composite.deck.provenance_ok",
+                n_audited=pv_report.n_text_layers_audited,
+                n_with_numbers=pv_report.n_layers_with_numbers)
+        atomic_write_json(iter_dir / "provenance_report.json",
+                          pv_report.to_dict())
 
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
