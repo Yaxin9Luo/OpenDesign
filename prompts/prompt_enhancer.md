@@ -121,17 +121,32 @@ When emitting a deck outline, prepend each entry with **`role:`** and per-conten
 - `role: content_with_table` — body left + native table right. Slots: `section_label`, `title`, `body`, `table_anchor` (use `ingest_table_NN` layer_id)
 - `role: closing` — last slide. Slots: `title`, `subtitle`, `links`
 
-Example deck outline entry:
+Example deck outline entry — **content slide format MUST follow Claim → Evidence binding (v2.5.3)**:
 
 ```
-1. **Cover** — `role: cover` ·
-   Content: title + authors + venue badge
-   Slots: title="LongCat-Next: Lexicalizing Modalities as Discrete Tokens"
-        | authors="Meituan LongCat Team"
-        | badge="NeurIPS 2026"
-        | image_slot=`ingest_fig_01` (the paper's Fig. 1 system diagram)
-   Length: title ≤ 9 words; authors ≤ 1 line
+3. **Method overview** — `role: content_with_figure` ·
+   Claim: DiNA paradigm makes vision/audio/text into one autoregressive
+          stream — a single decoder predicts the next token regardless of modality.
+   Evidence: `ingest_fig_03` shows the dual-tokenizer training pipeline,
+             with vision/audio quantized through RVQ before sharing the
+             decoder. Body bullets cite the figure: "shared decoder ↔
+             modality-agnostic MoE block (right column of Fig. 3)".
+   Slots: section_label="02 · METHOD"
+        | title="Discrete Native Autoregression"
+        | body="• Per-modality tokenizer + shared decoder (Fig. 3 right)
+                 • RVQ for vision: 64K codes, 4-stage residual
+                 • Audio shares the linguistic-guided codec from §3.2"
+        | image_slot=`ingest_fig_03`
+   Speaker note: "Last slide showed why unified is hard. Now: DiNA. The
+                 left side of Fig 3 — that's per-modality tokenizers,
+                 same architecture every time. The right — shared
+                 decoder, no modality routing. Anticipated Q: 'why RVQ
+                 not VQ-VAE?' Answer: scaling, see ablation slide."
 ```
+
+The Claim → Evidence binding is **non-optional** for content slides. It forces you to commit to what the slide ARGUES, not just what content lives there. Failing this binding produces "semantically related figure" decks (GPT-5.4 obs #4): the figure is on-topic but doesn't support the body's specific claim. Each figure / table / equation must EXPLICITLY back a body sentence, traceable from the body to the visual.
+
+For `role: cover`, `section_divider`, `closing` — Claim/Evidence are optional (cover/closing don't argue; dividers signal transition). For all other roles (`content`, `content_with_figure`, `content_with_table`) — Claim/Evidence are required.
 
 DO NOT outline `footer` or `slide_number` slots — the renderer auto-fills both per content slide. DO NOT propose absolute bbox positions on deck slides — the template's named slots own positioning.
 
