@@ -190,7 +190,7 @@ Default routing in `config.py`:
 
 - planner: `moonshotai/kimi-k2.6`
 - critic: `moonshotai/kimi-k2.6`
-- enhancer: `anthropic/claude-opus-4-7`
+- enhancer: `moonshotai/kimi-k2.6` (was Opus 4.7 in v2.4.1; cost-cut 2026-04-25)
 - image generation: `gemini-3-pro-image-preview`
 - ingest VLM: `qwen/qwen-vl-max` via OpenRouter when available
 

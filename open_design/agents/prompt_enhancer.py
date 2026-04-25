@@ -14,10 +14,12 @@ brief (already prepended with `Template:` / `Attached files:` prologues
 by the runner). Output: an enhanced brief string that replaces the raw
 brief on the way into `PlannerLoop.run`.
 
-Default model: `anthropic/claude-opus-4-7` (brief-authoring is a
-single-turn reasoning task where model capability dominates latency /
-cost). Users override via `ENHANCER_MODEL=...` env var or
-`--skip-enhancer` CLI flag.
+Default model: `moonshotai/kimi-k2.6` (same as planner+critic — keeps
+the dev loop cheap; brief authoring is a single-turn task and Kimi has
+been good enough on the dogfood briefs). Users pin a stronger model via
+`ENHANCER_MODEL=anthropic/claude-opus-4-7` when capability matters more
+than cost, or skip the stage entirely with `--skip-enhancer` /
+`SKIP_PROMPT_ENHANCER=1`.
 
 This module is intentionally small — the intelligence lives in
 `prompts/prompt_enhancer.md`. Changing the 12 rules means editing that

@@ -50,9 +50,13 @@ ANTHROPIC_FALLBACK_CRITIC = "claude-opus-4-7"
 
 # v2.4 Prompt Enhancer — runs once before planner.start, converting a raw
 # user brief into a structured multi-section enhanced brief. Defaults to
-# Opus 4.7 because brief-authoring is a single-turn reasoning task where
-# model capability dominates latency/cost; users can override via env.
-DEFAULT_ENHANCER_MODEL = "anthropic/claude-opus-4-7"
+# Kimi K2.6 (same as planner+critic) to keep the dev-loop cheap; users
+# override via `ENHANCER_MODEL=anthropic/claude-opus-4-7` (or any other
+# id) when they want stronger brief authoring. The fallback below is
+# used only when the user has ANTHROPIC_API_KEY but no OPENROUTER_API_KEY
+# — Kimi is unreachable on the stock Anthropic endpoint, so we drop back
+# to Claude transparently rather than fail-loud at startup.
+DEFAULT_ENHANCER_MODEL = "moonshotai/kimi-k2.6"
 ANTHROPIC_FALLBACK_ENHANCER = "claude-opus-4-7"
 
 
@@ -75,9 +79,11 @@ class Settings:
     critic_provider: ProviderChoice = "auto"
 
     # v2.4 Prompt Enhancer stage — runs before planner.start. Defaults to
-    # Opus 4.7 (anthropic/claude-opus-4-7); users can pin any model via
-    # ENHANCER_MODEL env var. `enable_prompt_enhancer` gates the whole
-    # stage; the `--skip-enhancer` CLI flag sets it to False per-run.
+    # Kimi K2.6 (cheap dev-loop, same provider as planner+critic); users
+    # pin a stronger model via ENHANCER_MODEL=anthropic/claude-opus-4-7
+    # when brief authoring matters more than per-run cost.
+    # `enable_prompt_enhancer` gates the whole stage; the `--skip-enhancer`
+    # CLI flag sets it to False per-run.
     enhancer_model: str = DEFAULT_ENHANCER_MODEL
     enhancer_provider: ProviderChoice = "auto"
     enhancer_thinking_budget: int = 10000
