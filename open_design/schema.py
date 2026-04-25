@@ -140,6 +140,11 @@ IssueCategory = Literal[
     # don't fit the poster-visual vocabulary — "copy" covers headline/body
     # wording quality, "content" covers section balance / length / pacing.
     "copy", "content",
+    # v2.7 — fabricated number / unverifiable claim in body. Emitted by the
+    # critic when a kind="text" body layer contains numeric tokens but no
+    # `evidence_quote`, OR when the rendered slide contains "[?]" markers
+    # left by the composite-stage provenance validator.
+    "provenance",
 ]
 
 
@@ -268,6 +273,21 @@ class LayerNode(BaseModel):
                                   # connector from label center to the
                                   # callout_region's nearest edge.
 
+    # v2.7 Provenance — text-only; required when `text` contains a
+    # significant numeric token (>=4 digits, decimal, or K/M/T/B/% suffix).
+    # `evidence_quote` MUST be a verbatim substring of the ingested source
+    # text; the composite-stage auditor (open_design/util/provenance.py)
+    # rejects bullets that fail substring match. `evidence_source` is a
+    # free-form trace hint ("ingest_table_06 row LongCat-Next" /
+    # "ingest_p_12") used only for human inspection — not validated.
+    # Motivation: 2026-04-25 longcat-next dogfood produced 9 fabricated
+    # numbers across slides 4/6/8/9 (e.g. "PSNR 28.5 → 22.1 dB" with
+    # paper-real values being 20.88/21.86/30.52/18.16). Pure prompt rules
+    # backfired — the model met "number + named rival" by inventing
+    # numbers. Machine-checkable provenance is the gate.
+    evidence_quote: str | None = None
+    evidence_source: str | None = None
+
 
 class DesignSpec(BaseModel):
     brief: str
@@ -332,13 +352,14 @@ class CritiqueIssue(BaseModel):
             allowed = {
                 "typography", "composition", "brand", "legibility",
                 "cultural", "artifact", "copy", "content",
+                "provenance",  # v2.7
             }
             if v not in allowed:
                 # Best-effort substring match before falling back to "artifact"
                 # so "design_system_drift" still routes to "brand", etc.
                 lower = v.lower()
                 for cand in ("typography", "composition", "brand", "legibility",
-                             "cultural", "copy", "content"):
+                             "cultural", "copy", "content", "provenance"):
                     if cand in lower:
                         return cand
                 return "artifact"
