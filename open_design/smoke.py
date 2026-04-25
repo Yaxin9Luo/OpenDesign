@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/23] imports")
+    print("[1/24] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/23] tool registry")
+    print("[2/24] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +81,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/23] pydantic schema round-trip (v2)")
+    print("[3/24] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +205,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/23] fonts")
+    print("[4/24] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +225,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/23] composite (no API)")
+    print("[5/24] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +326,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/23] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/24] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -400,7 +400,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/23] chat session save/load")
+    print("[7/24] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -462,7 +462,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/23] edit_layer (no API)")
+    print("[8/24] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -587,7 +587,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/23] apply-edits round-trip (no API)")
+    print("[9/24] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -666,7 +666,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/23] landing mode (no API)")
+    print("[10/24] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -842,7 +842,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/23] design-system styles (no API)")
+    print("[11/24] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -943,7 +943,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/23] landing with images (no API)")
+    print("[12/24] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1062,7 +1062,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/23] deck mode (no API)")
+    print("[13/24] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1240,7 +1240,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/23] deck design system template (no API)")
+    print("[21/24] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1360,7 +1360,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/23] footer leakage check (no API)")
+    print("[22/24] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1467,7 +1467,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/23] callout overlay (no API)")
+    print("[23/24] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1559,6 +1559,224 @@ def check_callout_overlay() -> None:
     _ok(f"3 callouts (highlight + label+arrow + circle) + 1 connector overlaid alongside picture")
 
 
+def check_provenance_validator() -> None:
+    """v2.7 — composite-stage provenance validator audits LayerNode.evidence_quote
+    against ingested raw_text. Verifies:
+      a. regex extracts the right numeric tokens (and skips safe contexts)
+      b. validator passes bullets whose evidence_quote substring-matches
+      c. validator fails bullets with no evidence_quote
+      d. validator fails bullets whose quote is not in raw_text
+      e. apply_strict_provenance replaces failed numeric tokens with [?]
+      f. _resolve_authors_text pulls from manifest.authors when planner
+         emits placeholder text
+      g. _add_table truncates >8-col tables to 6 cols + caption marker
+    """
+    print("[24/24] provenance validator + cover authors + wide-table cap (no API)")
+    from pptx import Presentation as _Reopen
+
+    from .config import REPO_ROOT, Settings
+    from .schema import (
+        ArtifactType, DeckDesignSystem, DesignSpec, LayerNode,
+    )
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.pptx_renderer import (
+        _is_authors_leakage, _resolve_authors_text,
+    )
+    from .util.provenance import (
+        _extract_numeric_tokens, apply_strict_provenance, validate_provenance,
+    )
+
+    # ── Part (a): regex sanity ───────────────────────────────────────
+    cases = [
+        ("MMMU 70.6 vs BAGEL 55.3", ["70.6", "55.3"]),
+        ("500K hours of audio", ["500K hours"]),
+        ("80 GB vs 120 GB", ["80 GB", "120 GB"]),
+        ("PSNR drops 28.5 to 22.1 dB", ["28.5", "22.1 dB"]),
+        ("+5.2 pts on MathVista", ["+5.2"]),
+        ("40% diversity drop", ["40%"]),
+        ("-0.32 exponent", ["-0.32"]),
+        ("1/12", []),         # safe — slide index
+        ("v2.6.1", []),       # safe — version tag
+        ("01 · MOTIVATION", []),  # safe — section label
+    ]
+    for inp, expected in cases:
+        got = _extract_numeric_tokens(inp)
+        if got != expected:
+            _fail(f"regex {inp!r}: expected {expected}, got {got}")
+
+    # ── Part (b-e): validator + strict mutation ──────────────────────
+    paper_title = "LongCat-Next: Lexicalizing Modalities as Discrete Tokens"
+    paper_authors = ["Meituan LongCat Team"]
+    paper_text = (
+        "LongCat-Next achieves 70.6 on MMMU and 83.1 on MathVista, "
+        "outperforming BAGEL's 55.3. Table 6 reports PSNR values of "
+        "20.88, 21.86, 30.52, 18.16 across configurations."
+    )
+
+    spec = DesignSpec(
+        brief="provenance smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"},
+        deck_design_system=DeckDesignSystem(style="academic-editorial"),
+        layer_graph=[
+            LayerNode(layer_id="s1", name="cover", kind="slide", z_index=1, role="cover", children=[
+                LayerNode(layer_id="s1_t", name="title", kind="text", z_index=10,
+                          template_slot="title", text=paper_title),
+                # Placeholder text — _resolve_authors_text MUST replace it.
+                LayerNode(layer_id="s1_a", name="authors", kind="text", z_index=10,
+                          template_slot="authors",
+                          text="Author One · Author Two · Affiliation"),
+            ]),
+            LayerNode(layer_id="s2", name="results", kind="slide", z_index=2,
+                      role="content", children=[
+                LayerNode(layer_id="s2_t", name="title", kind="text", z_index=10,
+                          template_slot="title", text="Headline"),
+                # ✅ verifiable: "70.6 on MMMU" is a substring of paper_text
+                LayerNode(layer_id="s2_b1", name="body", kind="text", z_index=10,
+                          template_slot="body",
+                          text="MMMU 70.6 vs BAGEL 55.3",
+                          evidence_quote="70.6 on MMMU"),
+                # ❌ missing quote: numbers must be stripped to [?]
+                LayerNode(layer_id="s2_b2", name="body2", kind="text", z_index=10,
+                          template_slot="body",
+                          text="PSNR drops 28.5 to 22.1 dB"),
+                # ❌ quote not in source: numbers must be stripped to [?]
+                LayerNode(layer_id="s2_b3", name="body3", kind="text", z_index=10,
+                          template_slot="body",
+                          text="500K hours of audio in training",
+                          evidence_quote="500,000 hours of training audio"),
+            ]),
+        ],
+    )
+
+    out_dir = REPO_ROOT / "out" / "smoke_provenance"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-prov")
+    ctx.state["ingested"] = [{
+        "file": "test.pdf", "type": "pdf",
+        "manifest": {"title": paper_title, "authors": paper_authors},
+        "raw_text": paper_text,
+    }]
+
+    rep = validate_provenance(spec, ctx)
+    if rep.n_passed != 1:
+        _fail(f"expected 1 pass, got {rep.n_passed}")
+    if len(rep.failures) != 2:
+        _fail(f"expected 2 failures, got {len(rep.failures)}: {rep.failures}")
+    fail_ids = {f.layer_id for f in rep.failures}
+    if fail_ids != {"s2_b2", "s2_b3"}:
+        _fail(f"failure ids: expected {{s2_b2,s2_b3}}, got {fail_ids}")
+    reasons = {f.reason for f in rep.failures}
+    if reasons != {"missing_quote", "quote_not_in_source"}:
+        _fail(f"reasons: expected both, got {reasons}")
+
+    n_mut = apply_strict_provenance(spec, rep)
+    if n_mut != 2:
+        _fail(f"expected 2 mutations, got {n_mut}")
+    s2 = spec.layer_graph[1]
+    b2 = s2.children[2].text
+    b3 = s2.children[3].text
+    if "[?]" not in b2 or "28.5" in b2 or "22.1" in b2:
+        _fail(f"b2 not stripped: {b2!r}")
+    if "[?]" not in b3 or "500K" in b3:
+        _fail(f"b3 not stripped: {b3!r}")
+    _ok("validator: 1 pass + 2 failures (missing/mismatch) → strict mutation [?] correct")
+
+    # ── Part (f): _resolve_authors_text ──────────────────────────────
+    if not _is_authors_leakage("Author One · Author Two · Affiliation"):
+        _fail("leakage detect FN: 'Author One' should be flagged")
+    if _is_authors_leakage("Meituan LongCat Team"):
+        _fail("leakage detect FP: real team name flagged")
+    r = _resolve_authors_text(ctx, existing="Author One · Affiliation")
+    if r != "Meituan LongCat Team":
+        _fail(f"authors fallthrough: expected manifest, got {r!r}")
+    r2 = _resolve_authors_text(ctx, existing="Meituan LongCat Team")
+    if r2 != "Meituan LongCat Team":
+        _fail(f"authors keep: expected real-name kept, got {r2!r}")
+    _ok("_resolve_authors_text: leakage detection + manifest fallthrough OK")
+
+    # ── Part (g): wide-table cap via composite integration ───────────
+    # Re-build the spec since we mutated it above; add a wide table slide.
+    wide_headers = ["Model"] + [f"B{i}" for i in range(11)]  # 12 cols
+    wide_rows = [
+        ["LongCat-Next"] + [f"{70+i}.{i}" for i in range(11)],
+        ["BAGEL"] + [f"{50+i}.{i}" for i in range(11)],
+    ]
+    spec2 = DesignSpec(
+        brief="wide-table smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"},
+        deck_design_system=DeckDesignSystem(style="academic-editorial"),
+        layer_graph=[
+            LayerNode(layer_id="s1", name="cover", kind="slide", z_index=1, role="cover", children=[
+                LayerNode(layer_id="s1_t", name="title", kind="text", z_index=10,
+                          template_slot="title", text=paper_title),
+                LayerNode(layer_id="s1_a", name="authors", kind="text", z_index=10,
+                          template_slot="authors",
+                          text="Author One · Author Two · Affiliation"),
+            ]),
+            LayerNode(layer_id="s2", name="wide", kind="slide", z_index=2,
+                      role="content_with_table", children=[
+                LayerNode(layer_id="s2_t", name="title", kind="text", z_index=10,
+                          template_slot="title", text="Wide Table"),
+                LayerNode(layer_id="s2_tab", name="tab", kind="table", z_index=5,
+                          template_slot="table_anchor",
+                          headers=wide_headers, rows=wide_rows),
+            ]),
+        ],
+    )
+    ctx.state["design_spec"] = spec2
+    res = composite({}, ctx=ctx)
+    if res.status != "ok":
+        _fail(f"composite failed: {res.payload}")
+    pptx_path = ctx.state["composition"].pptx_path
+    prs = _Reopen(str(pptx_path))
+
+    # Cover authors: planner placeholder must be overridden by manifest
+    cover = prs.slides[0]
+    authors_text = ""
+    for shape in cover.shapes:
+        if shape.has_text_frame and shape.name == "authors":
+            authors_text = shape.text_frame.text
+            break
+    if "Meituan LongCat Team" not in authors_text:
+        _fail(f"cover authors not auto-resolved: got {authors_text!r}")
+    if "Author One" in authors_text:
+        _fail(f"cover authors leak: {authors_text!r}")
+
+    # Wide table: rendered table should have ≤ 8 cols
+    wide_slide = prs.slides[1]
+    tables = [s for s in wide_slide.shapes if s.has_table]
+    if not tables:
+        _fail("wide-table slide missing rendered table")
+    n_cols_rendered = len(tables[0].table.columns)
+    if n_cols_rendered > 8:
+        _fail(f"wide-table cap not enforced: rendered {n_cols_rendered} cols")
+    if n_cols_rendered != 6:
+        _fail(f"wide-table cap should keep 6 cols, got {n_cols_rendered}")
+
+    # provenance_report.json should exist (from spec2 — no number bullets,
+    # so report is clean; but file must be written when ingested present)
+    import json
+    iter_dirs = sorted((ctx.run_dir / "composites").glob("iter_*"))
+    last_iter = iter_dirs[-1]
+    report_path = last_iter / "provenance_report.json"
+    if not report_path.exists():
+        _fail(f"provenance_report.json missing at {report_path}")
+    rep_data = json.loads(report_path.read_text())
+    if "n_audited" not in rep_data:
+        _fail(f"provenance_report.json missing keys: {list(rep_data.keys())}")
+    _ok(f"composite integration: cover auto-fills {authors_text!r}, "
+        f"wide table 12→{n_cols_rendered} cols, provenance_report.json written")
+
+
 def check_reasoning_step_roundtrip() -> None:
     """v2 training-data: derive artifact_type / design_spec / critique
     verdict / layer count from agent_trace alone (no top-level fields).
@@ -1567,7 +1785,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/23] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/24] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1646,7 +1864,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/23] ingest_document markdown (no API)")
+    print("[15/24] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1702,7 +1920,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/23] ingest_document image (no API)")
+    print("[16/24] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1752,7 +1970,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/23] ingest_document docx (no API)")
+    print("[17/24] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -1813,7 +2031,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/23] ingest_document pptx (no API)")
+    print("[18/24] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -1881,7 +2099,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/23] sub-figure extraction (no API)")
+    print("[19/24] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -1976,7 +2194,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/23] versioning + revise-loop preservation (no API)")
+    print("[20/24] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2118,6 +2336,7 @@ def main() -> int:
     check_deck_design_system_template()
     check_footer_leakage()
     check_callout_overlay()
+    check_provenance_validator()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
