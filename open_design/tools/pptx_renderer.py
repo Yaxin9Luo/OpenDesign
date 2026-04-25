@@ -189,6 +189,26 @@ _FOOTER_LEAKAGE_PHRASES = (
 )
 
 
+# v2.7 — placeholder authors strings the planner emits when it forgets
+# to read manifest.authors. The cover renderer's `_resolve_authors_text`
+# uses this list to detect leakage and fall through to the manifest.
+# Observed in 2026-04-25 longcat-next dogfood cover slide:
+# "Author One · Author Two · Affiliation".
+_AUTHORS_LEAKAGE_PHRASES = (
+    "author one",
+    "author two",
+    "author three",
+    "first author",
+    "second author",
+    "affiliation",
+    "your affiliation",
+    "your name",
+    "name surname",
+    "anonymous author",
+    "first last",
+)
+
+
 def _is_leakage(text: str) -> bool:
     """True if `text` contains any user-command phrase that should not
     appear in a deck footer. Case-insensitive substring match."""
@@ -196,6 +216,15 @@ def _is_leakage(text: str) -> bool:
         return True
     low = text.lower()
     return any(phrase in low for phrase in _FOOTER_LEAKAGE_PHRASES)
+
+
+def _is_authors_leakage(text: str) -> bool:
+    """True if `text` contains a placeholder-author phrase. Empty string
+    is also leakage so the resolver falls through to the manifest."""
+    if not text or not text.strip():
+        return True
+    low = text.lower()
+    return any(phrase in low for phrase in _AUTHORS_LEAKAGE_PHRASES)
 
 
 def _resolve_footer_text(ds: Any, spec: Any, ctx: ToolContext) -> str:
@@ -227,6 +256,35 @@ def _resolve_footer_text(ds: Any, spec: Any, ctx: ToolContext) -> str:
             return title[:80]
 
     # 3. Empty rather than leak the brief
+    return ""
+
+
+def _resolve_authors_text(ctx: ToolContext, *, existing: str | None = None) -> str:
+    """v2.7 — resolve the cover-slide authors text.
+
+    Precedence (first non-leakage match wins):
+      1. `existing` planner-supplied text — if it's a non-placeholder
+         string, keep it.
+      2. `ctx.state["ingested"][i]["manifest"]["authors"]` — joined with
+         " · " and truncated to 80 chars.
+      3. Empty string (NOT a placeholder).
+
+    Why a separate resolver: the 2026-04-25 longcat-next dogfood emitted
+    "Author One · Author Two · Affiliation" on the cover because the
+    planner skipped reading manifest.authors. The renderer becomes the
+    safety net: even if the planner forgets, the manifest provides the
+    truth, and the leakage filter rejects placeholder strings.
+    """
+    if existing and not _is_authors_leakage(existing):
+        return existing.strip()[:80]
+    state = getattr(ctx, "state", None) or {}
+    for entry in (state.get("ingested") or []):
+        manifest = (entry or {}).get("manifest") or {}
+        authors = manifest.get("authors") or []
+        if isinstance(authors, list) and authors:
+            text = " · ".join(str(a) for a in authors if a).strip()
+            if text and not _is_authors_leakage(text):
+                return text[:80]
     return ""
 
 
@@ -353,6 +411,22 @@ def _render_templated_slide(
     for child in children:
         if getattr(child, "kind", None) == "callout":
             _add_callout(slide, child, placed_anchors, slide_w, slide_h)
+
+    # v2.7 — cover-only safety net: if the cover layout's `authors` shape
+    # is empty or carries placeholder text ("Author One · Affiliation"),
+    # auto-fill from `ctx.state["ingested"][...]["manifest"]["authors"]`.
+    # The planner SHOULD set this via a child with template_slot="authors",
+    # but the dogfood proved it forgets. Renderer is the last line of
+    # defense.
+    if role == "cover" and "authors" in inv:
+        authors_shape = inv["authors"]
+        cur = ""
+        if authors_shape.has_text_frame:
+            cur = authors_shape.text_frame.text or ""
+        resolved = _resolve_authors_text(ctx, existing=cur)
+        if resolved and resolved != cur and authors_shape.has_text_frame:
+            from ..util.template_pptx import replace_text_in_shape as _r
+            _r(authors_shape, [{"text": resolved}])
 
     # Speaker notes — same path as blank-Presentation case.
     notes = getattr(slide_node, "speaker_notes", None)
@@ -674,6 +748,32 @@ def _add_table(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
         for r in rows
     ]
     rows = [r[:n_cols] for r in rows]
+
+    # v2.7 — wide-table safety net. Planner.md rule #7 asks the planner
+    # to subset wide tables down to 4-6 cols (deck cells go illegible
+    # past ~8). Two consecutive 2026-04-25 dogfoods produced 12-15 col
+    # tables anyway. Cap rendering at 8 cols, keep first 6, append a
+    # marker so the audience knows columns were dropped. Loud log so
+    # reviews can flag the planner.
+    _WIDE_CAP = 8
+    _WIDE_KEEP = 6
+    if n_cols > _WIDE_CAP:
+        from ..util.logging import log as _wlog
+        original_cols = n_cols
+        _wlog("pptx.table.truncate",
+              layer_id=getattr(node, "layer_id", "?"),
+              original_cols=original_cols, kept_cols=_WIDE_KEEP)
+        headers = headers[:_WIDE_KEEP]
+        rows = [r[:_WIDE_KEEP] for r in rows]
+        n_cols = _WIDE_KEEP
+        # Stuff a marker into the caption so the slide carries evidence.
+        marker = (f" [Truncated: showing {_WIDE_KEEP}/{original_cols} "
+                  f"cols — see paper for full table]")
+        try:
+            cur_cap = (getattr(node, "caption", None) or "").strip()
+            node.caption = (cur_cap + marker).strip() if cur_cap else marker.strip()
+        except (AttributeError, TypeError):
+            pass  # frozen / proxy — best-effort
 
     # Normalize rule list length.
     if col_rule:
