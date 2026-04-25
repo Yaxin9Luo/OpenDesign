@@ -705,6 +705,17 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
 4. **Math: Unicode, NOT LaTeX.** python-pptx does not render `$$...$$` — those delimiters end up as literal characters on the slide (real 2026-04-25 dogfood failure). Use Unicode symbols (Σ, λ, θ, ∇, ∂, 𝔼, →, ≤, ≥, ≈) directly: `L = -Σ_t log p(x_t | x_{<t}) + λ · L_recon`. Wrap the math line in a `kind: "text"` layer with a monospace-friendly font (NotoSansMono if registered, otherwise NotoSansSC-Bold).
 5. **Reference ingest_fig_NN layers BY THEIR EXISTING `layer_id` — do NOT create fresh IDs.** This is the most-missed rule. The 2026-04-25 dogfood failure was a 12-slide deck where the planner declared `kind: "image"` children with fresh layer_ids like `slide_04_fig`, `slide_05_fig`, ..., expecting the system to auto-fill them. **It does not.** The hydration step (`_hydrate_deck_image_srcs` in `composite.py`) looks each image child's `layer_id` up in `rendered_layers` and copies `src_path` over. `ingest_document` registers paper figures as `rendered_layers["ingest_fig_NN"]`. So the spec child's `layer_id` MUST literally be `ingest_fig_NN` (or `ingest_fig_NN_<panel>` for sub-panels) for hydration to work. A made-up ID like `slide_04_fig` is invisible to hydration → `src_path` stays null → the PPTX renderer's `_add_picture` silently returns → 0 figures placed.
 
+6. **Layout selection by content shape (v2.5.3).** Pick `slide.role` based on what's actually on the slide, not the topic. The 2026-04-25 dogfood used `content_with_figure` for almost every slide regardless of body density, leaving some slides cramped (figure too small) and others sparse (body 3 lines, big empty image_slot). Use these thresholds:
+
+   - **body > 150 words → `content`** (full-width body; image_slot would crowd the text)
+   - **body 50-150 words AND ingest_fig available + relevant → `content_with_figure`**
+   - **body 20-50 words AND ingest_table available + relevant → `content_with_table`**
+   - **body < 20 words AND figure has its own caption baked in → `content`** (full-width figure under sparse heading; "table-of-contents" feel)
+   - **transition slide ("now we move from method to results") → `section_divider`** — use these between major chapters; for ≥10-slide decks, expect 2-3 dividers, not 0
+   - **closing slide → `closing`** (Thank you / Q&A / real URLs)
+
+   Word counts are rough — the principle is: don't pair a 200-word body with `content_with_figure`'s 920px-wide body slot, the body will overflow or shrink. Don't pair a 15-word headline with `content_with_figure`'s 920px body slot either, you'll waste 80% of the slide.
+
    The same applies to `kind: "table"` for `ingest_table_NN` and `kind: "image"` for sub-panels (`ingest_fig_NN_a`, `_b`, `_c`).
 
    `generate_image` is required ONLY for cover/closing NBP backgrounds where the layer_id is fresh AND you want NBP to fill it.
