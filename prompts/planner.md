@@ -757,9 +757,21 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
    - For ablation tables: each ablation gets its own subset slide rather than one giant table. A 6×3 ablation across 4 dimensions = 4 separate `content_with_table` slides (or 4 `content_with_figure` slides if the paper provides ablation panel figures).
    - For tables with ≤ 8 columns: place as-is, no subsetting required.
 
+   **Hard enforcement (v2.7)**: the PPTX renderer caps tables at 8 columns. Tables exceeding the cap are silently truncated to the first 6 columns + a "[Truncated: showing 6/N cols]" caption marker. To preserve narrative integrity, the planner MUST subset itself BEFORE composite — the renderer's truncation is a safety net, not a substitute.
+
    The same applies to `kind: "table"` for `ingest_table_NN` and `kind: "image"` for sub-panels (`ingest_fig_NN_a`, `_b`, `_c`).
 
    `generate_image` is required ONLY for cover/closing NBP backgrounds where the layer_id is fresh AND you want NBP to fill it.
+
+9. **Provenance — every body bullet with a number sets `evidence_quote` (v2.7).** For any `kind: "text"` slide-body child whose `text` contains a numeric token (`70.6`, `+5.2`, `4.5T tokens`, `80GB`, `0.32`, `12.5K tok/sec`, `40%`, etc.), set `evidence_quote` to a ≥10-character verbatim substring of the ingested paper's `raw_text` (available in `ctx.state["ingested"][i]["raw_text"]` after `ingest_document`). The composite stage runs `validate_provenance(spec, ctx)` and replaces unverifiable numbers with `[?]` markers in the rendered slide.
+
+   ✅ `text: "MMMU 70.6 vs BAGEL 55.3"` + `evidence_quote: "70.6 on MMMU"` → passes (literal substring of paper Table 1 caption).
+
+   ❌ `text: "12.5K tok/sec on 64×A100"` + no evidence_quote → failure; numbers replaced with `[?]` in the deck. If you cannot find a quote, **REMOVE the number** (write "competitive throughput" instead). Refusal cost ≪ fabrication cost — audiences look up unstated numbers; they cannot recover trust after a presenter cites a fabricated benchmark.
+
+   The 2026-04-25 longcat-next dogfood shipped 9 fabricated bullets — "PSNR drops 28.5 → 22.1 dB" (paper Table 6 actually shows 20.88/21.86/30.52/18.16), "500K hours audio / 4.5T text tokens / 80GB vs 120GB" (none of those numbers exist in the paper). The v2.5.3 rule "number + named rival" is correct in spirit but backfires without evidence binding — the LLM met the rule by inventing.
+
+10. **Cover authors from `manifest.authors`** (v2.7). Cover slide MUST include a `kind: "text"` child with `template_slot: "authors"` and `text` set to `" · ".join(ingest.manifest.authors)`. NEVER write `"Author One · Author Two · Affiliation"` or similar placeholder — the renderer's `_resolve_authors_text` filter rejects placeholder strings and falls through to the manifest. If `manifest.authors` is empty (rare; common on `.docx`/`.pptx` ingests), emit `text: ""` rather than placeholder.
 
 ### Spec-shape example — paper deck slide (v2.5.2 templated path)
 

@@ -126,12 +126,15 @@ Worked example for one content slide:
 ```
 3. **Method overview** — `role: content_with_figure`
    Claim: DiNA makes vision/audio/text one autoregressive stream — single decoder, no modality routing.
-   Evidence: `ingest_fig_03` — dual-tokenizer pipeline, vision/audio quantized via RVQ before shared decoder. Body bullets cite specific regions.
+   Evidence: `ingest_fig_03` — dual-tokenizer pipeline, vision/audio quantized via RVQ before shared decoder.
    Slots: section_label="02 · METHOD" | title="Discrete Native Autoregression"
-        | body="• Per-modality tokenizer → shared decoder (Fig. 3 right) • RVQ for vision: 64K codes, 4-stage residual • Audio uses linguistic-guided codec (§3.2)"
+        | body="• Per-modality tokenizer → shared decoder (Fig. 3 right) • RVQ for vision: 64K codes (§3.2) • Audio uses linguistic-guided codec"
+          Body bullet provenance — for each bullet containing a number, append:
+          Evidence quote: "<≥10-char verbatim substring of paper>" (e.g. "64K codes")
+          If no quote can be located, REMOVE the number from the bullet.
         | image_slot=`ingest_fig_03`
    Callouts: highlight on Fig. 3 right column (the shared decoder block)
-   Speaker note: "Last slide showed why unified is hard. Now: DiNA — left of Fig. 3 = per-modality tokenizers; right = shared decoder, no modality routing. Anticipated Q: 'why RVQ not VQ-VAE?' Answer: scaling, see ablation slide."
+   Speaker note: "Last slide: why unified is hard. Now: DiNA. Anticipated Q: 'why RVQ not VQ-VAE?' Answer: scaling."
 ```
 
 **Claim → Evidence is non-optional on content* roles** — it forces commitment to what the slide ARGUES, not just topic adjacency. Body bullets MUST trace to specific figure regions / table cells / equations.
@@ -266,6 +269,16 @@ Each body bullet MUST contain a number + named rival: `"+5.2 on MathVista vs BAG
 
 If a body bullet cites a specific region ("the BAGEL row", "right column", "+5.2 cell", "bottom-right panel"), the outline entry's `Callouts:` line MUST list the overlay. Without this hint, the planner skips callouts and the audience can't locate what the bullet references. Apply to `content_with_figure` / `content_with_table` slides whose body claims specifics; skip on cover / section_divider / closing / text-only `content`.
 
+### 16. Provenance — every numeric bullet cites a verbatim paper substring (decks only — v2.7)
+
+Body bullets containing numbers (`70.6`, `+5.2`, `4.5T tokens`, `80GB`, `0.32`, `12.5K tok/sec`, etc.) MUST emit an `Evidence quote: "<≥10-char verbatim substring of ingested paper>"` line. The composite-stage validator substring-matches it against `ctx.state["ingested"][i]["raw_text"]` and replaces unverified numbers with `[?]` markers in the rendered slide.
+
+The 2026-04-25 longcat-next dogfood produced 9 fabricated bullets — "PSNR drops 28.5 → 22.1 dB" (real values from paper Table 6: 20.88 / 21.86 / 30.52 / 18.16), "500K hours audio / 4.5T text tokens / 80GB vs 120GB / 12.5K tok/sec on 64×A100" (none of those numbers exist in the paper). The v2.5.3 rule "number + named rival" backfired — the LLM met it by inventing.
+
+**If you cannot find a paper substring for a number, REMOVE the number.** Refusal cost ≪ fabrication cost. Audiences can look up unstated numbers; they cannot recover trust after a presenter cites a fabricated benchmark.
+
+**Cover authors**: the cover's `authors` slot pulls from `ingest.manifest.authors`. NEVER write "Author One · Author Two · Affiliation" — the renderer's leakage filter rejects placeholder strings.
+
 ---
 
 # Worked examples (read these before responding)
@@ -363,33 +376,17 @@ line work, paper-texture background, muted ink-black on cream — <subject>
    $$\mathcal{L}_{surgery}(\theta) = \ldots$$ immediately below.
    Length: prose ≤ 150 words + 1 equation.
 
-5. **benchmarks** — headline results table. Content: paper's Table 1 /
-   main-results table, real rows transcribed. Imagery:
-   `ingest_table_NN` as HTML `<table class='benchmark-table'>` (landing
-   render path); caption from paper verbatim. Length: all rows + all
-   columns (≤ 12 rows for readability).
+5. **benchmarks** — paper's Table 1 as HTML `<table class='benchmark-table'>` via `ingest_table_NN`, all rows + columns transcribed (≤ 12 rows for readability), caption verbatim.
 
-6. **ablation** — what happens without each component. Content: ablation
-   prose + ablation table. Imagery: `ingest_table_NN` (second table if
-   registered) + `ingest_fig_NN` whose caption contains "ablation" /
-   "ablation study". Length: prose ≤ 100 words + table.
+6. **ablation** — prose ≤ 100 words + ablation `ingest_table_NN` (2nd table) + ablation `ingest_fig_NN` (caption contains "ablation").
 
-7. **scaling** — how the method scales. Content: scaling-curve figure +
-   2-3 sentences of analysis. Imagery: `ingest_fig_NN` whose caption
-   contains "scaling" / "vs model size". Length: ≤ 80 words + figure.
+7. **scaling** — ≤ 80 words + scaling `ingest_fig_NN` (caption contains "scaling" / "vs model size").
 
-8. **qualitative** — case studies. Content: 2-3 qualitative examples
-   (per-task output before/after surgery). Imagery: 2× `ingest_fig_NN`
-   whose captions contain "qualitative" / "example" / "case". Length:
-   1-sentence caption per figure.
+8. **qualitative** — 2-3 case-study `ingest_fig_NN` (captions contain "qualitative"/"example"/"case"), 1-sentence per figure.
 
-9. **cta** — call to action. Content: "Read the paper" + "Code on
-   GitHub" + arXiv ID. Imagery: text-only + 2 CTAs (primary: "Read the
-   paper" → arXiv URL; secondary: "View code" → repo URL).
-   Length: headline ≤ 8 words.
+9. **cta** — text-only + 2 CTAs (primary: arXiv URL; secondary: repo URL). Headline ≤ 8 words.
 
-10. **footer** — citation + authors + affiliation + contact.
-    Imagery: text-only. Length: ≤ 60 words.
+10. **footer** — citation + authors + affiliation + contact. ≤ 60 words.
 
 ## Callback & narrative coherence
 

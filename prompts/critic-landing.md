@@ -43,8 +43,8 @@ Output **a single fenced JSON code block, nothing else**:
     {
       "severity": "blocker" | "major" | "minor",
       "layer_id": "S1" | "H1" | null,
-      "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact" | "copy" | "content",
-      // ^^ MUST be exactly one of those 8 strings. NOT a rubric criterion
+      "category": "typography" | "composition" | "brand" | "legibility" | "cultural" | "artifact" | "copy" | "content" | "provenance",
+      // ^^ MUST be exactly one of those 9 strings. NOT a rubric criterion
       //    name — the schema literal-validates and a wrong value makes the
       //    whole critique unusable. When in doubt: pick "content" for
       //    text-quality issues, "composition" for layout/balance, "artifact"
