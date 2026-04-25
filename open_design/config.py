@@ -19,7 +19,10 @@ Credentials (any subset works depending on which providers you call):
 - `ANTHROPIC_API_KEY`: stock Anthropic endpoint.
 - `OPENAI_COMPAT_API_KEY` + `OPENAI_COMPAT_BASE_URL`: explicit override
   for self-hosted vLLM / native Moonshot / DeepSeek / Doubao endpoints.
-- `GEMINI_API_KEY`: required for NBP image generation.
+- `GEMINI_API_KEY`: only required when `IMAGE_PROVIDER` resolves to
+  `gemini` (auto-routing on a model id starting with `gemini-` or
+  `imagen-`). The v2.5 default is seedream via OpenRouter, so most
+  users don't need this.
 """
 
 from __future__ import annotations
@@ -61,6 +64,7 @@ ANTHROPIC_FALLBACK_ENHANCER = "claude-opus-4-7"
 
 
 ProviderChoice = Literal["auto", "anthropic", "openai_compat"]
+ImageProviderChoice = Literal["auto", "gemini", "openrouter"]
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,11 @@ class Settings:
     anthropic_api_key: str
     anthropic_base_url: str | None              # None → stock Anthropic endpoint
 
-    # NBP (Gemini) credential — required for image generation
+    # NBP (Gemini) credential — only required when image_provider resolves
+    # to gemini. Empty string is fine when the user runs seedream / any
+    # other OpenRouter image model. Validated lazily inside
+    # `GeminiImageBackend.__init__` so an unset key on the seedream path
+    # doesn't crash startup.
     gemini_api_key: str
 
     # Per-role model + provider selection
@@ -96,7 +104,15 @@ class Settings:
     # OpenRouter key kept separate for the v1.2 ingest VLM path (util/vlm.py)
     openrouter_api_key: str | None = None
 
-    image_model: str = "gemini-3-pro-image-preview"
+    # v2.5 multi-provider image generation. `image_model` follows the same
+    # auto-detect rule as planner/critic: `gemini-*` / `imagen-*` route to
+    # the GeminiImageBackend, everything else to OpenRouter (chat/completions
+    # with modalities=["image","text"]). Default is seedream 4.5 via
+    # OpenRouter to keep the dev loop cheap; users override with
+    # `IMAGE_MODEL=gemini-3-pro-image-preview` (etc) or pin a provider via
+    # `IMAGE_PROVIDER=auto|gemini|openrouter`.
+    image_model: str = "bytedance-seed/seedream-4.5"
+    image_provider: ImageProviderChoice = "auto"
 
     # v1.2 paper2any: VLM used by ingest_document
     ingest_model: str = "qwen/qwen-vl-max"
@@ -154,9 +170,12 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    # Gemini key is now optional — only required when image_provider
+    # resolves to `gemini`. We validate lazily inside the backend so a
+    # seedream-only user doesn't need to set it. The startup check below
+    # used to fail-loud here; that contract moved into
+    # `GeminiImageBackend.__init__` (image_backend.py).
     gemini = os.getenv("GEMINI_API_KEY", "").strip()
-    if not gemini:
-        raise RuntimeError("GEMINI_API_KEY missing — copy .env.example to .env and fill it in")
 
     or_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     ant_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -220,6 +239,13 @@ def load_settings() -> Settings:
     )
     ingest_timeout = float(_parse_int_env("INGEST_HTTP_TIMEOUT", 600))
 
+    # v2.5 image-backend resolution. Default model is seedream via
+    # OpenRouter; `image_provider` lets the user pin a backend even when
+    # auto-detection would pick the other one (e.g. running an internal
+    # mirror that serves a `gemini-*` slug from a non-Google endpoint).
+    image_model_env = os.getenv("IMAGE_MODEL", "").strip()
+    image_provider_env = _parse_image_provider(os.getenv("IMAGE_PROVIDER", "auto"))
+
     return Settings(
         anthropic_api_key=api_key,
         anthropic_base_url=base_url,
@@ -240,6 +266,8 @@ def load_settings() -> Settings:
         planner_thinking_budget=planner_budget,
         critic_thinking_budget=critic_budget,
         enable_interleaved_thinking=interleaved,
+        **({"image_model": image_model_env} if image_model_env else {}),
+        image_provider=image_provider_env,
     )
 
 
@@ -251,6 +279,20 @@ def _parse_provider(raw: str) -> ProviderChoice:
         return "openai_compat"
     if raw in ("claude",):
         return "anthropic"
+    return "auto"
+
+
+def _parse_image_provider(raw: str) -> ImageProviderChoice:
+    """Normalize IMAGE_PROVIDER env. Accepts a few friendly aliases
+    (`google`, `nbp` → gemini; `or`, `seedream`, `bytedance` → openrouter)
+    so users don't have to remember the canonical token."""
+    raw = (raw or "").strip().lower()
+    if raw in ("auto", "gemini", "openrouter"):
+        return raw  # type: ignore[return-value]
+    if raw in ("google", "nbp", "imagen"):
+        return "gemini"
+    if raw in ("or", "openai_compat", "seedream", "bytedance", "doubao"):
+        return "openrouter"
     return "auto"
 
 

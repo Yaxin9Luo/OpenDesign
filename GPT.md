@@ -185,14 +185,31 @@ Paper ingest:
 ## LLM And Provider Rules
 
 All planner, critic, and enhancer calls should go through `LLMBackend`.
+All image-generation calls should go through `ImageBackend` (v2.5 — was
+Gemini-only through v2.4).
 
 Default routing in `config.py`:
 
 - planner: `moonshotai/kimi-k2.6`
 - critic: `moonshotai/kimi-k2.6`
 - enhancer: `moonshotai/kimi-k2.6` (was Opus 4.7 in v2.4.1; cost-cut 2026-04-25)
-- image generation: `gemini-3-pro-image-preview`
+- image generation: `bytedance-seed/seedream-4.5` via OpenRouter
+  (was `gemini-3-pro-image-preview` through v2.4; cost-cut 2026-04-25)
 - ingest VLM: `qwen/qwen-vl-max` via OpenRouter when available
+
+Image-backend module (`open_design/image_backend.py`) mirrors `LLMBackend`:
+
+- `ImageBackend` Protocol with one method `generate(prompt, aspect_ratio,
+  image_size) -> ImageResult`.
+- `GeminiImageBackend` wraps `google.genai`. Selected when `image_model`
+  starts with `gemini-` / `imagen-`. Requires `GEMINI_API_KEY`.
+- `OpenRouterImageBackend` POSTs to chat/completions with
+  `modalities=["image","text"]` + `image_config={aspect_ratio, image_size}`.
+  Selected for everything else. Reuses `OPENROUTER_API_KEY`.
+- `make_image_backend(settings)` is the only entry point tools should use.
+- No silent cross-provider fallback. Backend errors raise
+  `ImageGenerationError(message, category)`; tools catch and convert to
+  `obs_error(...)` so the planner sees a typed failure.
 
 Useful env vars:
 
@@ -205,6 +222,7 @@ Useful env vars:
 - `PLANNER_PROVIDER`, `CRITIC_PROVIDER`, `ENHANCER_PROVIDER`
 - `PLANNER_THINKING_BUDGET`, `CRITIC_THINKING_BUDGET`,
   `ENHANCER_THINKING_BUDGET`
+- `IMAGE_MODEL`, `IMAGE_PROVIDER` (`auto` | `gemini` | `openrouter`)
 - `SKIP_PROMPT_ENHANCER=1`
 
 Do not hard-code Claude-only behavior into new code. Claude references in older

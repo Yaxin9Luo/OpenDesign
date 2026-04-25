@@ -1,19 +1,21 @@
-"""generate_background — Gemini Nano Banana Pro wrapper.
+"""generate_background — provider-neutral text-to-image wrapper for poster
+backgrounds (v2.5 — was Gemini-only through v2.4).
 
 Hard guarantee: appends a no-text directive to every prompt regardless of what
 the planner sent, since the SDK has no native negative_prompt and our entire
 pipeline assumes background rasters carry zero text.
+
+The actual provider (Gemini / OpenRouter+Seedream / etc) is resolved by
+`image_backend.make_image_backend(settings)` from `IMAGE_MODEL` +
+`IMAGE_PROVIDER` env vars. This file knows nothing about Gemini or OpenRouter.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 from ._contract import ToolContext, obs_error, obs_ok
+from ..image_backend import ImageGenerationError, make_image_backend
 from ..schema import ToolResultRecord
 from ..util.io import sha256_file
 from ..util.logging import log
@@ -45,48 +47,25 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolResult
     version = ctx.next_layer_version(layer_id)
     out_path = ctx.layers_dir / f"bg_{layer_id}.v{version}.png"
 
-    client = genai.Client(api_key=ctx.settings.gemini_api_key)
-    log("nbp.request", model=ctx.settings.image_model,
+    backend = make_image_backend(ctx.settings)
+    log("nbp.request", model=ctx.settings.image_model, provider=backend.name,
         aspect_ratio=aspect_ratio, image_size=image_size, prompt_len=len(prompt))
 
     try:
-        response = client.models.generate_content(
-            model=ctx.settings.image_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(
-                    aspect_ratio=aspect_ratio,
-                    image_size=image_size,
-                ),
-            ),
+        result = backend.generate(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
         )
+    except ImageGenerationError as e:
+        return obs_error(str(e), category=e.category)
     except Exception as e:
-        return obs_error(f"Gemini API error: {e}", category="api")
-
-    image_saved = False
-    canvas_w = canvas_h = 0
-    for part in response.parts:
-        if part.inline_data:
-            # Always re-encode via PIL — Gemini's inline_data is JPEG regardless
-            # of the file extension we ask the SDK to save with, and downstream
-            # psd-tools / svgwrite expect the extension to match the bytes.
-            from io import BytesIO
-            from PIL import Image as PILImage
-            pil = PILImage.open(BytesIO(part.inline_data.data))
-            if pil.mode != "RGB":
-                pil = pil.convert("RGB")
-            pil.save(out_path, format="PNG", optimize=True)
-            canvas_w, canvas_h = pil.size
-            image_saved = True
-            break
-
-    if not image_saved:
         return obs_error(
-            "Gemini returned no image part — likely safety filter or empty response",
-            category="safety_filter",
+            f"Image backend ({backend.name}/{ctx.settings.image_model}) error: {e}",
+            category="api",
         )
 
+    out_path.write_bytes(result.data)
     sha = sha256_file(out_path)
     ctx.state["rendered_layers"][layer_id] = {
         "layer_id": layer_id,
@@ -102,13 +81,14 @@ def generate_background(args: dict[str, Any], *, ctx: ToolContext) -> ToolResult
         "sha256": sha,
         "version": version,
     }
-    log("nbp.saved", path=str(out_path), sha=sha[:12], version=version)
+    log("nbp.saved", path=str(out_path), sha=sha[:12], version=version,
+        provider=backend.name, model=ctx.settings.image_model)
 
     payload: dict[str, Any] = {
         "layer_id": layer_id,
         "sha256": sha,
-        "width": canvas_w,
-        "height": canvas_h,
+        "width": result.width,
+        "height": result.height,
         "relative_path": f"layers/bg_{layer_id}.v{version}.png",
         "version": version,
     }
