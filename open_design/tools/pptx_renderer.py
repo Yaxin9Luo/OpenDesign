@@ -41,7 +41,18 @@ _ALIGN_MAP = {
 
 
 def write_pptx(spec: Any, pptx_path: Path, ctx: ToolContext) -> int:
-    """Walk the slide tree and emit a .pptx file. Returns slide count."""
+    """Walk the slide tree and emit a .pptx file. Returns slide count.
+
+    v2.5.2 — when `spec.deck_design_system` is set, branches to the
+    template-backed renderer that opens
+    `assets/deck_templates/<style>.pptx`, clones template layouts per
+    `slide.role`, and fills shapes by `template_slot` name. The
+    no-template path below is preserved unchanged for back-compat.
+    """
+    ds = getattr(spec, "deck_design_system", None)
+    if ds is not None:
+        return _write_pptx_templated(spec, ds, pptx_path, ctx)
+
     canvas = spec.canvas or {}
     slide_w = int(canvas.get("w_px") or DEFAULT_SLIDE_W)
     slide_h = int(canvas.get("h_px") or DEFAULT_SLIDE_H)
@@ -62,6 +73,233 @@ def write_pptx(spec: Any, pptx_path: Path, ctx: ToolContext) -> int:
 
     prs.save(str(pptx_path))
     return slide_count
+
+
+# ── v2.5.2 templated path ─────────────────────────────────────────────
+
+
+# Roles → indices into the 6 template slides built by scripts/build_template.py.
+# Order MUST match build_template.py's build() invocation order.
+ROLE_TO_LAYOUT_IDX = {
+    "cover": 0,
+    "section_divider": 1,
+    "content": 2,
+    "content_with_figure": 3,
+    "content_with_table": 4,
+    "closing": 5,
+}
+
+
+def _write_pptx_templated(spec: Any, ds: Any, pptx_path: Path,
+                          ctx: ToolContext) -> int:
+    """Render `spec` using the template at `assets/deck_templates/<style>.pptx`.
+
+    Per spec slide:
+      1. Clone the template slide whose index matches `slide.role`.
+      2. Fill named text shapes from children where `child.template_slot`
+         matches `shape.name`.
+      3. Place images at `image_slot` shape's bbox via existing add_picture
+         + aspect-fit. Falls back to `child.bbox` if no slot found.
+      4. Place tables at `table_anchor` shape's bbox via existing add_table.
+      5. Auto-fill `footer` shape with ds.footer_text or first 60 chars of
+         spec.brief; auto-fill `slide_number` shape with "N/total".
+      6. Speaker notes path unchanged.
+
+    After all spec slides are rendered, the original 6 template slides are
+    removed so only the spec's slides remain.
+    """
+    from ..util.template_pptx import (
+        clone_template_slide,
+        inventory_by_name,
+        replace_text_in_shape,
+    )
+
+    canvas = spec.canvas or {}
+    slide_w = int(canvas.get("w_px") or DEFAULT_SLIDE_W)
+    slide_h = int(canvas.get("h_px") or DEFAULT_SLIDE_H)
+
+    template_path = (
+        ctx.settings.repo_root / "assets" / "deck_templates" / f"{ds.style}.pptx"
+    )
+    if not template_path.exists():
+        raise FileNotFoundError(
+            f"deck template not found: {template_path}. Run "
+            f"`uv run python scripts/build_template.py` to (re)generate."
+        )
+
+    prs = Presentation(str(template_path))
+    n_template_slides = len(prs.slides)
+
+    # Pre-compute footer + brief text for auto-fills.
+    footer_text = (
+        getattr(ds, "footer_text", None)
+        or (getattr(spec, "brief", "") or "")[:80].strip()
+        or ""
+    )
+
+    spec_slide_nodes = [
+        n for n in (spec.layer_graph or []) if getattr(n, "kind", None) == "slide"
+    ]
+    total = len(spec_slide_nodes)
+
+    new_slides: list[Any] = []
+    for idx, node in enumerate(spec_slide_nodes):
+        role = getattr(node, "role", None) or "content"
+        layout_idx = ROLE_TO_LAYOUT_IDX.get(role, ROLE_TO_LAYOUT_IDX["content"])
+        slide = clone_template_slide(prs, layout_idx)
+        _render_templated_slide(
+            slide, node, slide_w, slide_h, ctx, role,
+            footer_text=footer_text, slide_idx=idx, total=total,
+        )
+        new_slides.append(slide)
+
+    # Remove the original template slides from the slide list. We only drop
+    # the sldId references in `presentation.xml`; the slide parts themselves
+    # stay in the package as orphans. PowerPoint / Keynote / Google Slides
+    # all ignore unreferenced parts cleanly. python-pptx's _Relationships
+    # doesn't expose item deletion publicly, so a full part-drop would
+    # require OOXML-level surgery — out of scope for v2.5.2 (file bloat is
+    # ~30 KB, negligible vs. typical 5+ MB deck output with seedream images).
+    sldIdLst = prs.slides._sldIdLst
+    sldIds = list(sldIdLst)
+    for i in range(n_template_slides):
+        sldIdLst.remove(sldIds[i])
+
+    prs.save(str(pptx_path))
+    return total
+
+
+def _render_templated_slide(
+    slide: Any, slide_node: Any, slide_w: int, slide_h: int,
+    ctx: ToolContext, role: str, *,
+    footer_text: str, slide_idx: int, total: int,
+) -> None:
+    """Walk the slide spec's children, route each to its named slot in
+    the cloned template slide. Fall back to absolute-bbox positioning
+    when no slot match exists."""
+    from ..util.template_pptx import inventory_by_name, replace_text_in_shape
+
+    inv = inventory_by_name(slide)
+
+    # Auto-fill footer + slide_number first so they're always populated
+    # even if planner didn't address them.
+    needs_footer = role in ("content", "content_with_figure", "content_with_table")
+    if needs_footer:
+        if "footer" in inv and footer_text:
+            replace_text_in_shape(inv["footer"], [{"text": footer_text}])
+        if "slide_number" in inv:
+            replace_text_in_shape(
+                inv["slide_number"], [{"text": f"{slide_idx + 1}/{total}"}],
+            )
+
+    # Sort children by z_index for consistent layering on fallback paths.
+    children = sorted(
+        list(getattr(slide_node, "children", None) or []),
+        key=lambda c: int(getattr(c, "z_index", 0) or 0),
+    )
+
+    for child in children:
+        kind = getattr(child, "kind", None)
+        slot_name = getattr(child, "template_slot", None)
+
+        if kind == "text":
+            target = inv.get(slot_name) if slot_name else None
+            if target is not None and target.has_text_frame:
+                replace_text_in_shape(target, _text_to_paragraphs(child))
+            else:
+                # No matching slot — render as floating textbox at child.bbox.
+                _add_text_frame(slide, child, slide_w, slide_h)
+
+        elif kind == "image":
+            slot = inv.get(slot_name) if slot_name else inv.get("image_slot")
+            if slot is not None:
+                left, top, width, height = (
+                    slot.left, slot.top, slot.width, slot.height,
+                )
+                src = getattr(child, "src_path", None)
+                if src and Path(src).exists():
+                    fit_left, fit_top, fit_w, fit_h = _aspect_fit_emu(
+                        src, left, top, width, height,
+                    )
+                    slide.shapes.add_picture(
+                        src, fit_left, fit_top, width=fit_w, height=fit_h,
+                    )
+                # Remove the placeholder rectangle so it doesn't show under image.
+                slot._element.getparent().remove(slot._element)
+                # Keep inv consistent for later children that look up image_slot.
+                if slot_name and slot_name in inv:
+                    del inv[slot_name]
+                elif "image_slot" in inv and inv["image_slot"] is slot:
+                    del inv["image_slot"]
+            else:
+                # No slot — fall back to absolute bbox.
+                _add_picture(slide, child, slide_w, slide_h)
+
+        elif kind == "table":
+            slot = inv.get(slot_name) if slot_name else inv.get("table_anchor")
+            if slot is not None:
+                # Use the anchor's bbox by stuffing pixel-space dims back onto the
+                # node temporarily — _add_table uses _bbox_to_emu(node.bbox, ...).
+                ax = int(slot.left / PX_TO_EMU)
+                ay = int(slot.top / PX_TO_EMU)
+                aw = int(slot.width / PX_TO_EMU)
+                ah = int(slot.height / PX_TO_EMU)
+                anchored_node = _BboxOverride(child, ax, ay, aw, ah)
+                _add_table(slide, anchored_node, slide_w, slide_h)
+                # Remove the anchor rectangle.
+                slot._element.getparent().remove(slot._element)
+                if slot_name and slot_name in inv:
+                    del inv[slot_name]
+                elif "table_anchor" in inv:
+                    del inv["table_anchor"]
+            else:
+                _add_table(slide, child, slide_w, slide_h)
+
+        elif kind == "background":
+            # If the layout's background_fill is decorative cream, prefer the
+            # planner-supplied background as a full-bleed picture on top.
+            _add_background(slide, child, slide_w, slide_h)
+
+    # Speaker notes — same path as blank-Presentation case.
+    notes = getattr(slide_node, "speaker_notes", None)
+    if notes:
+        slide.notes_slide.notes_text_frame.text = notes
+
+
+def _text_to_paragraphs(node: Any) -> list[dict[str, Any]]:
+    """Convert a `kind="text"` LayerNode into a list[ParagraphSpec] for
+    `replace_text_in_shape`. Multi-line text becomes multiple paragraphs.
+    align / fill carry over; the template's font / size / color are
+    preserved unless explicitly overridden."""
+    text = (getattr(node, "text", None) or "").strip()
+    if not text:
+        return [{"text": ""}]
+    align = getattr(node, "align", None)
+    effects = getattr(node, "effects", None)
+    fill_hex = getattr(effects, "fill", None) if effects is not None else None
+    paragraphs: list[dict[str, Any]] = []
+    for line in text.splitlines() or [text]:
+        p: dict[str, Any] = {"text": line}
+        if align in ("left", "center", "right"):
+            p["alignment"] = align
+        if isinstance(fill_hex, str) and fill_hex.startswith("#") and len(fill_hex) == 7:
+            p["color"] = fill_hex
+        paragraphs.append(p)
+    return paragraphs
+
+
+class _BboxOverride:
+    """Minimal proxy that overrides `bbox` on a LayerNode for one render
+    call — used when a template anchor's position should win over the
+    planner's bbox for a table."""
+    def __init__(self, node: Any, x: int, y: int, w: int, h: int):
+        self._node = node
+        self._bbox = type("B", (), {"x": x, "y": y, "w": w, "h": h})()
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "bbox":
+            return self._bbox
+        return getattr(self._node, name)
 
 
 def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
