@@ -909,17 +909,32 @@ generate_image(
 
 Notice the **consistent style prefix** at the start of each prompt — that's what keeps 8 separate NBP calls looking like one deck.
 
-## Speaker notes (v2.3 — decks are for presenting)
+## Speaker notes (v2.3 — decks are for presenting; v2.5.3 contract added)
 
 Every `kind="slide"` LayerNode can carry an optional `speaker_notes: str` field. The PPTX renderer writes it into PowerPoint's / Keynote's **notes pane** (visible in presenter view, invisible on the projected slide). A deck without speaker notes is a handout, not a talk — **always draft notes for academic / conference decks, even if the user didn't ask**.
 
-Guidelines:
+### Contract for content-slide speaker_notes (v2.5.3)
+
+GPT-5.4 review of the 2026-04-25 dogfood (obs #8): notes were mostly "This figure shows..." / "The table compares..." — rephrasing the slide instead of helping the presenter. The presenter already sees the slide. Notes must add value the slide can't carry.
+
+Every content* slide's `speaker_notes` MUST contain (in this order):
+
+1. **Transition from the previous slide** — one sentence. `"We just saw the per-modality tokenizers; now I'll explain how they share the decoder."` Lets the presenter chain slides without thinking on stage.
+2. **The slide's headline number / finding** in spoken cadence — not paper-abstract phrasing. `"5.2 points better on MathVista, 3.1 on OCRBench, against BAGEL specifically"` not `"establishes SOTA on benchmarks"`.
+3. **One anticipated audience question + 1-line answer.** `"Q: Why RVQ instead of vanilla VQ-VAE? A: Scaling — RVQ's residual structure recovers fine details at 64K codes; see the ablation slide."` This is the highest-value content the slide alone can't carry.
+4. **(optional) Where to focus visually** — `"point to the right column of Fig. 3 — that's the shared decoder"`. Use this when the figure has multiple panels and only one is load-bearing.
+
+### Banned phrases
+
+- `"This figure shows..."` / `"The table compares..."` / `"As you can see..."` — pure rephrasing of the slide.
+- `"In this slide, we..."` / `"On this slide, I want to..."` — meta-commentary that wastes presenter time.
+
+### Other guidelines
+
 - **≤ 200 words per slide** — talking points, not a script.
 - **Include timing cues** when sections diverge from 1 min / slide (`"spend 3 min here"`).
-- **Include Q&A prompts** for interactive slides (`"Ask: why not approach X?"`).
-- **Cover transitions** — the note for slide N can flag "transition line to slide N+1".
 - **Preserve language** — Chinese brief → Chinese notes, English brief → English notes. Match the body language of the slide itself.
-- Skip notes for cover / thank-you / divider slides — they're self-explanatory.
+- **Skip notes for cover / thank-you / divider slides** — they're self-explanatory; the presenter doesn't need help saying "Hi, I'm X" or "Thank you / Q&A".
 
 ## Typography ranges (enforce in the spec — critic will penalize out-of-range)
 
