@@ -129,13 +129,59 @@ def _add_background(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
 
 
 def _add_picture(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
+    """Place an image into the slide letterbox-fit inside the planner's bbox.
+
+    `python-pptx`'s `add_picture(left, top, width=W, height=H)` force-stretches
+    the source to W×H. For paper figures pulled from `ingest_document` the
+    source aspect ratio rarely matches the planner's slot bbox, so the
+    stretch makes captions / axis labels / equation glyphs unreadable
+    (2026-04-25 dogfood feedback). We mirror v1.2.3 poster behavior here:
+    compute contain-fit dimensions from the source's real pixel aspect,
+    center inside bbox, leave letterbox bands transparent so the slide
+    background shows through.
+    """
     src = getattr(node, "src_path", None)
     if not src or not Path(src).exists():
         return
     left, top, width, height = _bbox_to_emu(
         getattr(node, "bbox", None), slide_w, slide_h,
     )
-    slide.shapes.add_picture(src, left, top, width=width, height=height)
+    fit_left, fit_top, fit_w, fit_h = _aspect_fit_emu(src, left, top, width, height)
+    slide.shapes.add_picture(src, fit_left, fit_top, width=fit_w, height=fit_h)
+
+
+def _aspect_fit_emu(
+    src_path: str,
+    bbox_left: int,
+    bbox_top: int,
+    bbox_width: int,
+    bbox_height: int,
+) -> tuple[int, int, int, int]:
+    """Letterbox-fit `src_path` into the EMU bbox; return (left, top, w, h).
+
+    Falls back to the original bbox if source dims are unreadable so a
+    stretched render is still better than a missing image.
+    """
+    if bbox_width <= 0 or bbox_height <= 0:
+        return bbox_left, bbox_top, bbox_width, bbox_height
+    try:
+        with Image.open(src_path) as im:
+            sw, sh = im.size
+    except Exception:
+        return bbox_left, bbox_top, bbox_width, bbox_height
+    if sw <= 0 or sh <= 0:
+        return bbox_left, bbox_top, bbox_width, bbox_height
+    src_ratio = sw / sh
+    bbox_ratio = bbox_width / bbox_height
+    if src_ratio > bbox_ratio:
+        new_w = bbox_width
+        new_h = int(round(bbox_width / src_ratio))
+    else:
+        new_h = bbox_height
+        new_w = int(round(bbox_height * src_ratio))
+    new_left = bbox_left + (bbox_width - new_w) // 2
+    new_top = bbox_top + (bbox_height - new_h) // 2
+    return new_left, new_top, new_w, new_h
 
 
 def _add_table(slide: Any, node: Any, slide_w: int, slide_h: int) -> None:
@@ -363,12 +409,33 @@ def _paste_image(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
         tile = Image.open(src).convert("RGBA")
     except Exception:
         return
-    default_full = getattr(node, "kind", None) == "background"
+    kind = getattr(node, "kind", None)
+    default_full = kind == "background"
     sx, sy, sw, sh = _scaled_bbox(
         getattr(node, "bbox", None), slide_w, slide_h, scale,
         default_full=default_full,
     )
-    tile = tile.resize((sw, sh), Image.LANCZOS)
+    if kind == "image" and tile.size != (sw, sh):
+        # Letterbox-fit content figures so the preview matches the PPTX
+        # render path (same v1.2.3-style aspect-preserve as poster/SVG).
+        # Backgrounds keep cover-fit (force-resize) since the cover is
+        # always full-bleed by design and any minor seedream aspect drift
+        # is better cropped than letterboxed with white bars on a slide.
+        src_w, src_h = tile.size
+        if src_w > 0 and src_h > 0 and sw > 0 and sh > 0:
+            src_ratio = src_w / src_h
+            bbox_ratio = sw / sh
+            if src_ratio > bbox_ratio:
+                new_w = sw
+                new_h = max(1, int(round(sw / src_ratio)))
+            else:
+                new_h = sh
+                new_w = max(1, int(round(sh * src_ratio)))
+            tile = tile.resize((new_w, new_h), Image.LANCZOS)
+            sx += (sw - new_w) // 2
+            sy += (sh - new_h) // 2
+    else:
+        tile = tile.resize((sw, sh), Image.LANCZOS)
     canvas.alpha_composite(tile, dest=(sx, sy)) if canvas.mode == "RGBA" else canvas.paste(tile, (sx, sy), tile)
 
 
