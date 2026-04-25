@@ -328,7 +328,10 @@ def check_composite_no_api() -> None:
 def check_svg_text_is_vector() -> None:
     print("[6/20] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
-    out_dir = REPO_ROOT / "out" / "smoke"
+    # v2.1 versioned layout: composite writes to composites/iter_NN/ and
+    # maintains final/ symlinks to the latest iter. Read through final/ so
+    # this check stays correct across future iteration counts.
+    out_dir = REPO_ROOT / "out" / "smoke" / "final"
 
     # --- SVG -------------------------------------------------------------
     svg_path = out_dir / "poster.svg"
@@ -588,7 +591,7 @@ def check_apply_edits_roundtrip() -> None:
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
-    src_html = REPO_ROOT / "out" / "smoke" / "poster.html"
+    src_html = REPO_ROOT / "out" / "smoke" / "final" / "poster.html"
     if not src_html.exists():
         _fail("smoke HTML missing — [5/16] composite step must run first")
 
@@ -629,8 +632,11 @@ def check_apply_edits_roundtrip() -> None:
         f"{len(restored_ids)} layers restored")
 
     # --- artifact files exist --------------------------------------------
+    # v2.1 versioned layout: apply_edits' fresh run writes into
+    # <run_dir>/composites/iter_01/ with final/ symlinks to the latest iter.
+    final_dir = run_dir / "final"
     for fname in ("poster.psd", "poster.svg", "poster.html", "preview.png"):
-        p = run_dir / fname
+        p = final_dir / fname
         if not p.exists() or p.stat().st_size == 0:
             _fail(f"{fname} not written: {p}")
     _ok("PSD+SVG+HTML+preview all regenerated in new run_dir")
@@ -638,7 +644,7 @@ def check_apply_edits_roundtrip() -> None:
     # --- edits landed in re-rendered run dir -----------------------------
     # v2 trajectory has no layer_graph; verify the rendered HTML on disk
     # contains the edits instead.
-    rendered_html = (run_dir / "poster.html").read_text(encoding="utf-8")
+    rendered_html = (final_dir / "poster.html").read_text(encoding="utf-8")
     if "140" not in rendered_html:
         _fail("expected font_size 140 to appear in re-rendered HTML")
     if "#ff3366" not in rendered_html.lower():
@@ -816,8 +822,10 @@ def check_landing_mode() -> None:
     if traj.metadata.source != "apply_edits":
         _fail(f"landing round-trip lost source label: got {traj.metadata.source!r}")
     # v2: trajectory has no design_spec / layer_graph; verify the edits
-    # landed in the regenerated HTML on disk instead.
-    rendered_html = (run_dir / "index.html").read_text(encoding="utf-8")
+    # landed in the regenerated HTML on disk instead. v2.1 versioned layout
+    # keeps artifacts under composites/iter_NN/ with final/ as the stable
+    # symlink surface — read through final/ so we're robust across iters.
+    rendered_html = (run_dir / "final" / "index.html").read_text(encoding="utf-8")
     if "128" not in rendered_html:
         _fail("landing edit lost: font_size 128 missing from rendered HTML")
     if "#38bdf8" not in rendered_html.lower():
@@ -1017,7 +1025,10 @@ def check_landing_with_images() -> None:
     html_text = Path(comp.html_path).read_text(encoding="utf-8")
 
     required = {
-        "figure.layer.image":     '<figure class="layer image"',
+        # v2.4.3 shipped drag/resize by appending the `draggable-resizable`
+        # class to the figure; omit the closing quote so added classes don't
+        # break the substring match.
+        "figure.layer.image":     '<figure class="layer image',
         "<img tag":               "<img src=\"data:image/",
         "data-has-image":         'data-has-image="true"',
         "hero image layer_id":    'data-layer-id="H0_img"',
