@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/20] imports")
+    print("[1/21] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/20] tool registry")
+    print("[2/21] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +81,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/20] pydantic schema round-trip (v2)")
+    print("[3/21] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +205,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/20] fonts")
+    print("[4/21] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +225,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/20] composite (no API)")
+    print("[5/21] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +326,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/20] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/21] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -400,7 +400,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/20] chat session save/load")
+    print("[7/21] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -462,7 +462,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/20] edit_layer (no API)")
+    print("[8/21] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -587,7 +587,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/20] apply-edits round-trip (no API)")
+    print("[9/21] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -666,7 +666,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/20] landing mode (no API)")
+    print("[10/21] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -842,7 +842,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/20] design-system styles (no API)")
+    print("[11/21] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -943,7 +943,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/20] landing with images (no API)")
+    print("[12/21] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1062,7 +1062,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/20] deck mode (no API)")
+    print("[13/21] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1234,6 +1234,121 @@ def check_deck_mode() -> None:
     _ok("pptx reopen: slide count + native text runs + picture shape + speaker notes all OK")
 
 
+def check_deck_design_system_template() -> None:
+    """v2.5.2 templated deck path: spec with deck_design_system + slide.role +
+    template_slot → renders against assets/deck_templates/academic-editorial.pptx.
+    Verifies named slots get filled, image_slot gets a real picture, footer +
+    slide_number auto-inject, and the original template slides are removed
+    from the slide list."""
+    print("[21/21] deck design system template (no API)")
+    from pptx import Presentation as _Reopen
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    from .config import REPO_ROOT, Settings
+    from .schema import (
+        ArtifactType, DeckDesignSystem, DesignSpec, LayerNode,
+    )
+    from .tools import ToolContext
+    from .tools.composite import composite
+
+    out_dir = REPO_ROOT / "out" / "smoke_deck_template"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stub a paper figure on disk so image_slot has something to place.
+    fig_path = layers_dir / "ingest_fig_01.png"
+    Image.new("RGB", (1200, 800), (180, 220, 200)).save(fig_path)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-deck-template")
+
+    # Pre-stage the ingested figure in rendered_layers so hydration finds it.
+    ctx.state["rendered_layers"]["ingest_fig_01"] = {
+        "layer_id": "ingest_fig_01", "name": "method_diagram", "kind": "image",
+        "z_index": 5, "bbox": None, "src_path": str(fig_path),
+        "aspect_ratio": "3:2",
+    }
+    ctx.state["design_spec"] = None  # will set below
+
+    spec = DesignSpec(
+        brief="LongCat-Next: Lexicalizing Modalities as Discrete Tokens",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96, "aspect_ratio": "16:9", "color_mode": "RGB"},
+        deck_design_system=DeckDesignSystem(
+            style="academic-editorial",
+            footer_text="LongCat-Next · Meituan",
+        ),
+        layer_graph=[
+            LayerNode(layer_id="slide_01", name="cover", kind="slide", z_index=1, role="cover", children=[
+                LayerNode(layer_id="slide_01_title", name="title", kind="text", z_index=10,
+                          template_slot="title", text="LongCat-Next"),
+                LayerNode(layer_id="slide_01_authors", name="authors", kind="text", z_index=10,
+                          template_slot="authors", text="Meituan LongCat Team"),
+                LayerNode(layer_id="slide_01_badge", name="badge", kind="text", z_index=10,
+                          template_slot="badge", text="NeurIPS 2026"),
+            ]),
+            LayerNode(layer_id="slide_02", name="method", kind="slide", z_index=2,
+                      role="content_with_figure", children=[
+                LayerNode(layer_id="slide_02_label", name="section_label", kind="text", z_index=10,
+                          template_slot="section_label", text="01 · METHOD"),
+                LayerNode(layer_id="slide_02_title", name="title", kind="text", z_index=10,
+                          template_slot="title", text="DiNA paradigm"),
+                LayerNode(layer_id="slide_02_body", name="body", kind="text", z_index=10,
+                          template_slot="body", text="Discrete tokens for vision/text/audio."),
+                LayerNode(layer_id="ingest_fig_01", name="diagram", kind="image", z_index=5,
+                          template_slot="image_slot"),
+            ]),
+            LayerNode(layer_id="slide_03", name="closing", kind="slide", z_index=3, role="closing",
+                      children=[]),
+        ],
+    )
+    ctx.state["design_spec"] = spec
+
+    res = composite({}, ctx=ctx)
+    if res.status != "ok":
+        _fail(f"composite() returned {res.status}: {res.payload}")
+
+    pptx_path = ctx.state["composition"].pptx_path
+    prs = _Reopen(str(pptx_path))
+    if len(prs.slides) != 3:
+        _fail(f"expected 3 slides after template cleanup, got {len(prs.slides)}")
+    _ok(f"templated deck: 3 slides rendered (template's 6 layout slides removed from sldIdLst)")
+
+    # Slide 0 (cover) — title text replaced; badge text replaced; image_slot still shape (no image since cover didn't reference one)
+    cover = prs.slides[0]
+    cover_texts = {s.name: s.text_frame.text for s in cover.shapes if s.has_text_frame}
+    if cover_texts.get("title") != "LongCat-Next":
+        _fail(f"cover title text wrong: {cover_texts.get('title')!r}")
+    if cover_texts.get("badge") != "NeurIPS 2026":
+        _fail(f"cover badge text wrong: {cover_texts.get('badge')!r}")
+    _ok("cover slide: title + badge text filled from template_slot")
+
+    # Slide 1 (content_with_figure) — image placed, footer + slide_number auto-injected
+    method = prs.slides[1]
+    method_texts = {s.name: s.text_frame.text for s in method.shapes if s.has_text_frame}
+    if method_texts.get("title") != "DiNA paradigm":
+        _fail(f"method title text wrong: {method_texts.get('title')!r}")
+    if "LongCat-Next · Meituan" not in (method_texts.get("footer") or ""):
+        _fail(f"footer auto-fill missing: {method_texts.get('footer')!r}")
+    if method_texts.get("slide_number") != "2/3":
+        _fail(f"slide_number auto-fill wrong: expected '2/3' got {method_texts.get('slide_number')!r}")
+    pic_count = sum(1 for s in method.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    if pic_count != 1:
+        _fail(f"expected 1 picture on method slide, got {pic_count}")
+    _ok("content_with_figure: title + body filled, image placed, footer + slide_number auto-injected")
+
+    # Slide 2 (closing) — title still says "Thank you" (template default); no footer
+    closing = prs.slides[2]
+    closing_texts = {s.name: s.text_frame.text for s in closing.shapes if s.has_text_frame}
+    if closing_texts.get("title") != "Thank you":
+        _fail(f"closing title default wrong: {closing_texts.get('title')!r}")
+    _ok("closing slide: template defaults preserved when planner emits no children")
+
+
 def check_reasoning_step_roundtrip() -> None:
     """v2 training-data: derive artifact_type / design_spec / critique
     verdict / layer count from agent_trace alone (no top-level fields).
@@ -1242,7 +1357,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/20] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/21] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1321,7 +1436,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/20] ingest_document markdown (no API)")
+    print("[15/21] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1377,7 +1492,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/20] ingest_document image (no API)")
+    print("[16/21] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1427,7 +1542,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/20] ingest_document docx (no API)")
+    print("[17/21] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -1488,7 +1603,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/20] ingest_document pptx (no API)")
+    print("[18/21] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -1556,7 +1671,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/20] sub-figure extraction (no API)")
+    print("[19/21] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -1651,7 +1766,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/20] versioning + revise-loop preservation (no API)")
+    print("[20/21] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -1790,6 +1905,7 @@ def main() -> int:
     check_ingest_document_pptx()
     check_sub_figure_registration()
     check_versioning_no_api()
+    check_deck_design_system_template()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
