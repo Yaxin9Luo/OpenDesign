@@ -2610,20 +2610,35 @@ def _make_smoke_deck_spec(n_slides: int = 3) -> tuple["DesignSpec", list[Path], 
 
 
 def check_critic_subagent_trajectory() -> None:
-    """smoke #25: spawn CriticAgent on a fixture deck with a mocked
-    LLMBackend that calls `report_verdict` on turn 1. Verify the resulting
-    CritiqueReport has the expected verdict/score AND the trajectory file
-    `critic.jsonl` lands in the run dir."""
-    print("[28/42] critic sub-agent: scripted report_verdict + trajectory written")
+    """smoke #28: spawn CriticAgent on a fixture deck with a mocked
+    LLMBackend that fetches one slide PNG, then one paper excerpt, then
+    calls `report_verdict`. Verify the resulting CritiqueReport has the
+    expected verdict/score AND the trajectory file `critic.jsonl` lands
+    in the run dir.
+
+    v2.7.3 hotfix (2026-04-26) also verifies:
+    - the FULL paper raw_text is NEVER in the initial user message —
+      it must be fetched on-demand via `read_paper_section`
+    - the read_slide_render tool result stays a small ack (no base64)
+    """
+    print("[28/42] critic sub-agent: on-demand paper + trajectory written")
     from .agents import CriticAgent
     from .schema import ArtifactType, CritiqueReport
 
     spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=3)
     settings = _make_smoke_settings(run_dir.parent.parent)
 
+    secret_marker = "BANNED-FULL-PAPER-MARKER-XYZZY"
+    paper_text = (
+        "LongCat-Next achieves 72.3% top-1 on ImageNet. "
+        + secret_marker + " "
+        + ("Filler section. " * 2000)
+    )
+
     scripted = [
         _ScriptedTurn(tool_calls=[
             ("read_slide_render", {"slide_id": "S0"}),
+            ("read_paper_section", {"query": "72.3"}),
         ]),
         _ScriptedTurn(tool_calls=[
             ("report_verdict", {
@@ -2642,13 +2657,13 @@ def check_critic_subagent_trajectory() -> None:
     mock = _MockCriticBackend(model="stub-critic", turns=scripted)
 
     agent = CriticAgent(settings, ArtifactType.DECK)
-    agent.backend = mock  # inject after construction (no API call needed)
+    agent.backend = mock
 
     traj_path = run_dir / "trajectory" / "critic.jsonl"
     report = agent.critique(
         spec=spec, layer_manifest=[],
         slide_renders=slide_paths,
-        paper_raw_text="LongCat-Next achieves 72.3% top-1 on ImageNet.",
+        paper_raw_text=paper_text,
         iteration=1, trajectory_path=traj_path,
     )
 
@@ -2672,7 +2687,37 @@ def check_critic_subagent_trajectory() -> None:
         _fail(f"trajectory iteration field corrupted: {line0}, {line1}")
     if not any(tc.get("name") == "report_verdict" for tc in line1.get("tool_calls", [])):
         _fail(f"final turn should record report_verdict; got {line1.get('tool_calls')}")
-    _ok(f"critic sub-agent: report_verdict captured + critic.jsonl ({len(lines)} lines)")
+
+    # On-demand paper: the FULL paper text (or its unique marker) must NOT
+    # appear in the initial user message. The marker is only allowed to
+    # surface inside a tool-result for the read_paper_section call.
+    initial_msgs = mock.observed_messages[0]
+    initial_blob = json.dumps(initial_msgs, default=str)
+    if secret_marker in initial_blob:
+        _fail("paper raw_text leaked into the initial user message — "
+              "must be fetched on-demand via read_paper_section")
+
+    # The marker SHOULD show up in turn 2's tool-result for the paper
+    # excerpt query (the model asked for "72.3" and the marker sits a few
+    # chars away in our fixture).
+    second_blob = json.dumps(mock.observed_messages[1], default=str)
+    if secret_marker not in second_blob:
+        _fail("read_paper_section tool result should contain the matched "
+              "excerpt window including the marker; got nothing")
+
+    # The read_slide_render tool result must be a small ack now — no
+    # 12K-char base64 string in the `tool` role message.
+    big_tool = [
+        m for m in mock.observed_messages[1]
+        if isinstance(m, dict) and m.get("role") == "tool"
+        and len(m.get("content") or "") > 2000
+    ]
+    if big_tool:
+        _fail(f"read_slide_render leaked base64 into a tool message; "
+              f"found {len(big_tool)} oversized tool entries")
+
+    _ok(f"critic sub-agent: on-demand paper + small tool-result ack + "
+        f"critic.jsonl ({len(lines)} lines)")
 
 
 def check_critic_subagent_max_turns() -> None:
@@ -2825,10 +2870,18 @@ def check_critic_planner_consumption() -> None:
 
 
 def check_critic_subagent_png_throughput() -> None:
-    """smoke #28: long-tail check that CriticAgent + read_slide_render
-    survive a 15-slide deck with realistic file sizes (no OOM, all renders
-    accessible by slide_id, sub-agent terminates cleanly)."""
-    print("[31/42] critic sub-agent: 15-slide PNG throughput (no OOM)")
+    """smoke #31 (v2.7.3 hotfix 2026-04-26): long-tail check that
+    CriticAgent + read_slide_render survive a 15-slide deck with
+    realistic file sizes AND that:
+
+    - tool_result content for read_slide_render stays SMALL (no base64
+      leak into the `tool` role message)
+    - the actual PNG arrives on a follow-up user-role vision message
+      so subsequent turns see image tokens, not 12K+ tokens of base64
+      replayed as plain text (the bug that broke longcat-next dogfood
+      on 2026-04-26)
+    - the per-turn image cap defers surplus calls to a later turn"""
+    print("[31/42] critic sub-agent: per-turn image cap + vision-message delivery")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2841,25 +2894,28 @@ def check_critic_subagent_png_throughput() -> None:
 
     settings = _make_smoke_settings(run_dir.parent.parent)
 
-    # Script: read every slide once, then report_verdict.
-    read_calls = [
-        _ScriptedTurn(tool_calls=[
-            ("read_slide_render", {"slide_id": f"S{i}"}),
-        ])
+    # Turn 1 attempts to fetch all 15 slides in parallel — exercises
+    # both the cap (only `critic_max_images_per_turn` get delivered as
+    # vision messages, the rest are deferred) and the vision-message
+    # plumbing. Turn 2 calls report_verdict to terminate.
+    bulk_read = _ScriptedTurn(tool_calls=[
+        ("read_slide_render", {"slide_id": f"S{i}"})
         for i in range(15)
-    ]
+    ])
     final_call = _ScriptedTurn(tool_calls=[(
         "report_verdict",
-        {"score": 0.78, "verdict": "pass", "summary": "all 15 slides reviewed",
+        {"score": 0.78, "verdict": "pass",
+         "summary": "all 15 slides reviewed",
          "issues": []},
     )])
-    # Because critic_max_turns defaults to 4 in the smoke settings, raise
-    # it for this stress test so the agent reaches the terminal call.
     big_settings = settings.__class__(
         **{**settings.__dict__, "critic_max_turns": 20,
-           "critic_preview_max_edge": 1024},
+           "critic_preview_max_edge": 1024,
+           "critic_max_images_per_turn": 4},
     )
-    mock = _MockCriticBackend(model="stub-critic", turns=read_calls + [final_call])
+    mock = _MockCriticBackend(
+        model="stub-critic", turns=[bulk_read, final_call],
+    )
 
     agent = CriticAgent(big_settings, ArtifactType.DECK)
     agent.backend = mock
@@ -2875,29 +2931,59 @@ def check_critic_subagent_png_throughput() -> None:
     if report.verdict != "pass" or len(report.issues) != 0:
         _fail(f"15-slide run should pass cleanly; got verdict={report.verdict} "
               f"issues={len(report.issues)}")
-    if mock._call_count != 16:
-        _fail(f"expected 16 backend calls (15 reads + 1 verdict); got {mock._call_count}")
+    if mock._call_count != 2:
+        _fail(f"expected 2 backend calls (1 bulk read turn + 1 verdict); "
+              f"got {mock._call_count}")
 
-    # Spot-check that the first read_slide_render result actually carried
-    # base64 PNG bytes (not a stub). The mock records observed_messages —
-    # the second create_turn call sees the tool result for slide S0.
     if len(mock.observed_messages) < 2:
         _fail("mock should have observed at least 2 turns of messages")
     second_turn_msgs = mock.observed_messages[1]
-    found_b64 = False
+
+    # The bulk-read turn must NOT have leaked base64 into any `tool` role
+    # message — only short ack JSONs (a few hundred chars at most).
+    big_tool_results = [
+        m for m in second_turn_msgs
+        if isinstance(m, dict) and m.get("role") == "tool"
+        and len(m.get("content") or "") > 2000
+    ]
+    if big_tool_results:
+        _fail(f"tool results must stay small after hotfix; found "
+              f"{len(big_tool_results)} oversized tool messages")
+
+    # Exactly `critic_max_images_per_turn` slide PNGs should ride as
+    # follow-up user-role vision messages with image_url blocks.
+    cap = big_settings.critic_max_images_per_turn
+    vision_msgs = []
     for m in second_turn_msgs:
-        # The OpenAI-style tool result is `{"role": "tool", "content": "..."}`
-        # carrying the JSON-serialized payload from the critic dispatch.
-        if isinstance(m, dict) and m.get("role") == "tool":
-            content = m.get("content") or ""
-            if "image_b64" in content and len(content) > 1000:
-                found_b64 = True
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                vision_msgs.append(m)
                 break
-    if not found_b64:
-        _fail("second turn's messages should carry base64 PNG payload from "
-              "first read_slide_render call")
-    _ok(f"15-slide PNG throughput: {mock._call_count} backend calls, "
-        f"base64 payloads threaded through, verdict={report.verdict}")
+    if len(vision_msgs) != cap:
+        _fail(f"expected exactly {cap} vision user-messages (per-turn cap); "
+              f"got {len(vision_msgs)}")
+
+    # The deferred slides (S{cap}..S14) must show up as ack JSONs with
+    # `"deferred": true` in the tool-role messages.
+    deferred_seen = 0
+    for m in second_turn_msgs:
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        if '"deferred": true' in (m.get("content") or ""):
+            deferred_seen += 1
+    expected_deferred = 15 - cap
+    if deferred_seen != expected_deferred:
+        _fail(f"expected {expected_deferred} deferred ack tool messages; "
+              f"got {deferred_seen}")
+
+    _ok(f"per-turn image cap honoured: {cap} vision messages + "
+        f"{expected_deferred} deferred acks, no base64 in tool results, "
+        f"verdict={report.verdict}")
 
 
 # ─────────────────────── v2.8.1 archetype Phase 1 ──────────────────────
