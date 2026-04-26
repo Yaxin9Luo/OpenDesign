@@ -727,6 +727,8 @@ This section exists because of a 2026-04-25 dogfood failure: V3.2-exp planner pr
    - **transition slide ("now we move from method to results") → `section_divider`** — use these between major chapters; for ≥10-slide decks, expect 2-3 dividers, not 0
    - **closing slide → `closing`** (Thank you / Q&A / real URLs)
 
+   **Closing slide**: The final slide MUST contain at least 3 takeaway bullets summarizing the core contribution and a memorable phrase, not just "Thank you" or "Questions?". Treat the template's default closing copy as a placeholder to overwrite. The composite stage emits `closing_warnings` on the tool_result when the last slide has fewer than 3 text runs or carries only stub phrases / placeholder strings — fix it on the next iteration by populating real bullets.
+
    Word counts are rough — the principle is: don't pair a 200-word body with `content_with_figure`'s 920px-wide body slot, the body will overflow or shrink. Don't pair a 15-word headline with `content_with_figure`'s 920px body slot either, you'll waste 80% of the slide.
 
 8. **Callout overlays (v2.6).** When the slide's body claims something specific about a figure or table region ("the bottom-right panel", "the BAGEL row", "the +5.2 column"), emit a `kind: "callout"` child to point at it. The audience can't follow your prose unless the visual itself is annotated.
