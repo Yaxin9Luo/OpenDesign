@@ -84,6 +84,7 @@ ANTHROPIC_FALLBACK_ENHANCER = "claude-opus-4-7"
 
 ProviderChoice = Literal["auto", "anthropic", "openai_compat"]
 ImageProviderChoice = Literal["auto", "gemini", "openrouter"]
+SectionNumberPolicy = Literal["renumber", "strip", "preserve"]
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,14 @@ class Settings:
     max_critique_iters: int = 2
     max_planner_turns: int = 30
     critic_preview_max_edge: int = 1024
+
+    # v2.7.2 deck section-number policy — applied inside `_composite_deck`
+    # before write_pptx, so renderer + apply-edits both see consistent
+    # numbering. "renumber" (default) walks slides in order, assigns §1,
+    # §1.1, §2, ... using a sub-rhythm heuristic; "strip" clears every
+    # SlideNode.section_number; "preserve" passes the planner's values
+    # through unchanged. Override per-run via `SECTION_NUMBER_POLICY=...`.
+    section_number_policy: SectionNumberPolicy = "renumber"
 
     # Extended thinking — applies to BOTH backends (Anthropic uses thinking=
     # block; OpenAI-compat uses extra_body.reasoning.max_tokens for OpenRouter
@@ -265,6 +274,8 @@ def load_settings() -> Settings:
     image_model_env = os.getenv("IMAGE_MODEL", "").strip()
     image_provider_env = _parse_image_provider(os.getenv("IMAGE_PROVIDER", "auto"))
 
+    section_policy = _parse_section_policy(os.getenv("SECTION_NUMBER_POLICY", "renumber"))
+
     return Settings(
         anthropic_api_key=api_key,
         anthropic_base_url=base_url,
@@ -287,6 +298,7 @@ def load_settings() -> Settings:
         enable_interleaved_thinking=interleaved,
         **({"image_model": image_model_env} if image_model_env else {}),
         image_provider=image_provider_env,
+        section_number_policy=section_policy,
     )
 
 
@@ -299,6 +311,21 @@ def _parse_provider(raw: str) -> ProviderChoice:
     if raw in ("claude",):
         return "anthropic"
     return "auto"
+
+
+def _parse_section_policy(raw: str) -> SectionNumberPolicy:
+    """Normalize SECTION_NUMBER_POLICY env. Falls back to "renumber" on
+    anything unrecognised so a typo never stops a run."""
+    raw = (raw or "").strip().lower()
+    if raw in ("renumber", "strip", "preserve"):
+        return raw  # type: ignore[return-value]
+    if raw in ("auto", "default", ""):
+        return "renumber"
+    if raw in ("none", "off", "drop"):
+        return "strip"
+    if raw in ("keep", "noop", "as-is"):
+        return "preserve"
+    return "renumber"
 
 
 def _parse_image_provider(raw: str) -> ImageProviderChoice:
