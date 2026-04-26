@@ -460,9 +460,19 @@ def _render_templated_slide(
             _add_background(slide, child, slide_w, slide_h)
 
     # v2.6 — pass 2: place callouts after all anchors are known.
+    # v2.7.5 — composite-stage `_detect_orphan_callouts` populated
+    # `ctx.state["orphan_callouts"]` with the layer_ids of callouts whose
+    # anchor reference can't resolve (no anchor / anchor missing /
+    # callout_region outside anchor bbox). Skip them outright so the
+    # rendered .pptx never carries the "red circle floating in empty
+    # space" defect from the 2026-04-26 longcat-next dogfood.
+    orphan_ids = (getattr(ctx, "state", None) or {}).get("orphan_callouts") or set()
     for child in children:
-        if getattr(child, "kind", None) == "callout":
-            _add_callout(slide, child, placed_anchors, slide_w, slide_h)
+        if getattr(child, "kind", None) != "callout":
+            continue
+        if getattr(child, "layer_id", None) in orphan_ids:
+            continue
+        _add_callout(slide, child, placed_anchors, slide_w, slide_h)
 
     # v2.7 — cover-only safety net: if the cover layout's `authors` shape
     # is empty or carries placeholder text ("Author One · Affiliation"),
