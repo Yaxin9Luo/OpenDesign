@@ -101,28 +101,20 @@ Always confirm cost with the user before a dogfood run that crosses ~$5.
 The v2.4.x commits landed fast and some docs may lag the code. When in doubt,
 trust the code:
 
-- **Smoke count**: 20 checks as of v2.3.5. Older docs may say 16 or 18.
+- **Smoke count**: 42 checks as of v2.8.1-phase1 (was 24 pre-v2.7.2, then +3 v2.7.2, +4 v2.7.3, +5 v2.8.0, +6 v2.8.1). Older docs may say 18 / 20 / 24 / 31.
 - **Package name**: `open_design`. Old docs may say `design_agent` or
   `LongcatDesign`. Rename landed 2026-04-23 (commit `f337a3b`).
 - **Font registry**: 8 OFL families (Noto SC, Inter, IBM Plex Sans, JetBrains
   Mono, Playfair Display, ...). Older `prompts/prompt_enhancer.md` may still
   claim 2 fonts — verify against `open_design/config.py` before editing prompt
   copy.
-- **Provider routing** (v2.7, 2026-04-25): planner is
-  `moonshotai/kimi-k2.6`, critic is `qwen/qwen-vl-max` (multimodal),
-  enhancer is `moonshotai/kimi-k2.6`. Planner reverted to Kimi after
-  the v2.7 provenance dogfood — DeepSeek V3.2-exp produced reward 0.88
-  but emitted 21 fabricated numeric tokens (caught by validator);
-  `iter 2` it tried to cite and FABRICATED quotes (7 quote_not_in_source
-  failures). Kimi K2.6 is an agent-coding model expected to follow the
-  "MUST be a verbatim substring of ingest" hard constraint better. The
-  earlier (v2.5.1) Kimi max_turns failure was on the v2.5 prompt
-  density; after v2.6.1 enhancer compression + v2.7 schema clarity,
-  prompt is leaner. `anthropic/claude-opus-4-7` is one env var away
-  (`PLANNER_MODEL` / `CRITIC_MODEL` / `ENHANCER_MODEL`); use it for
-  paper-poster (bbox geometry, per `docs/DECISIONS.md` 2026-04-22). Any
-  code that hard-codes a model id is a bug; all LLM calls go through
-  `LLMBackend`.
+- **Provider routing** (v2.8, 2026-04-26):
+  - planner: `moonshotai/kimi-k2.6` (env `PLANNER_MODEL`)
+  - enhancer: `moonshotai/kimi-k2.6` (env `ENHANCER_MODEL`)
+  - **claim_graph_extractor (v2.8.0)**: `moonshotai/kimi-k2.6` (env `CLAIM_GRAPH_MODEL`) — agent-coding model with strict JSON discipline; runs between enhancer and planner when input is a PDF.
+  - **critic (v2.7.3)**: `qwen/qwen-vl-max` (env `CRITIC_MODEL`) — multimodal. **Now a forked sub-agent** (`open_design/agents/critic_agent.py`), not an inline tool. Own turn budget (`CRITIC_MAX_TURNS=10`), own trajectory (`out/<run>/trajectory/critic.jsonl`). All three artifact types (deck/landing/poster) are vision-critic'd; old `open_design/critic.py` deleted.
+  - History: planner reverted to Kimi after the v2.7 provenance dogfood — DeepSeek V3.2-exp produced reward 0.88 but emitted 21 fabricated numeric tokens (caught by validator); `iter 2` it tried to cite and FABRICATED quotes (7 quote_not_in_source failures). Kimi K2.6 is the agent-coding model expected to follow the "MUST be a verbatim substring of ingest" hard constraint better. The earlier (v2.5.1) Kimi max_turns failure was on v2.5 prompt density; v2.6.1 enhancer compression + v2.7 schema clarity made the prompt leaner.
+  - `anthropic/claude-opus-4-7` is one env var away for any role; use it for paper-poster (bbox geometry, per `docs/DECISIONS.md` 2026-04-22). Any code that hard-codes a model id is a bug; all LLM calls go through `LLMBackend`.
 - **Image generation IS provider-swappable as of 2026-04-25 (v2.5).**
   `image_backend.py` mirrors `llm_backend.py`: `make_image_backend(settings)`
   routes by `IMAGE_MODEL` prefix (`gemini-*` / `imagen-*` → Gemini, else

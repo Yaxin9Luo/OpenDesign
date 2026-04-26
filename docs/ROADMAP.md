@@ -280,6 +280,46 @@ Model routing insight: **Kimi K2.6 works fine on landing/deck (simple flow layou
 
 ---
 
+## v2.7.2 → v2.8.1-phase1 — Cloud Design diff response ✅ SHIPPED 2026-04-26
+
+Four releases motivated by side-by-side dogfood of Anthropic's Claude Design product on the same paper (longcat-next-2026.pdf). The .pptx Claude Design produced is `PptxGenJS Presentation` with native shapes (verified by extracting `docProps/app.xml` `<Company>PptxGenJS</Company>` + counting `<p:sp>` shapes). Two surface bugs in their output (notes off-by-one cascade from slide 8-13; non-monotonic section numbers §3.2→§3.1) drove v2.7.2; their forked vision-verifier-agent design drove v2.7.3; their claim-graph-driven slide arc (matrix→explanation→mechanism→evidence→implication, NOT paper chapter order) drove v2.8.0; their 8+ slide-archetype library drove v2.8.1.
+
+Full diff analysis at `~/.claude/plans/export-block-eager-wilkinson.md`. Implementation plan committed at [docs/IMPLEMENTATION_v2.8.md](IMPLEMENTATION_v2.8.md). Wave 1 (v2.7.2 + v2.7.3) and Wave 2 (v2.8.0 + v2.8.1-phase1) shipped via parallel git worktrees + integration branches; smoke 31→42, all green at every merge.
+
+### v2.7.2 — Stable-id speaker_notes + section renumber (tag `v2.7.2`)
+
+`SlideNode.speaker_notes` is now first-class on the LayerNode (was already there but contract under-documented; smoke #27 hardens it). `SlideNode.section_number` (new optional field) is auto-renumbered post-reorder by `apply_section_policy` in `_composite_deck`. New `Settings.section_number_policy: Literal["renumber"|"strip"|"preserve"]` (default `renumber`). Avoids two bugs we observed in Cloud Design's PptxGenJS deck. New `open_design/util/section_renumber.py` (immutable). Smoke #25-27. Zero API cost.
+
+### v2.7.3 — Vision critic as forked sub-agent (tag `v2.7.3`)
+
+Inline `critique_tool.py` replaced by `CriticAgent` in `open_design/agents/critic_agent.py` — independent sub-agent with own `make_backend(settings, settings.critic_model, role="critic")` instance, own `critic_max_turns=10` budget, own `out/<run>/trajectory/critic.jsonl`. All three artifact types (deck/landing/poster) now use vision-based critic, not just poster (which already did). Provenance is a critic priority dimension (`category="provenance"` blocker). New `CritiqueIssue` + `CritiqueReport` Pydantic schemas. Three new prompts: `critic_vision_{deck,landing,poster}.md`. Old `open_design/critic.py` + 3 old critic prompts deleted (no fallback path). Smoke #28-31. API cost: +30-60% per critique round (vision PNG payload), but turn budget is now decoupled from planner.
+
+### v2.8.0 — Claim graph extractor (tag `v2.8.0`)
+
+New `ClaimGraphExtractor` sub-agent in `open_design/agents/claim_graph_extractor.py` runs between enhancer and planner when input is a PDF (skipped via `--no-claim-graph`). Extracts `ClaimGraph(thesis, tensions[], mechanisms[], evidence[], implications[])` — strict Pydantic schema with `EvidenceNode.raw_quote` MUST be substring of paper raw_text (echoes v2.7 hard constraint; validated by `open_design/util/claim_graph_validator.py`). Planner consumes the graph to follow talk arc (cover→tensions→mechanisms→evidence→implications→takeaways) instead of paper chapter order. `LayerNode.covers: list[str]` records which graph node ids each slide presents. CriticAgent accepts `claim_graph` and reports `category="claim_coverage"` issues via `lookup_claim_node` tool when tensions/mechanisms are uncovered. Provenance validator extended to also check `ClaimGraph.evidence[*].raw_quote`. Default `claim_graph_model = "moonshotai/kimi-k2.6"` (agent-coding model with strict JSON discipline). Smoke #32-36. API cost: +20-40% per run from extractor + critic claim-coverage checks.
+
+### v2.8.1 Phase 1 — Slide archetype library (tag `v2.8.1-phase1`)
+
+New `SlideArchetype` literal with 10 values (4 implemented this phase, 6 placeholders for Phase 2/3). New `LayerNode.archetype` field, default `"evidence_snapshot"`. `pptx_renderer.py` dispatches via `ARCHETYPE_RENDERERS: dict[str, Callable]` with default fallback (zero behavior change for existing decks). Phase 1 archetypes:
+
+| Archetype | Layout |
+|---|---|
+| `cover_editorial` | Large serif title (NotoSerifSC-Bold) + subtitle + author byline |
+| `evidence_snapshot` | One huge metric (~250pt) + footnote, lots of white space |
+| `takeaway_list` | 3 bullet items (bold lead phrase + supporting sentence) + optional slogan |
+| `thanks_qa` | Headline + contact row + optional code/weights link |
+
+Each archetype is deterministic (smoke #42 verifies byte-identical XML across two renders), uses native python-pptx shapes (not raster), and preserves v2.7.2's `_with_section_prefix` on titles + speaker_notes binding by slide_id. Templated path (`_write_pptx_templated`) untouched. New planner archetype-selection rules + critic `archetype_consistency` check inside `visual_hierarchy` category. Phase 2/3 archetypes (pipeline_horizontal / tension_two_column / section_divider / cover_technical / residual_stack_vertical / conflict_vs_cooperation) declared as placeholders, fall through to default. Smoke #37-42. Zero API cost.
+
+### Combined wave verification (longcat-next-2026.pdf, 2026-04-26)
+
+- **Smoke**: 42/42 pass on main at every merge boundary (wave1-integration → main, wave2-integration → main).
+- **Lessons learned**: Agent tool's `isolation: "worktree"` reuses stale base in some cases — manual `git worktree add` from current main is the reliable path for parallel multi-agent dispatch.
+- **Conflict resolution**: scripted via `/tmp/resolve_*_conflicts.py` (smoke label renumbering is mechanical; new content blocks kept on both sides).
+- **Killed**: `Path B (HTML deck)` from the diff analysis. Cloud Design's .pptx is also native PptxGenJS-generated, so editability is not our moat. Real moat = v2.7 provenance + v2.8.0 claim-graph grounding (both unique to us).
+
+---
+
 ## Deferred to v1.3.5
 
 - **Tab groups** (new `kind: "tabs"` container + per-tab `LayerNode` children)
