@@ -311,14 +311,28 @@ class OpenAICompatBackend:
             "tools": oai_tools,
             "max_tokens": max_tokens,
         }
+        extra_body: dict[str, Any] = {}
         if thinking_budget > 0:
             # OpenRouter unified reasoning param — providers that don't support
             # it ignore it silently. For native Moonshot / DeepSeek API the
             # field name may differ but reasoning is on by default for thinking
             # variants of those models.
-            kwargs["extra_body"] = {
-                "reasoning": {"max_tokens": thinking_budget},
+            extra_body["reasoning"] = {"max_tokens": thinking_budget}
+        # v2.7.1 — OpenRouter provider routing. `OPENROUTER_PROVIDER_IGNORE`
+        # accepts a comma-separated list of upstream provider names to
+        # exclude (e.g. "Together,DeepInfra"). Workaround for short-window
+        # rate-limit storms on a single upstream — observed 2026-04-26 with
+        # `deepseek/deepseek-v4-pro` getting hard-pinned to Together.
+        # Silent no-op when the env var is unset or empty.
+        import os as _os
+        ignored = (_os.getenv("OPENROUTER_PROVIDER_IGNORE", "")
+                   or "").strip()
+        if ignored:
+            extra_body["provider"] = {
+                "ignore": [p.strip() for p in ignored.split(",") if p.strip()],
             }
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
