@@ -1121,6 +1121,16 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     except Exception as e:
         return obs_error(f"PPTX write failed: {e}", category="api")
 
+    # v2.8.2-C1 stage 2 — post-write .pptx XML scrubber. Catches template
+    # defaults baked into assets/deck_templates/*.pptx ("Paper Title Goes
+    # Here", "Author One · Author Two · Affiliation") that the spec-level
+    # sanitizer can't reach because they live in the template's own slide
+    # XML, not in the planner's DesignSpec.
+    from ..util.export_sanitizer import sanitize_pptx_file
+    pptx_scrub_warnings = sanitize_pptx_file(pptx_path)
+    sanitizer_warnings = sanitizer_warnings + pptx_scrub_warnings
+    ctx.state["sanitizer_warnings"] = sanitizer_warnings
+
     slide_pngs: list[Path] = []
     for idx, slide_node in enumerate(slides):
         png_path = slides_dir / f"slide_{idx:02d}.png"

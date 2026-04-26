@@ -1,6 +1,12 @@
 """Drop placeholder text, debug-named shapes, and empty children from final spec.
 
-Runs as a post-render sanitizer in `_composite_deck` BEFORE `write_pptx()`.
+Two-stage cleanup:
+- ``sanitize_design_spec`` runs in `_composite_deck` BEFORE ``write_pptx()``
+  and operates on the in-memory ``DesignSpec`` (catches planner-emitted
+  scaffolding).
+- ``sanitize_pptx_file`` runs AFTER ``write_pptx()`` and scrubs the .pptx
+  XML directly (catches template-default text baked into
+  ``assets/deck_templates/*.pptx`` that no spec-level pass can reach).
 Operates on structural properties of the spec — no per-paper or per-source-type
 heuristics. See ~/.claude/plans/export-block-eager-wilkinson.md for context.
 
@@ -40,10 +46,23 @@ PLACEHOLDER_SUBSTRINGS: tuple[str, ...] = (
     "affiliation goes here",
     "arxiv.org/abs/xxxx",
     "example@example.com",
+    "contact@example",
+    "@example.org",
+    "@example.com",
     "yyyy-mm-dd",
     "lorem ipsum",
     "your name here",
     *(f"annotation {i}" for i in range(1, 21)),
+)
+
+# Regex needles for placeholder PATTERNS that don't survive a fixed-string
+# substring match (e.g. "arxiv.org/abs/2026.XXXXX" — the year varies).
+# Applied case-insensitively to the lowered text run.
+_PLACEHOLDER_REGEXES: tuple[re.Pattern[str], ...] = (
+    # arxiv-style placeholder URLs: any "xxxxx" (5+ x's) anywhere
+    re.compile(r"x{5,}"),
+    # arxiv.org/abs/<anything>.xxxxx (the trailing x's catch the abs id)
+    re.compile(r"arxiv\.org/abs/[\w.]*x{4,}", re.IGNORECASE),
 )
 
 # Debug-named shapes: planner-internal scaffolding ids like
@@ -74,7 +93,9 @@ def _is_placeholder_text(text: str) -> bool:
     if not text:
         return False
     lower = text.strip().lower()
-    return any(needle in lower for needle in PLACEHOLDER_SUBSTRINGS)
+    if any(needle in lower for needle in PLACEHOLDER_SUBSTRINGS):
+        return True
+    return any(p.search(lower) for p in _PLACEHOLDER_REGEXES)
 
 
 def _is_debug_named_empty(node: "LayerNode") -> bool:
@@ -227,3 +248,95 @@ def sanitize_design_spec(
     if not changed:
         return spec, warnings
     return spec.model_copy(update={"layer_graph": new_layer_graph}), warnings
+
+
+# --- Stage 2: post-write .pptx XML scrubber -------------------------------
+#
+# `sanitize_design_spec` only sees what the planner put in the spec. Template
+# defaults baked into assets/deck_templates/*.pptx ("Paper Title Goes Here",
+# "Author One · Author Two · Affiliation") are cloned into the rendered .pptx
+# by the template-renderer path and never touch the spec, so they leak
+# through unless we scrub the .pptx itself. This is a deterministic
+# post-process — no planner self-correction can recover from a leak the
+# planner can't see.
+
+_AT_TEXT_RE = re.compile(r"<a:t([^>]*)>([^<]*)</a:t>")
+
+
+def _scrub_xml_text(xml: str) -> tuple[str, list[str]]:
+    """Replace any ``<a:t>X</a:t>`` whose content matches a placeholder
+    needle with ``<a:t></a:t>`` (preserves attributes, blanks content).
+    Returns ``(new_xml, scrubbed_previews)``.
+    """
+    scrubbed: list[str] = []
+
+    def _replace(m: re.Match[str]) -> str:
+        attrs, content = m.group(1), m.group(2)
+        if _is_placeholder_text(content):
+            scrubbed.append(content[:80])
+            return f"<a:t{attrs}></a:t>"
+        return m.group(0)
+
+    return _AT_TEXT_RE.sub(_replace, xml), scrubbed
+
+
+def sanitize_pptx_file(pptx_path: Any) -> list[dict[str, Any]]:
+    """Open the .pptx zip, scrub placeholder text from every slide XML
+    in-place, and return a warnings list.
+
+    Catches template-default text that survives ``sanitize_design_spec``
+    because it lives in the template's own ``ppt/slides/slideN.xml`` rather
+    than in the planner's ``DesignSpec``.
+
+    Returns warnings shaped like ``sanitize_design_spec``:
+    ``{"slide_path": str, "reason": "template_default_placeholder", "preview": str}``.
+    """
+    import zipfile
+    from pathlib import Path
+    from shutil import copyfile
+    from tempfile import NamedTemporaryFile
+
+    src = Path(pptx_path)
+    warnings: list[dict[str, Any]] = []
+
+    # Collect all slide XMLs first; rewrite the archive only if anything changed
+    with zipfile.ZipFile(src, "r") as zin:
+        members = zin.namelist()
+        slide_members = [
+            n for n in members
+            if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+        ]
+        rewritten: dict[str, bytes] = {}
+        for name in slide_members:
+            xml = zin.read(name).decode("utf-8")
+            new_xml, scrubbed = _scrub_xml_text(xml)
+            if scrubbed:
+                rewritten[name] = new_xml.encode("utf-8")
+                for preview in scrubbed:
+                    warnings.append({
+                        "slide_path": name,
+                        "reason": "template_default_placeholder",
+                        "preview": preview,
+                    })
+
+    if not rewritten:
+        return warnings
+
+    # Rewrite to a temp file then atomic replace
+    with NamedTemporaryFile(
+        delete=False, suffix=".pptx", dir=str(src.parent),
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        with zipfile.ZipFile(src, "r") as zin, \
+             zipfile.ZipFile(
+                 tmp_path, "w", compression=zipfile.ZIP_DEFLATED,
+             ) as zout:
+            for item in zin.infolist():
+                data = rewritten.get(item.filename) or zin.read(item.filename)
+                zout.writestr(item, data)
+        copyfile(tmp_path, src)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return warnings
