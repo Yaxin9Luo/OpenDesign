@@ -337,6 +337,18 @@ class OpenAICompatBackend:
             kwargs["extra_headers"] = extra_headers
 
         resp = self.client.chat.completions.create(**kwargs)
+        # v2.7.2 — defensive guard. OpenRouter occasionally returns 200 OK
+        # with `choices: null` when the upstream silently rate-limits or
+        # content-filters (observed 2026-04-26 with deepseek/deepseek-v4-pro).
+        # Surface a readable error instead of `'NoneType' object is not
+        # subscriptable`.
+        if not resp.choices:
+            err_meta = getattr(resp, "error", None) or {}
+            raise RuntimeError(
+                f"upstream returned no choices for model={self.model}; "
+                f"likely silent rate-limit or content filter from OpenRouter. "
+                f"error_meta={err_meta}"
+            )
         choice = resp.choices[0]
         msg = choice.message
 
