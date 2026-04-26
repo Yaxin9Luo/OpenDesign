@@ -118,26 +118,119 @@ _ASPECT_MISMATCH_WARN_RATIO = 2.0
 _TEXT_DESCENDER_MULTIPLIER = 1.20
 
 
-def _effective_text_extent(layer: dict[str, Any]) -> tuple[int, int, int, int] | None:
+# v2.7.5 — per-role, per-slot bboxes mirroring
+# `assets/deck_templates/academic-editorial.pptx`. Used by
+# `_effective_text_extent` to derive a real bbox for templated text
+# layers whose `bbox=None` (positions come from template slots, not
+# planner-supplied coords). Keep in sync with `scripts/build_template.py`
+# — the renderer is the source of truth for actual placement, so this
+# is a detector aid, not a placement authority.
+_TEMPLATE_SLOT_BBOX: dict[str, dict[str, tuple[int, int, int, int]]] = {
+    "cover": {
+        "title": (96, 280, 880, 280),
+        "authors": (96, 580, 880, 60),
+        "badge": (1660, 80, 180, 40),
+        "image_slot": (1000, 0, 920, 1080),
+    },
+    "section_divider": {
+        "section_number": (200, 320, 1520, 50),
+        "title": (200, 380, 1520, 200),
+        "subtitle": (200, 600, 1520, 60),
+    },
+    "content": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "footer": (96, 1020, 1200, 30),
+        "slide_number": (1700, 1020, 124, 30),
+        "body": (96, 260, 1728, 740),
+    },
+    "content_with_figure": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "footer": (96, 1020, 1200, 30),
+        "slide_number": (1700, 1020, 124, 30),
+        "body": (96, 260, 920, 740),
+        "image_slot": (1056, 260, 768, 740),
+    },
+    "content_with_table": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "footer": (96, 1020, 1200, 30),
+        "slide_number": (1700, 1020, 124, 30),
+        "body": (96, 260, 800, 740),
+        "table_anchor": (920, 260, 904, 740),
+    },
+    "closing": {
+        "title": (200, 360, 1520, 160),
+        "subtitle": (200, 540, 1520, 50),
+        "links": (200, 620, 1520, 30),
+    },
+}
+
+
+def _slot_bbox(role: str | None, slot: str | None) -> tuple[int, int, int, int] | None:
+    """Look up a templated slot's bbox by `(role, slot)`. Returns None if
+    the role is unknown or the slot is not in that layout."""
+    if not role or not slot:
+        return None
+    role_map = _TEMPLATE_SLOT_BBOX.get(role)
+    if role_map is None:
+        return None
+    return role_map.get(slot)
+
+
+def _effective_text_extent(
+    layer: Any,
+    *,
+    role: str | None = None,
+) -> tuple[int, int, int, int] | None:
     """Return (x, y, w, h_effective) — the glyph-inclusive vertical footprint
     of a `kind: "text"` layer, or None if bbox/font_size missing.
+
+    Accepts either a dict (poster path: `rendered_layers` records) or a
+    Pydantic ``LayerNode`` (deck path: spec-tree children). When the layer
+    has no explicit ``bbox`` but does set ``template_slot``, the slot
+    bbox is looked up via ``_TEMPLATE_SLOT_BBOX[role][slot]`` so templated
+    decks aren't skipped (their child bboxes are intentionally ``None``).
 
     `bbox.h` is the planner's intent; real rasterized height floors at
     `font_size_px × _TEXT_DESCENDER_MULTIPLIER` so descender collisions
     between stacked text layers surface as real overlaps."""
-    if layer.get("kind") != "text":
+    kind = layer.get("kind") if isinstance(layer, dict) else getattr(layer, "kind", None)
+    if kind != "text":
         return None
-    bbox = layer.get("bbox")
-    if not bbox:
-        return None
-    try:
-        bx = int(bbox.get("x", 0))
-        by = int(bbox.get("y", 0))
-        bw = int(bbox.get("w", 0))
-        bh = int(bbox.get("h", 0))
-    except (TypeError, ValueError):
-        return None
-    fs = layer.get("font_size_px") or 0
+
+    if isinstance(layer, dict):
+        bbox = layer.get("bbox")
+        slot = layer.get("template_slot")
+        fs = layer.get("font_size_px") or 0
+    else:
+        bbox = getattr(layer, "bbox", None)
+        slot = getattr(layer, "template_slot", None)
+        fs = getattr(layer, "font_size_px", None) or 0
+
+    bx = by = bw = bh = None
+    if bbox is not None:
+        try:
+            if isinstance(bbox, dict):
+                bx = int(bbox.get("x", 0))
+                by = int(bbox.get("y", 0))
+                bw = int(bbox.get("w", 0))
+                bh = int(bbox.get("h", 0))
+            else:
+                bx = int(getattr(bbox, "x", 0) or 0)
+                by = int(getattr(bbox, "y", 0) or 0)
+                bw = int(getattr(bbox, "w", 0) or 0)
+                bh = int(getattr(bbox, "h", 0) or 0)
+        except (TypeError, ValueError):
+            bx = by = bw = bh = None
+
+    if bw is None or bw <= 0 or bh is None or bh <= 0:
+        slot_bbox = _slot_bbox(role, slot)
+        if slot_bbox is None:
+            return None
+        bx, by, bw, bh = slot_bbox
+
     try:
         fs = int(fs)
     except (TypeError, ValueError):
@@ -266,6 +359,243 @@ def _detect_text_overlaps(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
             warnings.append(entry)
             log("composite.text_overlap_warning", **entry)
     return warnings
+
+
+def _node_bbox(node: Any, role: str | None,
+               slide_w: int, slide_h: int) -> tuple[int, int, int, int] | None:
+    """Resolve a templated-deck child's effective bbox.
+
+    Order of precedence:
+      1. Explicit ``node.bbox`` (planner-supplied absolute coords).
+      2. ``_TEMPLATE_SLOT_BBOX[role][template_slot]`` lookup.
+
+    Returns None when neither source produces a positive-area rect — the
+    caller treats that as "this layer has no resolvable position" (the
+    very condition the v2.7.5 detector flags)."""
+    bbox = getattr(node, "bbox", None)
+    if bbox is not None:
+        try:
+            bx = int(getattr(bbox, "x", 0) or 0)
+            by = int(getattr(bbox, "y", 0) or 0)
+            bw = int(getattr(bbox, "w", 0) or 0)
+            bh = int(getattr(bbox, "h", 0) or 0)
+        except (TypeError, ValueError):
+            bx = by = bw = bh = 0
+        if bw > 0 and bh > 0:
+            return bx, by, bw, bh
+
+    slot_bbox = _slot_bbox(role, getattr(node, "template_slot", None))
+    if slot_bbox is not None:
+        return slot_bbox
+
+    return None
+
+
+def _detect_deck_text_overlaps(
+    slides: list[Any],
+    *,
+    slide_w: int,
+    slide_h: int,
+) -> list[dict[str, Any]]:
+    """Walk each slide's text children + flag layout regressions.
+
+    Three classes of warning:
+      - ``slot_collision`` (blocker): two text children share the same
+        ``template_slot`` on the same slide. The renderer's
+        ``replace_text_in_shape`` is last-write-wins, so one child's text
+        silently disappears unless the planner spreads them across slots.
+      - ``unanchored_text`` (blocker): a templated-deck text child has
+        ``bbox=None`` AND ``template_slot=None`` (or a slot the layout
+        doesn't expose). The renderer's fallback dumps it into a
+        full-slide textbox at (0,0,slide_w,slide_h), which is exactly
+        the v2.7.5 "Table 2 caption at the top of the page" defect.
+      - ``text_overlaps_shape`` (high): an effective text bbox overlaps a
+        non-text sibling (image / table / callout). Catches captions
+        landing on top of figures.
+
+    Pure: never mutates ``slides``. Emits structured log events; returns
+    the warning list so ``_composite_deck`` can roll it into the payload
+    the planner sees on the next turn.
+    """
+    warnings: list[dict[str, Any]] = []
+    for slide in slides:
+        slide_id = getattr(slide, "layer_id", None)
+        role = getattr(slide, "role", None) or "content"
+        children = list(getattr(slide, "children", None) or [])
+
+        text_children: list[tuple[Any, tuple[int, int, int, int] | None]] = []
+        nontext_children: list[tuple[Any, tuple[int, int, int, int] | None]] = []
+        slot_seen: dict[str, str] = {}
+
+        for child in children:
+            kind = getattr(child, "kind", None)
+            slot = getattr(child, "template_slot", None)
+            cid = getattr(child, "layer_id", None) or "?"
+
+            if kind == "text":
+                if slot:
+                    prior = slot_seen.get(slot)
+                    if prior:
+                        entry = {
+                            "kind": "slot_collision",
+                            "severity": "blocker",
+                            "slide_id": slide_id,
+                            "template_slot": slot,
+                            "layer_a": prior,
+                            "layer_b": cid,
+                        }
+                        warnings.append(entry)
+                        log("composite.deck_text_overlap_warning", **entry)
+                    else:
+                        slot_seen[slot] = cid
+
+                ext = _effective_text_extent(child, role=role)
+                if ext is None:
+                    if getattr(child, "bbox", None) is None and not slot:
+                        entry = {
+                            "kind": "unanchored_text",
+                            "severity": "blocker",
+                            "slide_id": slide_id,
+                            "layer_id": cid,
+                            "text_preview": (
+                                (getattr(child, "text", None) or "")[:80]
+                            ),
+                        }
+                        warnings.append(entry)
+                        log("composite.deck_text_overlap_warning", **entry)
+                    continue
+                text_children.append((child, ext))
+            elif kind in ("image", "table", "callout", "background"):
+                if kind == "background":
+                    continue  # backgrounds are full-bleed by design
+                bbox = _node_bbox(child, role, slide_w, slide_h)
+                nontext_children.append((child, bbox))
+
+        # Text vs text — same-slide stacking collisions.
+        for i in range(len(text_children)):
+            la, ea = text_children[i]
+            for j in range(i + 1, len(text_children)):
+                lb, eb = text_children[j]
+                ov = _rects_overlap(ea, eb)
+                if ov is None:
+                    continue
+                _x_ov, y_ov = ov
+                entry = {
+                    "kind": "text_overlaps_text",
+                    "severity": "high",
+                    "slide_id": slide_id,
+                    "layer_a": getattr(la, "layer_id", None),
+                    "layer_b": getattr(lb, "layer_id", None),
+                    "y_overlap_px": int(y_ov),
+                }
+                warnings.append(entry)
+                log("composite.deck_text_overlap_warning", **entry)
+
+        # Text vs non-text (image / table / callout).
+        for la, ea in text_children:
+            for lb, eb in nontext_children:
+                if eb is None:
+                    continue
+                ov = _rects_overlap(ea, eb)
+                if ov is None:
+                    continue
+                x_ov, y_ov = ov
+                entry = {
+                    "kind": "text_overlaps_shape",
+                    "severity": "high",
+                    "slide_id": slide_id,
+                    "text_layer": getattr(la, "layer_id", None),
+                    "shape_layer": getattr(lb, "layer_id", None),
+                    "shape_kind": getattr(lb, "kind", None),
+                    "x_overlap_px": int(x_ov),
+                    "y_overlap_px": int(y_ov),
+                }
+                warnings.append(entry)
+                log("composite.deck_text_overlap_warning", **entry)
+
+    return warnings
+
+
+def _detect_orphan_callouts(
+    slides: list[Any],
+    *,
+    slide_w: int,
+    slide_h: int,
+) -> tuple[set[str], list[dict[str, Any]]]:
+    """Identify callout layer_ids that should be dropped at composite time.
+
+    A callout is an orphan when:
+      - ``anchor_layer_id`` is None or empty, OR
+      - ``anchor_layer_id`` references a sibling that doesn't exist on the
+        same slide, OR
+      - the referenced sibling is not a placeable shape (only
+        ``image`` / ``table`` qualify), OR
+      - both ``anchor_layer_id`` AND ``callout_region`` are set but the
+        region's bbox does not intersect the anchor's bbox (the v2.7.5
+        "circle floating in empty space" defect — slide16 of the
+        2026-04-26 dogfood).
+
+    Pure inspection over the spec tree — does NOT call into the renderer.
+    Returns ``(orphan_layer_ids, warnings)``; the renderer's pass-2
+    callout walker honours the set by skipping placement entirely.
+    """
+    orphans: set[str] = set()
+    warnings: list[dict[str, Any]] = []
+
+    for slide in slides:
+        slide_id = getattr(slide, "layer_id", None)
+        role = getattr(slide, "role", None) or "content"
+        children = list(getattr(slide, "children", None) or [])
+        sibling_by_id: dict[str, Any] = {}
+        for child in children:
+            cid = getattr(child, "layer_id", None)
+            if cid:
+                sibling_by_id[cid] = child
+
+        for child in children:
+            if getattr(child, "kind", None) != "callout":
+                continue
+            cid = getattr(child, "layer_id", None) or "?"
+            anchor_id = getattr(child, "anchor_layer_id", None)
+            reason: str | None = None
+
+            if not anchor_id:
+                reason = "no_anchor_layer_id"
+            else:
+                anchor = sibling_by_id.get(anchor_id)
+                if anchor is None:
+                    reason = "anchor_not_on_slide"
+                elif getattr(anchor, "kind", None) not in ("image", "table"):
+                    reason = "anchor_kind_not_placeable"
+                else:
+                    region = getattr(child, "callout_region", None)
+                    if region is not None:
+                        anchor_bbox = _node_bbox(anchor, role, slide_w, slide_h)
+                        if anchor_bbox is not None:
+                            try:
+                                rx = int(getattr(region, "x", 0) or 0)
+                                ry = int(getattr(region, "y", 0) or 0)
+                                rw = int(getattr(region, "w", 0) or 0)
+                                rh = int(getattr(region, "h", 0) or 0)
+                            except (TypeError, ValueError):
+                                rx = ry = rw = rh = 0
+                            if rw > 0 and rh > 0 and _rects_overlap(
+                                (rx, ry, rw, rh), anchor_bbox
+                            ) is None:
+                                reason = "region_outside_anchor_bbox"
+
+            if reason is not None:
+                orphans.add(cid)
+                entry = {
+                    "slide_id": slide_id,
+                    "callout_layer_id": cid,
+                    "anchor_layer_id": anchor_id,
+                    "reason": reason,
+                }
+                warnings.append(entry)
+                log("composite.callout_orphan_warning", **entry)
+
+    return orphans, warnings
 
 
 def _aspect_fit_contain(
@@ -610,6 +940,27 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         atomic_write_json(iter_dir / "provenance_report.json",
                           pv_report.to_dict())
 
+    # v2.7.5 — quarantine orphan callouts BEFORE write_pptx so the
+    # renderer never sees a callout pointing at empty space. The
+    # renderer also re-checks via `ctx.state["orphan_callouts"]` in
+    # pass-2 so the gate holds even if a downstream caller bypasses
+    # this composite entry point.
+    orphan_callout_ids, orphan_callout_warnings = _detect_orphan_callouts(
+        slides, slide_w=slide_w, slide_h=slide_h,
+    )
+    ctx.state["orphan_callouts"] = orphan_callout_ids
+
+    # v2.7.5 — deck-side text-overlap detector. Templated decks
+    # intentionally have ``bbox=None`` on every child (positions come
+    # from template slots), so the poster-only `_detect_text_overlaps`
+    # was dead weight here. The deck variant resolves slot bboxes via
+    # `_TEMPLATE_SLOT_BBOX[role][slot]`, then flags slot collisions /
+    # unanchored text / text-overlapping-shape — the three failure
+    # modes the 2026-04-26 longcat-next dogfood exhibited.
+    deck_text_overlaps = _detect_deck_text_overlaps(
+        slides, slide_w=slide_w, slide_h=slide_h,
+    )
+
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
     except Exception as e:
@@ -667,7 +1018,9 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     )
     log("composite.deck.done",
         pptx=str(pptx_path), preview=str(preview_path),
-        slides=slide_count, images=image_ct)
+        slides=slide_count, images=image_ct,
+        text_overlaps=len(deck_text_overlaps),
+        orphan_callouts=len(orphan_callout_warnings))
 
     _refresh_final_links(iter_dir, ctx, ["deck.pptx", "preview.png"])
     preview_sha = sha256_file(preview_path)
@@ -681,6 +1034,12 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         "canvas": {"w_px": slide_w, "h_px": slide_h},
         "preview_relative_path": f"composites/iter_{iter_num:02d}/preview.png",
         "pptx_relative_path": f"composites/iter_{iter_num:02d}/deck.pptx",
+        # v2.7.5 — real environment signals the planner reads on the
+        # next turn. Empty lists mean a clean render; non-empty means
+        # the planner should fix slot wiring (text overlaps) or drop
+        # un-anchorable callouts before re-composing.
+        "text_overlap_warnings": deck_text_overlaps,
+        "orphan_callout_warnings": orphan_callout_warnings,
     }
     if prior_preview_sha:
         payload["supersedes_preview_sha256"] = prior_preview_sha
