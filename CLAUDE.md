@@ -101,7 +101,7 @@ Always confirm cost with the user before a dogfood run that crosses ~$5.
 The v2.4.x commits landed fast and some docs may lag the code. When in doubt,
 trust the code:
 
-- **Smoke count**: 42 checks as of v2.8.1-phase1 (was 24 pre-v2.7.2, then +3 v2.7.2, +4 v2.7.3, +5 v2.8.0, +6 v2.8.1). Older docs may say 18 / 20 / 24 / 31.
+- **Smoke count**: 48 checks as of v2.7.5 (was 42 pre-hotfixes, then +1 v2.7.4 OpenAI-spec smoke, +2 v2.8.0 hotfix smokes for whitespace lookup + Kimi leak retry, +2 v2.7.5a smokes for deck overlap + orphan callout, +1 v2.7.5b smoke for image fallback). Older docs may say 18 / 20 / 24 / 31 / 42.
 - **Package name**: `open_design`. Old docs may say `design_agent` or
   `LongcatDesign`. Rename landed 2026-04-23 (commit `f337a3b`).
 - **Font registry**: 8 OFL families (Noto SC, Inter, IBM Plex Sans, JetBrains
@@ -115,14 +115,20 @@ trust the code:
   - **critic (v2.7.3)**: `qwen/qwen-vl-max` (env `CRITIC_MODEL`) — multimodal. **Now a forked sub-agent** (`open_design/agents/critic_agent.py`), not an inline tool. Own turn budget (`CRITIC_MAX_TURNS=10`), own trajectory (`out/<run>/trajectory/critic.jsonl`). All three artifact types (deck/landing/poster) are vision-critic'd; old `open_design/critic.py` deleted.
   - History: planner reverted to Kimi after the v2.7 provenance dogfood — DeepSeek V3.2-exp produced reward 0.88 but emitted 21 fabricated numeric tokens (caught by validator); `iter 2` it tried to cite and FABRICATED quotes (7 quote_not_in_source failures). Kimi K2.6 is the agent-coding model expected to follow the "MUST be a verbatim substring of ingest" hard constraint better. The earlier (v2.5.1) Kimi max_turns failure was on v2.5 prompt density; v2.6.1 enhancer compression + v2.7 schema clarity made the prompt leaner.
   - `anthropic/claude-opus-4-7` is one env var away for any role; use it for paper-poster (bbox geometry, per `docs/DECISIONS.md` 2026-04-22). Any code that hard-codes a model id is a bug; all LLM calls go through `LLMBackend`.
-- **Image generation IS provider-swappable as of 2026-04-25 (v2.5).**
+- **Image generation IS provider-swappable + auto-fallback as of v2.7.5 (2026-04-26).**
   `image_backend.py` mirrors `llm_backend.py`: `make_image_backend(settings)`
   routes by `IMAGE_MODEL` prefix (`gemini-*` / `imagen-*` → Gemini, else
-  OpenRouter). Default is `bytedance-seed/seedream-4.5` via OpenRouter.
-  `GEMINI_API_KEY` is now optional (validated lazily inside
-  `GeminiImageBackend.__init__`). Tools call
+  OpenRouter). **New default is `google/gemini-2.5-flash-image` via OpenRouter**
+  (was `bytedance-seed/seedream-4.5` until v2.7.5b — Seedream lost its
+  OpenRouter image-modality endpoint and 404'd every call; live verified
+  the new default at ~$0.003/image, 13.6s). v2.7.5b also adds
+  `FallbackImageBackend` wrapper: on `provider_unavailable` error the
+  fallback model fires (default `openai/gpt-5-image-mini`, env
+  `IMAGE_FALLBACK_MODEL`). `GEMINI_API_KEY` is now optional (validated
+  lazily inside `GeminiImageBackend.__init__`). Tools call
   `make_image_backend(ctx.settings).generate(...)`; never import provider
-  SDKs directly. Fail-loud — no silent cross-provider fallback.
+  SDKs directly. Live verification scripts: `scripts/check_image_default.py`
+  + `scripts/probe_image_models.py`.
 - **Kimi vs Claude for posters**: Kimi K2.6 stalls on paper-poster bbox
   geometry (documented 2026-04-22 in `docs/DECISIONS.md`). Use Claude Opus 4.7
   for paper-poster dogfood runs until this is fixed.
