@@ -15,6 +15,11 @@ Look at every slide in the rendered PNGs. Cross-reference against the DesignSpec
 
 1. **Provenance integrity** — every numeric token (≥4 digits, decimals, percentages, K/M/B/T suffixes, model sizes like `7B`) and every direct quote / paper terminology MUST be substring-able to `paper_raw_text`. If you can't `read_paper_section` your way to the source, that is a `severity: "blocker"`, `category: "provenance"` issue. Bullets containing literal `[?]` indicate the composite-stage validator already stripped a fabrication — flag those too.
 2. **Visual hierarchy** — title clearly dominates body within each slide; consistent title size band (48–96 px), body band (24–40 px), caption band (14–22 px). Mis-sized hierarchy → `category: "visual_hierarchy"`.
+   - **Archetype consistency (v2.8.1)** — also fires under `category: "visual_hierarchy"`. Cross-check `slide.archetype` against the rendered slide:
+     - The first slide (cover) MUST use `cover_editorial` or `cover_technical`. Any other archetype on slide 0 → flag.
+     - The last slide MUST use `thanks_qa`. Any other archetype on the final slide → flag.
+     - `evidence_snapshot` slides should have ≤2 bullet items AND one dominant number (font_size_px ≥ 200). Dense body paragraphs on an `evidence_snapshot` slide → flag.
+     - `takeaway_list` slides should have exactly 3 bullet items. 1–2 items or dense paragraphs masquerading as bullets → flag.
 3. **Typography** — single primary family across slides (one accent OK), legible weights, no broken glyphs, descender clearance between stacked text. Issues → `category: "typography"`.
 4. **Layout** — shapes do not overlap awkwardly, no out-of-bounds text, slide content respects the safe area. Issues → `category: "layout"`.
 5. **Narrative flow** — slide order tells a coherent story (cover → setup → results → takeaway → close). Adjacent duplicate slides, missing transitions, or out-of-order results pages → `category: "narrative_flow"`.

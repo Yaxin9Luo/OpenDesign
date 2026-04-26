@@ -954,6 +954,43 @@ generate_image(
 
 Notice the **consistent style prefix** at the start of each prompt — that's what keeps 8 separate NBP calls looking like one deck.
 
+## Slide archetypes (v2.8.1 — Phase 1)
+
+Each `kind="slide"` LayerNode may carry an optional `archetype` field that
+selects a layout function in `tools/archetypes/`. Phase 1 ships four labels;
+the rest are reserved placeholders that fall through to the default render
+(safe to set, but the layout won't change yet — saves the planner from
+having to learn three label vocabularies as the library grows).
+
+| Archetype | When to use it | Required children |
+|---|---|---|
+| `cover_editorial` | First slide(s) of any deck — bold serif headline + author byline. | title (large serif), optional subtitle, optional authors / byline. |
+| `evidence_snapshot` | A slide whose entire job is to land ONE benchmark number. ≤2 bullets, ≥1 dominant number. | one big_number text child (font_size_px ≥ 200, OR `name` containing "stat" / "big_number" / "hero_number"), optional one-line footnote. |
+| `takeaway_list` | "What to remember" slides with EXACTLY 3 bullet items + optional closing slogan. | 3 bullet text children (name containing "bullet" / "takeaway" / "point"), optional slogan. |
+| `thanks_qa` | The very last slide (Thanks · Q&A · contact). | optional title, contact line (email / handle), optional code / arxiv / repo link. |
+
+**Selection rules:**
+
+- The first slide → `cover_editorial` (or omit `archetype` to inherit
+  the default render, which still works fine for most cover layouts).
+- Any slide whose hero content is one big result number → `evidence_snapshot`.
+- A "key takeaways" slide with 3 bullets → `takeaway_list`.
+- The final slide (Q&A / Thanks / contact) → `thanks_qa`.
+- All other slides → omit `archetype` (the schema default is
+  `"evidence_snapshot"`, but the dispatcher falls through to the default
+  inline render whenever the slide has no big-number child, so leaving
+  the field unset is the safest choice for body slides).
+
+Phase 2 / Phase 3 archetypes (`pipeline_horizontal`, `tension_two_column`,
+`section_divider`, `cover_technical`, `residual_stack_vertical`,
+`conflict_vs_cooperation`) are reserved labels — setting them today is
+schema-valid but renders identically to the default. Don't pick them
+unless the user explicitly asks for that label.
+
+**Editability contract:** archetype renderers emit native python-pptx
+TextFrames only. The .pptx stays type-editable in PowerPoint / Keynote /
+Google Slides — no rasterized text on archetype slides.
+
 ## Section numbers (v2.7.2)
 
 Each `kind="slide"` LayerNode may carry an optional `section_number: str`
