@@ -133,6 +133,26 @@ LayerKind = Literal[
 ]
 Verdict = Literal["pass", "revise", "fail"]
 Severity = Literal["blocker", "major", "minor"]
+# v2.8.1 — slide archetype taxonomy (Phase 1 lands the first 4; the rest are
+# placeholders so v2.8.2 / v2.8.3 can ship without re-touching the schema).
+# Default value on `LayerNode.archetype` is `"evidence_snapshot"` because that
+# label routes through the renderer's existing inline default path — every
+# pre-v2.8.1 deck still renders byte-for-byte unchanged.
+SlideArchetype = Literal[
+    # Phase 1 (v2.8.1)
+    "cover_editorial",
+    "evidence_snapshot",
+    "takeaway_list",
+    "thanks_qa",
+    # Phase 2 (v2.8.2 — placeholders, fall through to default render)
+    "pipeline_horizontal",
+    "tension_two_column",
+    "section_divider",
+    # Phase 3 (v2.8.3 — placeholders, fall through to default render)
+    "cover_technical",
+    "residual_stack_vertical",
+    "conflict_vs_cooperation",
+]
 IssueCategory = Literal[
     "typography", "composition", "brand",
     "legibility", "cultural", "artifact",
@@ -250,6 +270,15 @@ class LayerNode(BaseModel):
         "cover", "content", "content_with_figure",
         "content_with_table", "section_divider", "closing",
     ] | None = None
+
+    # v2.8.1 deck archetype — slide-only (kind="slide"); selects the layout
+    # function in `tools/archetypes/`. The renderer dispatches on this field
+    # before falling through to the default inline `_render_slide` path.
+    # Default = "evidence_snapshot" because that label is wired to the
+    # default-render fallback (zero behavior change for pre-v2.8.1 decks).
+    # Ignored on the templated path (`_write_pptx_templated` keeps using
+    # `role` + `template_slot`).
+    archetype: SlideArchetype = "evidence_snapshot"
 
     # v2.5.2 deck templating — child-of-slide; names the template shape this
     # child fills (e.g. "title", "body", "image_slot", "table_anchor"). The
