@@ -792,18 +792,54 @@ def _append_vision_messages(
     messages: list[Any],
     attachments: list[_VisionAttachment],
 ) -> None:
-    """Deliver each pending PNG as a real vision content block via the
-    backend's `vision_user_message`. We use one message per attachment
-    so providers that cap images-per-message (some OpenAI-compat
-    routers do) stay under the limit, and so the trailing `text` clearly
-    labels which slide_id each image corresponds to."""
-    for att in attachments:
-        msg = backend.vision_user_message(
+    """Deliver every pending PNG as ONE follow-up user message containing
+    interleaved (text, image) content blocks — one (slide_id label,
+    image) pair per attachment.
+
+    v2.7.4 — collapsed from N separate user messages into a single user
+    message. Strict OpenAI-compat upstreams (Alibaba-routed
+    `qwen/qwen-vl-max`, observed 2026-04-26) reject sequences of
+    adjacent same-role messages once the conversation accumulates four
+    turns of `assistant(tool_calls) → tool* → user* → user*` cycles.
+    The OpenAI vision spec puts multiple images in one user message via
+    a multi-block `content` array; that is now what we emit. The first
+    backend.vision_user_message call gives us a canonical single-image
+    skeleton; we then extend its content array with the rest of the
+    attachments in (text, image) pair order so the model can still tell
+    which slide_id each image belongs to.
+    """
+    if not attachments:
+        return
+    head = backend.vision_user_message(
+        image_b64=attachments[0].image_b64,
+        media_type=attachments[0].media_type,
+        text=f"[render of slide_id={attachments[0].slide_id}]",
+    )
+    if len(attachments) == 1:
+        messages.append(head)
+        return
+    if not isinstance(head, dict) or not isinstance(head.get("content"), list):
+        for att in attachments:
+            messages.append(backend.vision_user_message(
+                image_b64=att.image_b64,
+                media_type=att.media_type,
+                text=f"[render of slide_id={att.slide_id}]",
+            ))
+        return
+    for att in attachments[1:]:
+        sibling = backend.vision_user_message(
             image_b64=att.image_b64,
             media_type=att.media_type,
             text=f"[render of slide_id={att.slide_id}]",
         )
-        messages.append(msg)
+        sibling_content = sibling.get("content")
+        if isinstance(sibling_content, list):
+            head["content"].extend(sibling_content)
+        else:
+            head["content"].append(
+                {"type": "text", "text": f"[render of slide_id={att.slide_id}]"},
+            )
+    messages.append(head)
 
 
 def _downscale_b64(path: Path, max_edge: int) -> tuple[str, str]:

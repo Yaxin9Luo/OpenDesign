@@ -410,9 +410,20 @@ class OpenAICompatBackend:
         # to the API`. Detected by model id prefix `deepseek/`. This may
         # also be needed for other thinking-strict families later; extend
         # the prefix tuple as those surface.
-        assistant_msg: dict[str, Any] = {"role": "assistant"}
-        if msg.content is not None:
-            assistant_msg["content"] = msg.content
+        #
+        # v2.7.4 — `content` MUST always be present on an assistant message,
+        # even when it is empty. OpenAI Chat Completions spec requires the
+        # field; OpenRouter and Anthropic tolerate omission, but stricter
+        # upstream providers (Alibaba-routed `qwen/qwen-vl-max`, observed
+        # 2026-04-26) reject the message with `<400> InternalError.Algo.
+        # InvalidParameter: The model input format error` once a
+        # tool-only assistant turn is replayed in the history. Use empty
+        # string (not None) so the field is never sent as JSON `null`,
+        # which a third class of providers also rejects.
+        assistant_msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": msg.content if msg.content is not None else "",
+        }
         if msg.tool_calls:
             assistant_msg["tool_calls"] = [
                 {
@@ -462,12 +473,17 @@ class OpenAICompatBackend:
         self, *, image_b64: str, media_type: str, text: str,
     ) -> dict[str, Any]:
         # OpenAI-compat uses an `image_url` block with a data: URI string.
+        # v2.7.4 — text block precedes image_url. The OpenAI Chat
+        # Completions vision examples use this order; Alibaba's
+        # `qwen-vl-max` strict endpoint rejected the reverse order with
+        # `InternalError.Algo.InvalidParameter` once accumulated across
+        # multiple critic turns.
         return {
             "role": "user",
             "content": [
+                {"type": "text", "text": text},
                 {"type": "image_url",
                  "image_url": {"url": f"data:{media_type};base64,{image_b64}"}},
-                {"type": "text", "text": text},
             ],
         }
 
