@@ -975,6 +975,16 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         slides, slide_w=slide_w, slide_h=slide_h,
     )
 
+    # v2.8.2-C2 — naive title-body alignment validator. Detects slides where
+    # the title makes a promise the body/figure doesn't deliver (e.g. title
+    # "Training Stage Ablations" but body shows training config with no
+    # ablation data). Set-overlap of noun-phrase tokens; no embeddings, no
+    # LLM call. Threshold-based warnings only — planner self-corrects on
+    # next iteration. Generalizes across paper / blog / .docx etc.
+    from ..util.slide_alignment import detect_alignment_warnings
+    alignment_warnings = detect_alignment_warnings(spec)
+    ctx.state["alignment_warnings"] = alignment_warnings
+
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
     except Exception as e:
@@ -1034,7 +1044,8 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         pptx=str(pptx_path), preview=str(preview_path),
         slides=slide_count, images=image_ct,
         text_overlaps=len(deck_text_overlaps),
-        orphan_callouts=len(orphan_callout_warnings))
+        orphan_callouts=len(orphan_callout_warnings),
+        alignment_warnings=len(alignment_warnings))
 
     _refresh_final_links(iter_dir, ctx, ["deck.pptx", "preview.png"])
     preview_sha = sha256_file(preview_path)
@@ -1057,6 +1068,9 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         # v2.8.2-C1 — placeholder + debug-named-empty shapes the export
         # sanitizer dropped before write_pptx. Empty list = clean spec.
         "sanitizer_warnings": sanitizer_warnings,
+        # v2.8.2-C2 — naive set-overlap signal. Slides whose title noun
+        # phrases don't appear in the body/figure text. Empty = clean.
+        "alignment_warnings": alignment_warnings,
     }
     if prior_preview_sha:
         payload["supersedes_preview_sha256"] = prior_preview_sha

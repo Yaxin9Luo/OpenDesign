@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/49] imports")
+    print("[1/50] imports")
     from . import chat, cli, config, planner, runner, schema, session  # noqa
     from .agents import CriticAgent, PromptEnhancer  # noqa
     from .tools import (
@@ -49,7 +49,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/49] tool registry")
+    print("[2/50] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -82,7 +82,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/49] pydantic schema round-trip (v2)")
+    print("[3/50] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -206,7 +206,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/49] fonts")
+    print("[4/50] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -226,7 +226,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/49] composite (no API)")
+    print("[5/50] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -327,7 +327,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/49] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/50] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -401,7 +401,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/49] chat session save/load")
+    print("[7/50] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -463,7 +463,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/49] edit_layer (no API)")
+    print("[8/50] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -588,7 +588,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/49] apply-edits round-trip (no API)")
+    print("[9/50] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -667,7 +667,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/49] landing mode (no API)")
+    print("[10/50] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -843,7 +843,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/49] design-system styles (no API)")
+    print("[11/50] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -944,7 +944,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/49] landing with images (no API)")
+    print("[12/50] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1063,7 +1063,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/49] deck mode (no API)")
+    print("[13/50] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1241,7 +1241,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/49] deck design system template (no API)")
+    print("[21/50] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1365,7 +1365,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/49] footer leakage check (no API)")
+    print("[22/50] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1472,7 +1472,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/49] callout overlay (no API)")
+    print("[23/50] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1576,7 +1576,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/49] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/50] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1790,7 +1790,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/49] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/50] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1869,7 +1869,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/49] ingest_document markdown (no API)")
+    print("[15/50] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1925,7 +1925,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/49] ingest_document image (no API)")
+    print("[16/50] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1975,7 +1975,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/49] ingest_document docx (no API)")
+    print("[17/50] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2036,7 +2036,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/49] ingest_document pptx (no API)")
+    print("[18/50] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2104,7 +2104,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/49] sub-figure extraction (no API)")
+    print("[19/50] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2199,7 +2199,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/49] versioning + revise-loop preservation (no API)")
+    print("[20/50] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2347,7 +2347,7 @@ def check_section_renumber_policy() -> None:
     a deck whose planner-supplied section_number is non-monotonic and
     rewrites the labels in slide order. Three content slides come back
     as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
-    print("[25/49] section_number policy: renumber (no API)")
+    print("[25/50] section_number policy: renumber (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2371,7 +2371,7 @@ def check_section_renumber_strip() -> None:
     """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
     every SlideNode.section_number to None without touching titles or
     speaker notes."""
-    print("[26/49] section_number policy: strip (no API)")
+    print("[26/50] section_number policy: strip (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2395,7 +2395,7 @@ def check_stable_id_notes_after_reorder() -> None:
     NOT the enumerate index. Build a 4-slide deck, reorder to
     [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
     slide's notes match the source SlideNode it came from."""
-    print("[27/49] speaker_notes follow slide_id after reorder (no API)")
+    print("[27/50] speaker_notes follow slide_id after reorder (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -2621,7 +2621,7 @@ def check_critic_subagent_trajectory() -> None:
       it must be fetched on-demand via `read_paper_section`
     - the read_slide_render tool result stays a small ack (no base64)
     """
-    print("[28/49] critic sub-agent: on-demand paper + trajectory written")
+    print("[28/50] critic sub-agent: on-demand paper + trajectory written")
     from .agents import CriticAgent
     from .schema import ArtifactType, CritiqueReport
 
@@ -2724,7 +2724,7 @@ def check_critic_subagent_max_turns() -> None:
     """smoke #26: when the mocked LLM never calls `report_verdict`,
     CriticAgent must exhaust max_turns and synthesize a `verdict='fail'`
     CritiqueReport rather than recurse forever."""
-    print("[29/49] critic sub-agent: max_turns failsafe → fail verdict")
+    print("[29/50] critic sub-agent: max_turns failsafe → fail verdict")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2771,7 +2771,7 @@ def check_critic_planner_consumption() -> None:
       revise  → state.critique_results carries verdict='revise'
       fail    → state.critique_results carries verdict='fail'
     """
-    print("[30/49] planner consumption: pass/revise/fail routing")
+    print("[30/50] planner consumption: pass/revise/fail routing")
     from .agents import CriticAgent
     from .config import REPO_ROOT
     from .schema import ArtifactType, CompositionArtifacts, DesignSpec, LayerNode
@@ -2881,7 +2881,7 @@ def check_critic_subagent_png_throughput() -> None:
       replayed as plain text (the bug that broke longcat-next dogfood
       on 2026-04-26)
     - the per-turn image cap defers surplus calls to a later turn"""
-    print("[31/49] critic sub-agent: per-turn image cap + vision-message delivery")
+    print("[31/50] critic sub-agent: per-turn image cap + vision-message delivery")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -3011,7 +3011,7 @@ def check_critic_openai_compat_strict_format() -> None:
          (multi-block content), never a chain of N adjacent user
          messages.
     """
-    print("[45/49] critic message format: OpenAI strict-compat invariants")
+    print("[45/50] critic message format: OpenAI strict-compat invariants")
     from .agents import CriticAgent
     from .llm_backend import OpenAICompatBackend, ToolCall, TurnResponse
     from .schema import ArtifactType
@@ -3282,7 +3282,7 @@ def check_archetype_cover_editorial() -> None:
     (title + subtitle + author strip), all backed by TextFrames. When
     the slide carries a `section_number`, the title text picks up the
     `§N · ` prefix from v2.7.2's `_with_section_prefix`."""
-    print("[37/49] archetype cover_editorial: ≥3 textframes + section prefix")
+    print("[37/50] archetype cover_editorial: ≥3 textframes + section prefix")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3329,7 +3329,7 @@ def check_archetype_cover_editorial() -> None:
 def check_archetype_evidence_snapshot() -> None:
     """v2.8.1 smoke #38 — `evidence_snapshot` renders one giant number
     (≥200 pt source ⇒ ≥150 pt rendered) plus a footnote textframe."""
-    print("[38/49] archetype evidence_snapshot: huge number + footnote")
+    print("[38/50] archetype evidence_snapshot: huge number + footnote")
     from .tools.pptx_renderer import _render_slide
 
     big = LayerNode(
@@ -3370,7 +3370,7 @@ def check_archetype_takeaway_list() -> None:
     """v2.8.1 smoke #39 — `takeaway_list` renders 3 bullet groups
     (marker + body shapes per row), giving ≥6 textframes plus the
     title."""
-    print("[39/49] archetype takeaway_list: 3 bullet groups")
+    print("[39/50] archetype takeaway_list: 3 bullet groups")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3416,7 +3416,7 @@ def check_archetype_takeaway_list() -> None:
 def check_archetype_thanks_qa() -> None:
     """v2.8.1 smoke #40 — `thanks_qa` renders a thanks/Q&A headline,
     a contact row, and an optional code link."""
-    print("[40/49] archetype thanks_qa: headline + contact row")
+    print("[40/50] archetype thanks_qa: headline + contact row")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3460,7 +3460,7 @@ def check_archetype_fallback_default() -> None:
     the dispatcher falls through to the original default render. Same
     for any Phase 2/3 placeholder. No exceptions; output matches the
     pre-v2.8.1 inline path."""
-    print("[41/49] archetype fallback: default + Phase 2/3 placeholder")
+    print("[41/50] archetype fallback: default + Phase 2/3 placeholder")
     from .tools.pptx_renderer import _render_slide
 
     # Case A: default archetype, ordinary slide (no big number, no
@@ -3511,7 +3511,7 @@ def check_archetype_determinism() -> None:
     byte-identical slide XML. Guards against accidental nondeterminism
     (time-based ids, random shape positions) creeping into archetype
     renderers."""
-    print("[42/49] archetype determinism: two renders → identical XML")
+    print("[42/50] archetype determinism: two renders → identical XML")
     from xml.etree import ElementTree as ET
     from .tools.pptx_renderer import _render_slide
 
@@ -3585,7 +3585,7 @@ def check_claim_graph_extractor_trajectory() -> None:
     calls report_claim_graph on turn 1. Verify the resulting ClaimGraph has
     the expected fields AND the trajectory file
     `claim_graph_extractor.jsonl` lands in the run dir."""
-    print("[32/49] claim_graph extractor: scripted report_claim_graph + trajectory")
+    print("[32/50] claim_graph extractor: scripted report_claim_graph + trajectory")
     from .agents import ClaimGraphExtractor
     from .config import REPO_ROOT
     from .schema import ClaimGraph
@@ -3679,7 +3679,7 @@ def check_claim_graph_extractor_trajectory() -> None:
 def check_claim_graph_validator_rejects_fabricated_quote() -> None:
     """smoke #33: validate_claim_graph must REJECT an EvidenceNode whose
     raw_quote does not appear in paper_raw_text."""
-    print("[33/49] claim_graph validator: rejects fabricated raw_quote")
+    print("[33/50] claim_graph validator: rejects fabricated raw_quote")
     from .schema import (
         ClaimGraph, EvidenceNode, ImplicationNode, MechanismNode, TensionNode,
     )
@@ -3747,7 +3747,7 @@ def check_planner_covers_population() -> None:
     populates `slide.covers` with valid ClaimGraph node ids; the union
     matches the graph's id catalog (i.e. every tension/mechanism/evidence
     is covered by at least one slide)."""
-    print("[34/49] planner: SlideNode.covers populated against claim_graph ids")
+    print("[34/50] planner: SlideNode.covers populated against claim_graph ids")
     from .schema import (
         ArtifactType, ClaimGraph, DesignSpec, EvidenceNode,
         ImplicationNode, LayerNode, MechanismNode, TensionNode,
@@ -3835,7 +3835,7 @@ def check_critic_claim_coverage_issue() -> None:
     detects an uncovered tension. Mock the LLM to read the user message,
     then emit a claim_coverage issue. Verify the issue surfaces correctly
     in the CritiqueReport."""
-    print("[35/49] critic: claim_coverage issue when tension uncovered")
+    print("[35/50] critic: claim_coverage issue when tension uncovered")
     from .agents import CriticAgent
     from .schema import (
         ArtifactType, ClaimGraph, DesignSpec, LayerNode, MechanismNode,
@@ -3927,7 +3927,7 @@ def check_no_claim_graph_pipeline_degrades() -> None:
     attachment), `_run_claim_graph_extractor` returns None cleanly without
     spawning the extractor, and the runner stores None in
     `ctx.state["claim_graph"]` so the planner degrades to v2.7.3 behavior."""
-    print("[36/49] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
+    print("[36/50] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
     from .config import REPO_ROOT
     from .runner import _run_claim_graph_extractor
 
@@ -3990,7 +3990,7 @@ def check_claim_graph_lookup_whitespace_tolerance() -> None:
     full max_turns budget on `lookup_paper_section` calls because the
     literal substring search couldn't see content that the validator
     would happily accept once normalized."""
-    print("[43/49] claim_graph lookup: whitespace-tolerant (PDF line-wrap proof)")
+    print("[43/50] claim_graph lookup: whitespace-tolerant (PDF line-wrap proof)")
     from .agents.claim_graph_extractor import _extract_paper_excerpt
 
     paper = (
@@ -4044,7 +4044,7 @@ def check_claim_graph_kimi_template_leak_retry() -> None:
     the extractor injects a corrective user reminder and retries instead
     of giving up immediately. Verifies the loop survives one retry and
     can still call report_claim_graph on the next turn."""
-    print("[44/49] claim_graph: Kimi template-leak triggers one retry")
+    print("[44/50] claim_graph: Kimi template-leak triggers one retry")
     from .agents import ClaimGraphExtractor
     from .config import REPO_ROOT
     from .llm_backend import ToolCall, TurnResponse
@@ -4195,7 +4195,7 @@ def check_deck_text_overlap_detector() -> None:
       c. A clean templated deck (text in distinct slots, no orphan
          children) → empty `text_overlap_warnings` list.
     """
-    print("[46/49] deck text-overlap detector (no API)")
+    print("[46/50] deck text-overlap detector (no API)")
 
     from .config import REPO_ROOT, Settings
     from .schema import (
@@ -4331,7 +4331,7 @@ def check_orphan_callout_drop() -> None:
     pointing nowhere) and slide16 ("red circle floating in empty
     space") defects from the 2026-04-26 longcat-next dogfood.
     """
-    print("[47/49] orphan callout dropped at composite time (no API)")
+    print("[47/50] orphan callout dropped at composite time (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -4447,7 +4447,7 @@ def check_image_backend_fallback_chain() -> None:
     clean ImageResult so the tool emits `obs_ok` exactly as if the
     primary had worked.
     """
-    print("[48/49] image fallback chain: provider_unavailable → fallback fires + non-PA errors propagate")
+    print("[48/50] image fallback chain: provider_unavailable → fallback fires + non-PA errors propagate")
     from .image_backend import (
         FallbackImageBackend,
         ImageGenerationError,
@@ -4625,7 +4625,7 @@ def check_export_sanitizer() -> None:
     (empty ``callout_05_a``) defects from the 2026-04-26 longcat-next
     dogfood.
     """
-    print("[49/49] export sanitizer drops placeholders + debug-named empty shapes")
+    print("[49/50] export sanitizer drops placeholders + debug-named empty shapes")
     from .schema import ArtifactType, DesignSpec, LayerNode
     from .util.export_sanitizer import sanitize_design_spec
 
@@ -4691,6 +4691,137 @@ def check_export_sanitizer() -> None:
     )
 
 
+def check_slide_alignment_validator() -> None:
+    """v2.8.2-C2 — naive title-body alignment validator. Detects slides
+    whose title noun phrases don't appear in the body/figure text (B2,
+    claim-evidence drift). Set-overlap only — NO embeddings, NO LLM call.
+
+    Exercises three shapes:
+      1. Aligned: title shares >= 50% of its tokens with body → no warning.
+      2. Misaligned: title is "Training Stage Ablations" but body talks about
+         phases / tokens / model with NONE of {training, stage, ablations}
+         present → score 0/3 = 0.0 → blocker fires.
+      3. Stopword-only title ("Results"): no extractable noun phrases →
+         score defaults to 1.0 → no warning.
+    """
+    print("[50/50] slide alignment validator scores title vs body (no API)")
+    from .schema import (
+        ArtifactType, DeckDesignSystem, DesignSpec, LayerNode,
+    )
+    from .util.slide_alignment import (
+        detect_alignment_warnings,
+        extract_noun_phrases,
+        slide_alignment_score,
+    )
+
+    # Sub-case A: aligned slide.
+    aligned = LayerNode(
+        layer_id="slide_aligned", name="aligned", kind="slide",
+        z_index=1, role="content", children=[
+            LayerNode(layer_id="t_a", name="title", kind="text", z_index=10,
+                      template_slot="title",
+                      text="Audio Tokenizer Architecture"),
+            LayerNode(layer_id="b_a", name="body", kind="text", z_index=11,
+                      template_slot="body",
+                      text=("audio tokenizer uses RVQ and SAE for residual "
+                            "quantization on architecture diagrams")),
+        ],
+    )
+    score_a, missing_a = slide_alignment_score(aligned)
+    if score_a < 0.5:
+        _fail(f"aligned slide should score >= 0.5; got {score_a} "
+              f"(missing={missing_a})")
+
+    # Sub-case B: misaligned. Title noun phrases are
+    # {training, stage, ablations}; body uses {model, trained, tokens, phase}
+    # — no overlap, score 0/3 = 0.0 → blocker.
+    misaligned = LayerNode(
+        layer_id="slide_misaligned", name="misaligned", kind="slide",
+        z_index=2, role="content", children=[
+            LayerNode(layer_id="t_b", name="title", kind="text", z_index=10,
+                      template_slot="title",
+                      text="Training Stage Ablations"),
+            LayerNode(layer_id="b_b", name="body", kind="text", z_index=11,
+                      template_slot="body",
+                      text=("the model was trained with 100B tokens in "
+                            "phase 1 then 200B in phase 2")),
+        ],
+    )
+    score_b, missing_b = slide_alignment_score(misaligned)
+    if score_b >= 0.30:
+        _fail(f"misaligned slide should score < 0.30; got {score_b} "
+              f"(missing={missing_b})")
+    if not {"training", "stage", "ablations"}.issubset(missing_b):
+        _fail(f"missing keywords should include training/stage/ablations; "
+              f"got {missing_b}")
+
+    # Sub-case C edge-1: a title that survives stopword stripping but whose
+    # one phrase appears verbatim in the body → score 1.0, no warning.
+    single_phrase_aligned = LayerNode(
+        layer_id="slide_results", name="results", kind="slide",
+        z_index=3, role="content", children=[
+            LayerNode(layer_id="t_c", name="title", kind="text", z_index=10,
+                      template_slot="title", text="Results"),
+            LayerNode(layer_id="b_c", name="body", kind="text", z_index=11,
+                      template_slot="body",
+                      text="results show 92.3 accuracy on the benchmark"),
+        ],
+    )
+    title_phrases_c = extract_noun_phrases("Results")
+    if title_phrases_c != {"results"}:
+        _fail(f"'Results' should yield {{'results'}}; got {title_phrases_c}")
+    score_c, _ = slide_alignment_score(single_phrase_aligned)
+    if score_c != 1.0:
+        _fail(f"single-phrase aligned slide should score 1.0; got {score_c}")
+
+    # Sub-case C edge-2: a title made entirely of stopwords (rare in practice,
+    # but exercises the "no noun phrases extractable" code path → defaults to
+    # score 1.0 — we can't validate what we can't extract).
+    pure_stopword_title = LayerNode(
+        layer_id="slide_pure_stop", name="pure_stop", kind="slide",
+        z_index=4, role="content", children=[
+            LayerNode(layer_id="t_d", name="title", kind="text", z_index=10,
+                      template_slot="title", text="The And Of"),
+            LayerNode(layer_id="b_d", name="body", kind="text", z_index=11,
+                      template_slot="body", text="totally unrelated body"),
+        ],
+    )
+    if extract_noun_phrases("The And Of"):
+        _fail("pure-stopword title should yield no noun phrases")
+    score_d, _ = slide_alignment_score(pure_stopword_title)
+    if score_d != 1.0:
+        _fail(f"pure-stopword-title slide should default to 1.0; got {score_d}")
+
+    # Spec-level integration: detect_alignment_warnings should emit one
+    # entry for the misaligned slide and skip the other two.
+    spec = DesignSpec(
+        brief="alignment validator smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        deck_design_system=DeckDesignSystem(style="academic-editorial"),
+        layer_graph=[aligned, misaligned, single_phrase_aligned,
+                     pure_stopword_title],
+    )
+    warnings = detect_alignment_warnings(spec)
+    if len(warnings) != 1:
+        _fail(f"expected exactly 1 warning (misaligned slide); "
+              f"got {len(warnings)}: {warnings!r}")
+    w = warnings[0]
+    if w["slide_id"] != "slide_misaligned":
+        _fail(f"warning should target slide_misaligned; got {w!r}")
+    if w["severity"] != "blocker":
+        _fail(f"score 0.0 should map to severity=blocker; got {w!r}")
+    if w["title"] != "Training Stage Ablations":
+        _fail(f"warning should carry the title; got {w!r}")
+
+    _ok(
+        f"aligned≥0.5 ({score_a:.2f}), misaligned<0.30 "
+        f"({score_b:.2f}, blocker), single-phrase-aligned=1.0, "
+        f"pure-stopword-title=1.0; spec walker emits exactly 1 warning"
+    )
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -4742,6 +4873,7 @@ def main() -> int:
     check_deck_text_overlap_detector()
     check_orphan_callout_drop()
     check_export_sanitizer()
+    check_slide_alignment_validator()
 
 
     check_image_backend_fallback_chain()
