@@ -1,10 +1,10 @@
-"""Multi-provider image-generation backend (v2.5).
+"""Multi-provider image-generation backend (v2.5, hardened v2.7.5).
 
 Mirrors the shape of `llm_backend.py` for the same reason: keep tool code
 provider-neutral so users can swap image models without touching
 `tools/generate_image.py` / `tools/generate_background.py`.
 
-Two backends today:
+Two concrete backends today:
 
 - `GeminiImageBackend` — wraps `google.genai` (the original NBP path).
   Selected when `image_model` starts with `gemini-` or `imagen-`. Requires
@@ -12,7 +12,17 @@ Two backends today:
 - `OpenRouterImageBackend` — POSTs to OpenRouter's chat/completions endpoint
   with `modalities=["image","text"]` + `image_config={aspect_ratio,
   image_size}`. Selected for everything else (default model
-  `bytedance-seed/seedream-4.5`). Reuses `OPENROUTER_API_KEY`.
+  `google/gemini-2.5-flash-image`). Reuses `OPENROUTER_API_KEY`.
+
+Plus a wrapper:
+
+- `FallbackImageBackend` (v2.7.5) — wraps a primary backend and an
+  optional fallback backend. On `provider_unavailable` failures from
+  the primary (404 / no-endpoints-for-modality / model-not-found) it
+  transparently retries against the fallback, logging
+  `image.fallback.attempt`. All other failure categories (safety_filter,
+  api 5xx, malformed responses) propagate from the primary unchanged —
+  we only fall back when the user-chosen MODEL is the broken thing.
 
 Routing rules in `make_image_backend(settings)`:
 - `IMAGE_PROVIDER=gemini`     → GeminiImageBackend
@@ -21,9 +31,10 @@ Routing rules in `make_image_backend(settings)`:
     `gemini-*` / `imagen-*`  → Gemini
     everything else          → OpenRouter
 
-No silent cross-provider fallback. If the chosen backend fails the tool
-returns `obs_error` and the planner sees a real error — same behavior as
-v2.4 with the Gemini-only path.
+The factory wraps the resolved backend in `FallbackImageBackend` when
+`settings.image_fallback_model` is non-empty AND points at a different
+model id than the primary; otherwise the bare backend is returned and
+behavior matches v2.5.
 """
 
 from __future__ import annotations
@@ -34,6 +45,8 @@ from io import BytesIO
 from typing import Any, Protocol
 
 from PIL import Image as PILImage
+
+from .util.logging import log
 
 
 @dataclass(frozen=True)
@@ -100,17 +113,38 @@ class GeminiImageBackend:
     ) -> ImageResult:
         from google.genai import types
 
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(
-                    aspect_ratio=aspect_ratio,
-                    image_size=image_size,
+        try:
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size,
+                    ),
                 ),
-            ),
-        )
+            )
+        except Exception as e:
+            # v2.7.5 — flag model-not-found / endpoint-unavailable failures
+            # so FallbackImageBackend can route around them. Gemini surfaces
+            # these as 404 / "Model ... was not found" / "is not supported".
+            msg = str(e)
+            lowered = msg.lower()
+            if (
+                "not found" in lowered
+                or "is not supported" in lowered
+                or "no such model" in lowered
+                or "404" in msg
+            ):
+                raise ImageGenerationError(
+                    f"{self.model} via Gemini is unavailable: {msg}",
+                    category="provider_unavailable",
+                ) from e
+            raise ImageGenerationError(
+                f"{self.model} via Gemini raised {type(e).__name__}: {msg}",
+                category="api",
+            ) from e
 
         for part in response.parts:
             if part.inline_data:
@@ -172,17 +206,41 @@ class OpenRouterImageBackend:
         # The OpenAI SDK doesn't model `modalities` / `image_config`
         # natively — they go through `extra_body`, which OpenRouter
         # forwards verbatim to the upstream image model.
-        resp = self._client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            extra_body={
-                "modalities": ["image", "text"],
-                "image_config": {
-                    "aspect_ratio": aspect_ratio,
-                    "image_size": image_size,
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                extra_body={
+                    "modalities": ["image", "text"],
+                    "image_config": {
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": image_size,
+                    },
                 },
-            },
-        )
+            )
+        except Exception as e:
+            # v2.7.5 — recognise the OpenRouter "model is broken / not
+            # routable for this modality" surface so FallbackImageBackend
+            # can detect it categorically. Three known shapes:
+            #   - 404 + "No endpoints found that support the requested
+            #     output modalities" (Seedream 4.5 since 2026-04-26)
+            #   - 404 + "No endpoints found for <model>" (model unlisted)
+            #   - 400 + "<model> is not a valid model ID" (typo / dropped)
+            msg = str(e)
+            lowered = msg.lower()
+            if (
+                "no endpoints found" in lowered
+                or "is not a valid model id" in lowered
+                or "model_not_found" in lowered
+            ):
+                raise ImageGenerationError(
+                    f"{self.model} via OpenRouter is unavailable: {msg}",
+                    category="provider_unavailable",
+                ) from e
+            raise ImageGenerationError(
+                f"{self.model} via OpenRouter raised {type(e).__name__}: {msg}",
+                category="api",
+            ) from e
 
         # Non-standard `images` field lives in model_extra; access via dump.
         msg = resp.choices[0].message.model_dump()
@@ -211,6 +269,116 @@ class OpenRouterImageBackend:
         return _png_from_data_url(url, model=self.model)
 
 
+# ─────────────────────── Fallback wrapper (v2.7.5) ──────────────────
+
+
+class FallbackImageBackend:
+    """Wraps a primary `ImageBackend` and an optional fallback so a
+    single broken model id doesn't take down `generate_image` /
+    `generate_background` for the whole run.
+
+    Trigger: ONLY `ImageGenerationError(category="provider_unavailable")`
+    from the primary. Every other failure (safety_filter, api, malformed
+    response) propagates unchanged — those mean "this prompt / this
+    request shape doesn't work", not "this model is the wrong tool".
+
+    The fallback is constructed lazily on first failure so a cold path
+    where the primary always works has zero extra import cost.
+
+    Logging: every fallback attempt emits `image.fallback.attempt` with
+    `primary_model`, `fallback_model`, `category`, and the truncated
+    error message — enough for SFT extractors to find these turns later.
+    On fallback success → `image.fallback.success`. On fallback
+    failure → re-raise the FALLBACK's error so the tool sees the most
+    recent attempt's category (typically still `provider_unavailable`,
+    but could be `safety_filter` if the fallback model gates differently).
+    """
+
+    name = "fallback"
+
+    def __init__(self, primary: ImageBackend, settings: Any, fallback_model: str):
+        self.primary = primary
+        self.model = primary.model  # surface the user-chosen id to logs
+        self._settings = settings
+        self._fallback_model = fallback_model
+        self._fallback_backend: ImageBackend | None = None  # lazy
+
+    def _build_fallback(self) -> ImageBackend:
+        if self._fallback_backend is not None:
+            return self._fallback_backend
+        provider = _infer_image_provider(self._fallback_model)
+        if provider == "gemini":
+            backend = GeminiImageBackend(self._settings, self._fallback_model)
+        else:
+            backend = OpenRouterImageBackend(self._settings, self._fallback_model)
+        self._fallback_backend = backend
+        return backend
+
+    def generate(
+        self,
+        *,
+        prompt: str,
+        aspect_ratio: str,
+        image_size: str,
+    ) -> ImageResult:
+        try:
+            return self.primary.generate(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+            )
+        except ImageGenerationError as e:
+            if e.category != "provider_unavailable":
+                raise
+            log(
+                "image.fallback.attempt",
+                primary_model=self.primary.model,
+                fallback_model=self._fallback_model,
+                category=e.category,
+                error=str(e)[:240],
+            )
+            try:
+                fb = self._build_fallback()
+            except Exception as build_err:
+                # If the fallback can't even be constructed (e.g. missing
+                # credentials) keep the primary's typed failure and
+                # surface the construction error in the message — never
+                # mask the original cause.
+                raise ImageGenerationError(
+                    f"primary {self.primary.model} unavailable AND fallback "
+                    f"{self._fallback_model} could not be initialised: "
+                    f"{type(build_err).__name__}: {build_err}. "
+                    f"Original primary error: {e}",
+                    category="provider_unavailable",
+                ) from e
+            try:
+                result = fb.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    image_size=image_size,
+                )
+            except ImageGenerationError as fb_err:
+                # Both providers down → terminal. Annotate the message
+                # with both model ids so the planner's next turn sees an
+                # actionable error and can pivot to a paper figure.
+                raise ImageGenerationError(
+                    f"image generation failed on BOTH primary "
+                    f"({self.primary.model}) and fallback "
+                    f"({self._fallback_model}). primary={e}; fallback={fb_err}. "
+                    f"Set IMAGE_MODEL=<an alternative> in .env, or pivot the "
+                    f"slide to use an ingest_fig_NN paper figure instead.",
+                    category=fb_err.category,
+                ) from fb_err
+            log(
+                "image.fallback.success",
+                primary_model=self.primary.model,
+                fallback_model=self._fallback_model,
+                width=result.width,
+                height=result.height,
+            )
+            return result
+
+
 # ─────────────────────────── Factory ────────────────────────────────
 
 
@@ -218,12 +386,24 @@ def make_image_backend(settings) -> ImageBackend:
     """Resolve `(image_provider, image_model)` to a concrete backend.
 
     Auto-detection mirrors `LLMBackend`: model id prefix wins when the
-    user leaves provider on `auto`.
+    user leaves provider on `auto`. The result is wrapped in
+    `FallbackImageBackend` whenever `settings.image_fallback_model` is
+    non-empty AND distinct from the primary model — gives v2.7.5+ runs
+    transparent recovery from `provider_unavailable` failures (e.g. the
+    Seedream 4.5 endpoint loss observed 2026-04-26) without forcing the
+    planner to retry the same broken call.
     """
 
-    provider = (getattr(settings, "image_provider", None) or "auto").lower()
-    model = settings.image_model
+    primary = _build_concrete_backend(settings, settings.image_model)
 
+    fb_model = (getattr(settings, "image_fallback_model", "") or "").strip()
+    if fb_model and fb_model != settings.image_model:
+        return FallbackImageBackend(primary, settings, fb_model)
+    return primary
+
+
+def _build_concrete_backend(settings, model: str) -> ImageBackend:
+    provider = (getattr(settings, "image_provider", None) or "auto").lower()
     if provider == "auto":
         provider = _infer_image_provider(model)
 

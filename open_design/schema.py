@@ -111,6 +111,10 @@ ErrorCategory = Literal[
     "not_found",         # referenced ID / asset doesn't exist
     "unsupported_format",  # ingest_document on an unrecognized file type
     "parse_error",       # critic / ingest model output failed to parse
+    "provider_unavailable",  # v2.7.5 — model id is broken at the provider
+                             # (404 / no-endpoints-for-modality / unlisted);
+                             # distinct from `api` so the planner can pivot
+                             # rather than retry the same call.
     "unknown",
 ]
 LayerKind = Literal[

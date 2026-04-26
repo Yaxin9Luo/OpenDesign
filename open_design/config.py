@@ -24,8 +24,9 @@ Credentials (any subset works depending on which providers you call):
   for self-hosted vLLM / native Moonshot / DeepSeek / Doubao endpoints.
 - `GEMINI_API_KEY`: only required when `IMAGE_PROVIDER` resolves to
   `gemini` (auto-routing on a model id starting with `gemini-` or
-  `imagen-`). The v2.5 default is seedream via OpenRouter, so most
-  users don't need this.
+  `imagen-`). The v2.7.5 default is `google/gemini-2.5-flash-image`
+  via OpenRouter (reuses `OPENROUTER_API_KEY`), so most users don't
+  need a separate `GEMINI_API_KEY`.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 
@@ -149,12 +150,34 @@ class Settings:
     # v2.5 multi-provider image generation. `image_model` follows the same
     # auto-detect rule as planner/critic: `gemini-*` / `imagen-*` route to
     # the GeminiImageBackend, everything else to OpenRouter (chat/completions
-    # with modalities=["image","text"]). Default is seedream 4.5 via
-    # OpenRouter to keep the dev loop cheap; users override with
-    # `IMAGE_MODEL=gemini-3-pro-image-preview` (etc) or pin a provider via
+    # with modalities=["image","text"]). Users override with
+    # `IMAGE_MODEL=openai/gpt-5-image-mini` (etc) or pin a provider via
     # `IMAGE_PROVIDER=auto|gemini|openrouter`.
-    image_model: str = "bytedance-seed/seedream-4.5"
+    #
+    # v2.7.5 (2026-04-26) — default switched away from
+    # `bytedance-seed/seedream-4.5` after a real dogfood run hit
+    # `404 - No endpoints found that support the requested output
+    # modalities: image, text` from OpenRouter (run
+    # `20260426-142635-b46e3e51`, 4 consecutive failures → text-only deck
+    # cascade regression). Seedream lost its image-modality endpoint on
+    # OpenRouter; verified live against the v2.7.5 candidate list.
+    # `google/gemini-2.5-flash-image` via OpenRouter is the new default —
+    # confirmed 200 OK with a one-shot probe (8s, ~$0.0003/image) and
+    # accessible through the same `OPENROUTER_API_KEY` plumbing, so no
+    # new credential required.
+    image_model: str = "google/gemini-2.5-flash-image"
     image_provider: ImageProviderChoice = "auto"
+
+    # v2.7.5 hardcoded fallback model — used by `image_backend.generate(...)`
+    # when the user's `image_model` returns 404 / no-endpoints-for-modality
+    # / model-not-found. Different vendor than the default so a
+    # Google-side outage doesn't take both down. Picked
+    # `openai/gpt-5-image-mini` (different vendor, ~$0.000002/image,
+    # ~38s cold latency — slow but reliable). User-overridable via env
+    # `IMAGE_FALLBACK_MODEL=...`; set to empty string to disable the
+    # fallback entirely (fail-loud on first 404 instead of attempting
+    # the second model).
+    image_fallback_model: str = "openai/gpt-5-image-mini"
 
     # v1.2 paper2any: VLM used by ingest_document
     ingest_model: str = "qwen/qwen-vl-max"
@@ -334,12 +357,23 @@ def load_settings() -> Settings:
     )
     ingest_timeout = float(_parse_int_env("INGEST_HTTP_TIMEOUT", 600))
 
-    # v2.5 image-backend resolution. Default model is seedream via
-    # OpenRouter; `image_provider` lets the user pin a backend even when
-    # auto-detection would pick the other one (e.g. running an internal
-    # mirror that serves a `gemini-*` slug from a non-Google endpoint).
+    # v2.5 image-backend resolution. Default model is the v2.7.5
+    # `google/gemini-2.5-flash-image` via OpenRouter; `image_provider`
+    # lets the user pin a backend even when auto-detection would pick
+    # the other one (e.g. running an internal mirror that serves a
+    # `gemini-*` slug from a non-Google endpoint).
     image_model_env = os.getenv("IMAGE_MODEL", "").strip()
     image_provider_env = _parse_image_provider(os.getenv("IMAGE_PROVIDER", "auto"))
+
+    # v2.7.5 — hardcoded fallback model for image generation. Resolved
+    # here so users can override via env without touching the dataclass
+    # default. An explicitly empty string disables the fallback chain
+    # (`IMAGE_FALLBACK_MODEL=` in .env), which is what dogfood SFT
+    # capture wants when probing failure modes deterministically.
+    image_fallback_env_raw = os.getenv("IMAGE_FALLBACK_MODEL")
+    image_fallback_kwargs: dict[str, Any] = {}
+    if image_fallback_env_raw is not None:
+        image_fallback_kwargs["image_fallback_model"] = image_fallback_env_raw.strip()
 
     section_policy = _parse_section_policy(os.getenv("SECTION_NUMBER_POLICY", "renumber"))
 
@@ -371,6 +405,7 @@ def load_settings() -> Settings:
         critic_max_images_per_turn=critic_max_images_env,
         enable_interleaved_thinking=interleaved,
         **({"image_model": image_model_env} if image_model_env else {}),
+        **image_fallback_kwargs,
         image_provider=image_provider_env,
         section_number_policy=section_policy,
     )

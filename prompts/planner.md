@@ -686,6 +686,19 @@ Write the prefix into `composition_notes` of the DesignSpec so the intent is cap
 - At ~$0.05-0.10 per 1K image and ~$0.15-0.20 per 2K image, a 10-slide deck with 8 images ≈ **$0.80-1.50 in NBP cost** on top of planner + critic. Fine.
 - If the user brief explicitly asks for a "text-only" or "minimal" deck, fall back to the text-only path — but make the user explicitly say that, don't assume it.
 
+### When `generate_image` / `generate_background` fails (v2.7.5)
+
+A `tool_result` for `generate_image` or `generate_background` may come back with `status="error"` and one of these `error_category` values:
+
+- **`safety_filter`** — the model refused this specific prompt. Rewrite the prompt (drop the proper noun, make the subject more abstract, soften adjectives) and call the tool again with the SAME `layer_id`. **Do NOT** swap the `layer_id` or invent a new one — the spec child still references the original.
+- **`provider_unavailable`** — the user's `IMAGE_MODEL` is broken at the provider AND the v2.7.5 hardcoded fallback model also failed. Both providers are down for THIS run. **Do NOT** keep retrying `generate_image` — the next call will fail the same way and waste turn budget. Pivot the slide instead:
+  1. **If the paper has an `ingest_fig_NN` layer that fits the slide's topic**, replace the failed `kind: "image"` child's `layer_id` with that paper figure id (rewrite the spec via `propose_design_spec` for that one slide). Drop any `kind: "callout"` children whose `anchor_layer_id` was the broken NBP layer; if you keep them, re-anchor to the new `ingest_fig_NN` id.
+  2. **If no paper figure fits**, drop the `kind: "image"` child entirely AND any sibling `kind: "callout"` children that anchored to it. Switch the slide's `slide.role` from `content_with_figure` to `content` so the layout reflows the body to the freed width. Better to ship a clean text-only slide than a slide with an empty image_slot and an orphan callout pointing at nothing.
+  3. **For cover / closing backgrounds** that must be visual (no paper figure to swap to), drop the `kind: "background"` child — the renderer's archetype layer paints a palette-tinted plain background as a fallback, which still looks intentional. Do NOT spend turns retrying.
+- **`api`** — generic upstream/network error. Retry once. If it fails again, treat as `provider_unavailable` and pivot.
+
+The error message inside `provider_unavailable` will name both the primary and fallback model ids ("primary X unavailable AND fallback Y also failed: ..."). That string is already actionable — surface that message in your reasoning so the trajectory shows you understood the failure category before pivoting. **The anti-pattern this rule kills**: planner sees 4× consecutive `generate_image` errors, gives up silently, ships a deck with text-only slides AND orphan callout shapes referring to images that were never created.
+
 ## Paper deck imagery policy — INGESTED FIGURES FIRST (v2.5.1)
 
 The "Imagery is REQUIRED" section above describes **commercial decks** (pitch / brand / product / report). For **academic decks** generated from an attached paper (`ingest_document` ran and registered ≥ 5 `ingest_fig_NN` / `ingest_table_NN` layers), the imagery rules invert: use the paper's **actual** figures, NOT NBP stock photography. This is the deck equivalent of the `Paper landing imagery policy` (v1.3.1) further up — same intent, deck-shaped.
