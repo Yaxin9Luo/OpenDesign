@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -702,29 +703,87 @@ def _append_trajectory(
         f.write(line + "\n")
 
 
-def _extract_paper_excerpt(raw: str | None, query: str) -> str:
-    """Naive substring search with windowed context. Returns up to ~2000
-    chars centered on the first hit. Empty string when no match.
+_WS_RE = re.compile(r"\s+")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_]{2,}")
 
-    Hard-capped at `_PAPER_EXCERPT_HARD_CAP_CHARS` regardless of the
-    window math — defense against an extreme `query` that would
-    otherwise let the model exfiltrate the whole paper text."""
+
+def _extract_paper_excerpt(raw: str | None, query: str) -> str:
+    """Whitespace-tolerant substring search with windowed context.
+
+    Mirrors `util.claim_graph_validator._norm_ws` semantics so any query
+    the critic forms when verifying provenance matches iff the same string
+    would pass `validate_claim_graph` — closes the symmetric bug fixed in
+    `claim_graph_extractor._extract_paper_excerpt` (PDF newlines / double-
+    spaces broke strict substring lookup).
+
+    Two-tier fallback: longest single token, then empty. Hard-capped at
+    `_PAPER_EXCERPT_HARD_CAP_CHARS` regardless of window math — defense
+    against extreme queries that would exfiltrate the whole paper.
+    """
     if not raw or not query:
         return ""
-    needle = query.lower()
-    haystack_lower = raw.lower()
-    pos = haystack_lower.find(needle)
+
+    norm_query = _WS_RE.sub(" ", query).strip().lower()
+    if not norm_query:
+        return ""
+
+    norm_raw, mapping = _norm_ws_with_mapping(raw)
+    haystack_lower = norm_raw.lower()
+    pos = haystack_lower.find(norm_query)
+
+    if pos < 0:
+        tokens = sorted(
+            _TOKEN_RE.findall(norm_query), key=len, reverse=True,
+        )
+        for tok in tokens[:5]:
+            tok_pos = haystack_lower.find(tok)
+            if tok_pos >= 0:
+                pos = tok_pos
+                norm_query = tok
+                break
+
     if pos < 0:
         return ""
-    window = 1000
-    start = max(0, pos - window)
-    end = min(len(raw), pos + len(query) + window)
+
+    raw_pos = mapping[pos] if pos < len(mapping) else mapping[-1]
+    end_norm = pos + len(norm_query)
+    raw_end_anchor = (
+        mapping[end_norm - 1] + 1 if end_norm - 1 < len(mapping)
+        else len(raw)
+    )
+
+    window = 1500
+    start = max(0, raw_pos - window)
+    end = min(len(raw), raw_end_anchor + window)
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(raw) else ""
     excerpt = f"{prefix}{raw[start:end]}{suffix}"
     if len(excerpt) > _PAPER_EXCERPT_HARD_CAP_CHARS:
         excerpt = excerpt[:_PAPER_EXCERPT_HARD_CAP_CHARS] + "…"
     return excerpt
+
+
+def _norm_ws_with_mapping(raw: str) -> tuple[str, list[int]]:
+    """Normalize whitespace + return per-char index mapping back to raw."""
+    out_chars: list[str] = []
+    mapping: list[int] = []
+    in_ws = False
+    started = False
+    for i, ch in enumerate(raw):
+        if ch.isspace():
+            if started and not in_ws:
+                out_chars.append(" ")
+                mapping.append(i)
+                in_ws = True
+        else:
+            out_chars.append(ch)
+            mapping.append(i)
+            in_ws = False
+            started = True
+    while out_chars and out_chars[-1] == " ":
+        out_chars.pop()
+        mapping.pop()
+    return "".join(out_chars), mapping
 
 
 def _append_vision_messages(
