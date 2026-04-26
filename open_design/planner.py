@@ -131,15 +131,11 @@ class PlannerLoop:
                     tool_use_id=tc.id, tool_name=tc.name, tool_result=result,
                 )
 
-                # Critic's extended-thinking handoff (set by critique_tool.py)
-                if tc.name == "critique" and result.status == "ok":
-                    pending = ctx.state.pop("_pending_critic_thinking", None)
-                    if pending:
-                        self._append(
-                            actor="critic", type="reasoning",
-                            thinking_blocks=pending,
-                            model=self.settings.critic_model,
-                        )
+                # v2.7.3 — critic's extended-thinking is captured into its
+                # own trajectory file (`critic.jsonl`) because the critic
+                # now runs as a forked sub-agent. The legacy handoff via
+                # `_pending_critic_thinking` is gone; planner.jsonl-style
+                # trajectory only carries planner-side reasoning.
 
                 tool_results_for_api.append((
                     tc.id,
