@@ -950,6 +950,20 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     )
     ctx.state["orphan_callouts"] = orphan_callout_ids
 
+    # v2.8.2-C1 — strip placeholder text + debug-named empty shapes BEFORE
+    # write_pptx. The orphan-callout pass above only catches callouts that
+    # point at empty space; this pass catches callouts that *do* anchor a
+    # real region but never had their label rewritten ("Annotation 12",
+    # ``callout_05_a`` with empty text), plus title/body leaks like
+    # "Paper Title Goes Here" / "arxiv.org/abs/XXXX". Operates on
+    # structural properties only — no per-paper heuristics.
+    from ..util.export_sanitizer import sanitize_design_spec
+    spec, sanitizer_warnings = sanitize_design_spec(spec)
+    ctx.state["sanitizer_warnings"] = sanitizer_warnings
+    # Refresh `slides` from the sanitized spec so downstream detectors,
+    # write_pptx, and the manifest builder all walk the cleaned tree.
+    slides = [n for n in spec.layer_graph if getattr(n, "kind", None) == "slide"]
+
     # v2.7.5 — deck-side text-overlap detector. Templated decks
     # intentionally have ``bbox=None`` on every child (positions come
     # from template slots), so the poster-only `_detect_text_overlaps`
@@ -1040,6 +1054,9 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         # un-anchorable callouts before re-composing.
         "text_overlap_warnings": deck_text_overlaps,
         "orphan_callout_warnings": orphan_callout_warnings,
+        # v2.8.2-C1 — placeholder + debug-named-empty shapes the export
+        # sanitizer dropped before write_pptx. Empty list = clean spec.
+        "sanitizer_warnings": sanitizer_warnings,
     }
     if prior_preview_sha:
         payload["supersedes_preview_sha256"] = prior_preview_sha
