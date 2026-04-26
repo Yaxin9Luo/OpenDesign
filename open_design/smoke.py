@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/44] imports")
+    print("[1/45] imports")
     from . import chat, cli, config, planner, runner, schema, session  # noqa
     from .agents import CriticAgent, PromptEnhancer  # noqa
     from .tools import (
@@ -49,7 +49,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/44] tool registry")
+    print("[2/45] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -82,7 +82,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/44] pydantic schema round-trip (v2)")
+    print("[3/45] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -206,7 +206,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/44] fonts")
+    print("[4/45] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -226,7 +226,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/44] composite (no API)")
+    print("[5/45] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -327,7 +327,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/44] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/45] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -401,7 +401,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/44] chat session save/load")
+    print("[7/45] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -463,7 +463,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/44] edit_layer (no API)")
+    print("[8/45] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -588,7 +588,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/44] apply-edits round-trip (no API)")
+    print("[9/45] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -667,7 +667,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/44] landing mode (no API)")
+    print("[10/45] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -843,7 +843,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/44] design-system styles (no API)")
+    print("[11/45] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -944,7 +944,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/44] landing with images (no API)")
+    print("[12/45] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1063,7 +1063,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/44] deck mode (no API)")
+    print("[13/45] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1241,7 +1241,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/44] deck design system template (no API)")
+    print("[21/45] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1365,7 +1365,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/44] footer leakage check (no API)")
+    print("[22/45] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1472,7 +1472,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/44] callout overlay (no API)")
+    print("[23/45] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1576,7 +1576,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/44] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/45] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1790,7 +1790,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/44] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/45] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1869,7 +1869,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/44] ingest_document markdown (no API)")
+    print("[15/45] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1925,7 +1925,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/44] ingest_document image (no API)")
+    print("[16/45] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1975,7 +1975,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/44] ingest_document docx (no API)")
+    print("[17/45] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2036,7 +2036,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/44] ingest_document pptx (no API)")
+    print("[18/45] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2104,7 +2104,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/44] sub-figure extraction (no API)")
+    print("[19/45] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2199,7 +2199,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/44] versioning + revise-loop preservation (no API)")
+    print("[20/45] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2347,7 +2347,7 @@ def check_section_renumber_policy() -> None:
     a deck whose planner-supplied section_number is non-monotonic and
     rewrites the labels in slide order. Three content slides come back
     as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
-    print("[25/44] section_number policy: renumber (no API)")
+    print("[25/45] section_number policy: renumber (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2371,7 +2371,7 @@ def check_section_renumber_strip() -> None:
     """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
     every SlideNode.section_number to None without touching titles or
     speaker notes."""
-    print("[26/44] section_number policy: strip (no API)")
+    print("[26/45] section_number policy: strip (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2395,7 +2395,7 @@ def check_stable_id_notes_after_reorder() -> None:
     NOT the enumerate index. Build a 4-slide deck, reorder to
     [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
     slide's notes match the source SlideNode it came from."""
-    print("[27/44] speaker_notes follow slide_id after reorder (no API)")
+    print("[27/45] speaker_notes follow slide_id after reorder (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -2621,7 +2621,7 @@ def check_critic_subagent_trajectory() -> None:
       it must be fetched on-demand via `read_paper_section`
     - the read_slide_render tool result stays a small ack (no base64)
     """
-    print("[28/44] critic sub-agent: on-demand paper + trajectory written")
+    print("[28/45] critic sub-agent: on-demand paper + trajectory written")
     from .agents import CriticAgent
     from .schema import ArtifactType, CritiqueReport
 
@@ -2724,7 +2724,7 @@ def check_critic_subagent_max_turns() -> None:
     """smoke #26: when the mocked LLM never calls `report_verdict`,
     CriticAgent must exhaust max_turns and synthesize a `verdict='fail'`
     CritiqueReport rather than recurse forever."""
-    print("[29/44] critic sub-agent: max_turns failsafe → fail verdict")
+    print("[29/45] critic sub-agent: max_turns failsafe → fail verdict")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2771,7 +2771,7 @@ def check_critic_planner_consumption() -> None:
       revise  → state.critique_results carries verdict='revise'
       fail    → state.critique_results carries verdict='fail'
     """
-    print("[30/44] planner consumption: pass/revise/fail routing")
+    print("[30/45] planner consumption: pass/revise/fail routing")
     from .agents import CriticAgent
     from .config import REPO_ROOT
     from .schema import ArtifactType, CompositionArtifacts, DesignSpec, LayerNode
@@ -2881,7 +2881,7 @@ def check_critic_subagent_png_throughput() -> None:
       replayed as plain text (the bug that broke longcat-next dogfood
       on 2026-04-26)
     - the per-turn image cap defers surplus calls to a later turn"""
-    print("[31/44] critic sub-agent: per-turn image cap + vision-message delivery")
+    print("[31/45] critic sub-agent: per-turn image cap + vision-message delivery")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2950,23 +2950,32 @@ def check_critic_subagent_png_throughput() -> None:
         _fail(f"tool results must stay small after hotfix; found "
               f"{len(big_tool_results)} oversized tool messages")
 
-    # Exactly `critic_max_images_per_turn` slide PNGs should ride as
-    # follow-up user-role vision messages with image_url blocks.
+    # v2.7.4 — exactly `critic_max_images_per_turn` slide PNGs ride as
+    # image_url blocks inside ONE follow-up user-role vision message
+    # (collapsed from N messages so strict OpenAI-compat upstreams like
+    # Alibaba `qwen/qwen-vl-max` accept the trailing history shape).
     cap = big_settings.critic_max_images_per_turn
     vision_msgs = []
+    image_blocks: list[dict] = []
     for m in second_turn_msgs:
         if not isinstance(m, dict) or m.get("role") != "user":
             continue
         content = m.get("content")
         if not isinstance(content, list):
             continue
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "image_url":
-                vision_msgs.append(m)
-                break
-    if len(vision_msgs) != cap:
-        _fail(f"expected exactly {cap} vision user-messages (per-turn cap); "
-              f"got {len(vision_msgs)}")
+        per_msg_imgs = [
+            b for b in content
+            if isinstance(b, dict) and b.get("type") == "image_url"
+        ]
+        if per_msg_imgs:
+            vision_msgs.append(m)
+            image_blocks.extend(per_msg_imgs)
+    if len(vision_msgs) != 1:
+        _fail(f"expected exactly 1 collapsed vision user-message "
+              f"(v2.7.4); got {len(vision_msgs)}")
+    if len(image_blocks) != cap:
+        _fail(f"expected exactly {cap} image_url blocks across the "
+              f"vision message (per-turn cap); got {len(image_blocks)}")
 
     # The deferred slides (S{cap}..S14) must show up as ack JSONs with
     # `"deferred": true` in the tool-role messages.
@@ -2981,9 +2990,202 @@ def check_critic_subagent_png_throughput() -> None:
         _fail(f"expected {expected_deferred} deferred ack tool messages; "
               f"got {deferred_seen}")
 
-    _ok(f"per-turn image cap honoured: {cap} vision messages + "
-        f"{expected_deferred} deferred acks, no base64 in tool results, "
-        f"verdict={report.verdict}")
+    _ok(f"per-turn image cap honoured: 1 collapsed vision message "
+        f"with {cap} image_url blocks + {expected_deferred} deferred "
+        f"acks, no base64 in tool results, verdict={report.verdict}")
+
+
+def check_critic_openai_compat_strict_format() -> None:
+    """smoke #45 (v2.7.4 hotfix 2026-04-26): the message structure the
+    critic builds across multiple read_slide_render turns MUST satisfy
+    the strict OpenAI Chat Completions spec, since strict upstreams
+    (Alibaba-routed `qwen/qwen-vl-max`) reject any deviation with
+    `<400> InternalError.Algo.InvalidParameter: The model input format
+    error`.
+
+    Locks in three invariants that the v2.7.3 hotfix violated:
+      1. Every assistant message has a `content` key (empty string is
+         fine; `None`/missing is not).
+      2. The vision content array places `text` before `image_url`.
+      3. After a tool-results burst we emit ONE collapsed user message
+         (multi-block content), never a chain of N adjacent user
+         messages.
+    """
+    print("[45/45] critic message format: OpenAI strict-compat invariants")
+    from .agents import CriticAgent
+    from .llm_backend import OpenAICompatBackend, ToolCall, TurnResponse
+    from .schema import ArtifactType
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=4)
+    settings = _make_smoke_settings(run_dir.parent.parent)
+    settings = settings.__class__(
+        **{**settings.__dict__,
+           "critic_max_turns": 6,
+           "critic_max_images_per_turn": 4},
+    )
+
+    class _CapturingBackend:
+        name = "openai_compat"
+        model = "stub-strict"
+
+        def __init__(self) -> None:
+            self.observed_messages: list[list] = []
+            self._calls = 0
+
+        def create_turn(self, *, system, messages, tools,
+                        thinking_budget=0, max_tokens=16384,
+                        extra_headers=None):
+            self.observed_messages.append([_deepcopy_msg(m) for m in messages])
+            self._calls += 1
+            if self._calls == 1:
+                tcs = [
+                    ToolCall(id=f"call_{i}",
+                             name="read_slide_render",
+                             input={"slide_id": f"S{i}"})
+                    for i in range(4)
+                ]
+                # Mirror the real OpenAICompatBackend's assistant_msg
+                # construction so the smoke catches the missing-content
+                # regression: msg.content is None on tool-only turns.
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": f"call_{i}", "type": "function",
+                         "function": {"name": "read_slide_render",
+                                      "arguments": json.dumps(
+                                          {"slide_id": f"S{i}"})}}
+                        for i in range(4)
+                    ],
+                }
+                return TurnResponse(
+                    text="", tool_calls=tcs, stop_reason="tool_use",
+                    raw_assistant_content=assistant_msg, usage={},
+                )
+            tcs = [ToolCall(id="call_done", name="report_verdict",
+                            input={"score": 0.8, "verdict": "pass",
+                                   "summary": "ok", "issues": []})]
+            assistant_msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_done", "type": "function",
+                     "function": {"name": "report_verdict",
+                                  "arguments": json.dumps({
+                                      "score": 0.8, "verdict": "pass",
+                                      "summary": "ok", "issues": []})}}
+                ],
+            }
+            return TurnResponse(
+                text="", tool_calls=tcs, stop_reason="tool_use",
+                raw_assistant_content=assistant_msg, usage={},
+            )
+
+        def append_assistant(self, messages, response):
+            messages.append(response.raw_assistant_content)
+
+        def append_tool_results(self, messages, results):
+            OpenAICompatBackend.append_tool_results(self, messages, results)
+
+        def vision_user_message(self, *, image_b64, media_type, text):
+            return OpenAICompatBackend.vision_user_message(
+                self, image_b64=image_b64, media_type=media_type, text=text,
+            )
+
+    mock = _CapturingBackend()
+    agent = CriticAgent(settings, ArtifactType.DECK)
+    agent.backend = mock  # type: ignore[assignment]
+
+    traj_path = run_dir / "trajectory" / "critic_strict.jsonl"
+    if traj_path.exists():
+        traj_path.unlink()
+    report = agent.critique(
+        spec=spec, layer_manifest=[], slide_renders=slide_paths,
+        paper_raw_text=None, iteration=1, trajectory_path=traj_path,
+    )
+    if report.verdict != "pass":
+        _fail(f"smoke fixture should yield pass; got {report.verdict}")
+
+    if len(mock.observed_messages) < 2:
+        _fail("expected at least 2 backend turns observed")
+    second_turn = mock.observed_messages[1]
+
+    # Invariant 1: every assistant message MUST have a `content` key.
+    for i, m in enumerate(second_turn):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant" and "content" not in m:
+            _fail(f"assistant message at idx {i} missing `content` key — "
+                  f"OpenAI strict-spec violation: {m}")
+
+    # Invariant 2: every vision user message places text before image_url.
+    vision_messages = [
+        m for m in second_turn
+        if isinstance(m, dict) and m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(isinstance(b, dict) and b.get("type") == "image_url"
+                for b in m["content"])
+    ]
+    if not vision_messages:
+        _fail("no vision user message observed in second turn history")
+    for vm in vision_messages:
+        blocks = vm["content"]
+        first_image_idx = next(
+            (i for i, b in enumerate(blocks)
+             if isinstance(b, dict) and b.get("type") == "image_url"),
+            -1,
+        )
+        first_text_idx = next(
+            (i for i, b in enumerate(blocks)
+             if isinstance(b, dict) and b.get("type") == "text"),
+            -1,
+        )
+        if first_text_idx < 0 or first_image_idx < 0:
+            _fail(f"vision message must contain both text and image_url: {vm}")
+        if first_text_idx > first_image_idx:
+            _fail("vision content blocks must place `text` before "
+                  f"`image_url` (OpenAI canonical order); got: {blocks}")
+
+    # Invariant 3: the burst collapses into ONE user message — no run of
+    # adjacent user-role messages between the tool burst and the next
+    # assistant turn.
+    if len(vision_messages) != 1:
+        _fail(f"expected exactly 1 collapsed vision user message after "
+              f"the tool burst; got {len(vision_messages)} adjacent "
+              f"user messages — strict OpenAI-compat upstreams reject "
+              f"this shape")
+    sole_vision = vision_messages[0]
+    image_blocks = [
+        b for b in sole_vision["content"]
+        if isinstance(b, dict) and b.get("type") == "image_url"
+    ]
+    if len(image_blocks) != 4:
+        _fail(f"collapsed vision message must carry all 4 image blocks; "
+              f"got {len(image_blocks)}")
+    for blk in image_blocks:
+        url = blk.get("image_url")
+        if not isinstance(url, dict) or "url" not in url:
+            _fail(f"image_url block must be a nested object with `url`; "
+                  f"got {blk}")
+        if not str(url["url"]).startswith("data:image/"):
+            _fail(f"image_url.url must be a data: URI; got {url['url'][:60]}")
+
+    _ok("OpenAI strict-spec invariants hold: assistant.content present, "
+        "text-before-image, 1 collapsed vision message with all "
+        "image_url blocks")
+
+
+def _deepcopy_msg(m):
+    """Cheap deep copy via JSON round-trip for plain-dict messages.
+
+    The capturing backend snapshots the messages list per turn so
+    later mutations (e.g. CriticAgent appending vision blocks AFTER
+    create_turn returns) don't retroactively corrupt the assertion's
+    view of what the model saw on a given turn."""
+    try:
+        return json.loads(json.dumps(m, default=str))
+    except (TypeError, ValueError):
+        return m
 
 
 # ─────────────────────── v2.8.1 archetype Phase 1 ──────────────────────
@@ -3080,7 +3282,7 @@ def check_archetype_cover_editorial() -> None:
     (title + subtitle + author strip), all backed by TextFrames. When
     the slide carries a `section_number`, the title text picks up the
     `§N · ` prefix from v2.7.2's `_with_section_prefix`."""
-    print("[37/44] archetype cover_editorial: ≥3 textframes + section prefix")
+    print("[37/45] archetype cover_editorial: ≥3 textframes + section prefix")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3127,7 +3329,7 @@ def check_archetype_cover_editorial() -> None:
 def check_archetype_evidence_snapshot() -> None:
     """v2.8.1 smoke #38 — `evidence_snapshot` renders one giant number
     (≥200 pt source ⇒ ≥150 pt rendered) plus a footnote textframe."""
-    print("[38/44] archetype evidence_snapshot: huge number + footnote")
+    print("[38/45] archetype evidence_snapshot: huge number + footnote")
     from .tools.pptx_renderer import _render_slide
 
     big = LayerNode(
@@ -3168,7 +3370,7 @@ def check_archetype_takeaway_list() -> None:
     """v2.8.1 smoke #39 — `takeaway_list` renders 3 bullet groups
     (marker + body shapes per row), giving ≥6 textframes plus the
     title."""
-    print("[39/44] archetype takeaway_list: 3 bullet groups")
+    print("[39/45] archetype takeaway_list: 3 bullet groups")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3214,7 +3416,7 @@ def check_archetype_takeaway_list() -> None:
 def check_archetype_thanks_qa() -> None:
     """v2.8.1 smoke #40 — `thanks_qa` renders a thanks/Q&A headline,
     a contact row, and an optional code link."""
-    print("[40/44] archetype thanks_qa: headline + contact row")
+    print("[40/45] archetype thanks_qa: headline + contact row")
     from .tools.pptx_renderer import _render_slide
 
     title = LayerNode(
@@ -3258,7 +3460,7 @@ def check_archetype_fallback_default() -> None:
     the dispatcher falls through to the original default render. Same
     for any Phase 2/3 placeholder. No exceptions; output matches the
     pre-v2.8.1 inline path."""
-    print("[41/44] archetype fallback: default + Phase 2/3 placeholder")
+    print("[41/45] archetype fallback: default + Phase 2/3 placeholder")
     from .tools.pptx_renderer import _render_slide
 
     # Case A: default archetype, ordinary slide (no big number, no
@@ -3309,7 +3511,7 @@ def check_archetype_determinism() -> None:
     byte-identical slide XML. Guards against accidental nondeterminism
     (time-based ids, random shape positions) creeping into archetype
     renderers."""
-    print("[42/44] archetype determinism: two renders → identical XML")
+    print("[42/45] archetype determinism: two renders → identical XML")
     from xml.etree import ElementTree as ET
     from .tools.pptx_renderer import _render_slide
 
@@ -3383,7 +3585,7 @@ def check_claim_graph_extractor_trajectory() -> None:
     calls report_claim_graph on turn 1. Verify the resulting ClaimGraph has
     the expected fields AND the trajectory file
     `claim_graph_extractor.jsonl` lands in the run dir."""
-    print("[32/44] claim_graph extractor: scripted report_claim_graph + trajectory")
+    print("[32/45] claim_graph extractor: scripted report_claim_graph + trajectory")
     from .agents import ClaimGraphExtractor
     from .config import REPO_ROOT
     from .schema import ClaimGraph
@@ -3477,7 +3679,7 @@ def check_claim_graph_extractor_trajectory() -> None:
 def check_claim_graph_validator_rejects_fabricated_quote() -> None:
     """smoke #33: validate_claim_graph must REJECT an EvidenceNode whose
     raw_quote does not appear in paper_raw_text."""
-    print("[33/44] claim_graph validator: rejects fabricated raw_quote")
+    print("[33/45] claim_graph validator: rejects fabricated raw_quote")
     from .schema import (
         ClaimGraph, EvidenceNode, ImplicationNode, MechanismNode, TensionNode,
     )
@@ -3545,7 +3747,7 @@ def check_planner_covers_population() -> None:
     populates `slide.covers` with valid ClaimGraph node ids; the union
     matches the graph's id catalog (i.e. every tension/mechanism/evidence
     is covered by at least one slide)."""
-    print("[34/44] planner: SlideNode.covers populated against claim_graph ids")
+    print("[34/45] planner: SlideNode.covers populated against claim_graph ids")
     from .schema import (
         ArtifactType, ClaimGraph, DesignSpec, EvidenceNode,
         ImplicationNode, LayerNode, MechanismNode, TensionNode,
@@ -3633,7 +3835,7 @@ def check_critic_claim_coverage_issue() -> None:
     detects an uncovered tension. Mock the LLM to read the user message,
     then emit a claim_coverage issue. Verify the issue surfaces correctly
     in the CritiqueReport."""
-    print("[35/44] critic: claim_coverage issue when tension uncovered")
+    print("[35/45] critic: claim_coverage issue when tension uncovered")
     from .agents import CriticAgent
     from .schema import (
         ArtifactType, ClaimGraph, DesignSpec, LayerNode, MechanismNode,
@@ -3725,7 +3927,7 @@ def check_no_claim_graph_pipeline_degrades() -> None:
     attachment), `_run_claim_graph_extractor` returns None cleanly without
     spawning the extractor, and the runner stores None in
     `ctx.state["claim_graph"]` so the planner degrades to v2.7.3 behavior."""
-    print("[36/44] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
+    print("[36/45] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
     from .config import REPO_ROOT
     from .runner import _run_claim_graph_extractor
 
@@ -3788,7 +3990,7 @@ def check_claim_graph_lookup_whitespace_tolerance() -> None:
     full max_turns budget on `lookup_paper_section` calls because the
     literal substring search couldn't see content that the validator
     would happily accept once normalized."""
-    print("[43/44] claim_graph lookup: whitespace-tolerant (PDF line-wrap proof)")
+    print("[43/45] claim_graph lookup: whitespace-tolerant (PDF line-wrap proof)")
     from .agents.claim_graph_extractor import _extract_paper_excerpt
 
     paper = (
@@ -3842,7 +4044,7 @@ def check_claim_graph_kimi_template_leak_retry() -> None:
     the extractor injects a corrective user reminder and retries instead
     of giving up immediately. Verifies the loop survives one retry and
     can still call report_claim_graph on the next turn."""
-    print("[44/44] claim_graph: Kimi template-leak triggers one retry")
+    print("[44/45] claim_graph: Kimi template-leak triggers one retry")
     from .agents import ClaimGraphExtractor
     from .config import REPO_ROOT
     from .llm_backend import ToolCall, TurnResponse
@@ -4007,6 +4209,7 @@ def main() -> int:
     check_critic_subagent_max_turns()
     check_critic_planner_consumption()
     check_critic_subagent_png_throughput()
+    check_critic_openai_compat_strict_format()
     check_archetype_cover_editorial()
     check_archetype_evidence_snapshot()
     check_archetype_takeaway_list()
