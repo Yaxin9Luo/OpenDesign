@@ -101,7 +101,7 @@ Always confirm cost with the user before a dogfood run that crosses ~$5.
 The v2.4.x commits landed fast and some docs may lag the code. When in doubt,
 trust the code:
 
-- **Smoke count**: 48 checks as of v2.7.5 (was 42 pre-hotfixes, then +1 v2.7.4 OpenAI-spec smoke, +2 v2.8.0 hotfix smokes for whitespace lookup + Kimi leak retry, +2 v2.7.5a smokes for deck overlap + orphan callout, +1 v2.7.5b smoke for image fallback). Older docs may say 18 / 20 / 24 / 31 / 42.
+- **Smoke count**: 52 checks as of v2.8.2 (48 baseline + 4 v2.8.2 smokes: spec-level export sanitizer / title-body alignment / closing stub detector / post-write .pptx template-default scrubber). Older docs may say 18 / 20 / 24 / 31 / 42 / 48.
 - **Package name**: `open_design`. Old docs may say `design_agent` or
   `LongcatDesign`. Rename landed 2026-04-23 (commit `f337a3b`).
 - **Font registry**: 8 OFL families (Noto SC, Inter, IBM Plex Sans, JetBrains
