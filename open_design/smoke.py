@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/24] imports")
+    print("[1/27] imports")
     from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
@@ -48,7 +48,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/24] tool registry")
+    print("[2/27] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +81,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/24] pydantic schema round-trip (v2)")
+    print("[3/27] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +205,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/24] fonts")
+    print("[4/27] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +225,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/24] composite (no API)")
+    print("[5/27] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +326,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/24] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/27] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -400,7 +400,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/24] chat session save/load")
+    print("[7/27] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -462,7 +462,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/24] edit_layer (no API)")
+    print("[8/27] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -587,7 +587,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/24] apply-edits round-trip (no API)")
+    print("[9/27] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -666,7 +666,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/24] landing mode (no API)")
+    print("[10/27] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -842,7 +842,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/24] design-system styles (no API)")
+    print("[11/27] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -943,7 +943,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/24] landing with images (no API)")
+    print("[12/27] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1062,7 +1062,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/24] deck mode (no API)")
+    print("[13/27] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1240,7 +1240,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/24] deck design system template (no API)")
+    print("[21/27] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1321,16 +1321,20 @@ def check_deck_design_system_template() -> None:
     # Slide 0 (cover) — title text replaced; badge text replaced; image_slot still shape (no image since cover didn't reference one)
     cover = prs.slides[0]
     cover_texts = {s.name: s.text_frame.text for s in cover.shapes if s.has_text_frame}
+    # v2.7.2: cover slides are chrome → no section prefix; title stays exact.
     if cover_texts.get("title") != "LongCat-Next":
         _fail(f"cover title text wrong: {cover_texts.get('title')!r}")
     if cover_texts.get("badge") != "NeurIPS 2026":
         _fail(f"cover badge text wrong: {cover_texts.get('badge')!r}")
     _ok("cover slide: title + badge text filled from template_slot")
 
-    # Slide 1 (content_with_figure) — image placed, footer + slide_number auto-injected
+    # Slide 1 (content_with_figure) — image placed, footer + slide_number auto-injected.
+    # v2.7.2: the default section_number_policy="renumber" prepends "§N · " to
+    # the first content slide's title; substring-match instead of equality so
+    # the assertion stays orthogonal to the section policy.
     method = prs.slides[1]
     method_texts = {s.name: s.text_frame.text for s in method.shapes if s.has_text_frame}
-    if method_texts.get("title") != "DiNA paradigm":
+    if "DiNA paradigm" not in (method_texts.get("title") or ""):
         _fail(f"method title text wrong: {method_texts.get('title')!r}")
     if "LongCat-Next · Meituan" not in (method_texts.get("footer") or ""):
         _fail(f"footer auto-fill missing: {method_texts.get('footer')!r}")
@@ -1360,7 +1364,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/24] footer leakage check (no API)")
+    print("[22/27] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1467,7 +1471,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/24] callout overlay (no API)")
+    print("[23/27] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1571,7 +1575,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/24] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/27] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1785,7 +1789,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/24] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/27] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1864,7 +1868,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/24] ingest_document markdown (no API)")
+    print("[15/27] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1920,7 +1924,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/24] ingest_document image (no API)")
+    print("[16/27] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1970,7 +1974,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/24] ingest_document docx (no API)")
+    print("[17/27] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2031,7 +2035,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/24] ingest_document pptx (no API)")
+    print("[18/27] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2099,7 +2103,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/24] sub-figure extraction (no API)")
+    print("[19/27] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2194,7 +2198,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/24] versioning + revise-loop preservation (no API)")
+    print("[20/27] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2312,6 +2316,175 @@ def check_versioning_no_api() -> None:
     _ok(f"final/ symlinks resolve to iter_02 (the latest)")
 
 
+def _make_slide(layer_id: str, *, title: str, name: str | None = None,
+                section_number: str | None = None,
+                speaker_notes: str | None = None,
+                role: str | None = None) -> LayerNode:
+    """Compact LayerNode factory used by the v2.7.2 smokes — emits a
+    minimal kind="slide" with a single title text child so section /
+    notes assertions stay readable."""
+    title_child = LayerNode(
+        layer_id=f"{layer_id}_title", name="title", kind="text", z_index=10,
+        bbox=SafeZone(x=120, y=80, w=1680, h=140),
+        text=title, font_family="NotoSerifSC-Bold", font_size_px=72,
+        align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    return LayerNode(
+        layer_id=layer_id,
+        name=name or layer_id,
+        kind="slide",
+        z_index=1,
+        role=role,  # type: ignore[arg-type]
+        section_number=section_number,
+        speaker_notes=speaker_notes,
+        children=[title_child],
+    )
+
+
+def check_section_renumber_policy() -> None:
+    """v2.7.2 smoke #25 — `apply_section_policy(policy="renumber")` walks
+    a deck whose planner-supplied section_number is non-monotonic and
+    rewrites the labels in slide order. Three content slides come back
+    as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
+    print("[25/27] section_number policy: renumber (no API)")
+    from .util.section_renumber import apply_section_policy
+
+    slides = [
+        _make_slide("s1", title="Vision tokenizer", section_number="§3.1"),
+        _make_slide("s2", title="Audio tokenizer", section_number="§2.2"),
+        _make_slide("s3", title="Decoder fusion", section_number="§3.2"),
+    ]
+    out = apply_section_policy(slides, "renumber")
+
+    if [s.section_number for s in slides] != ["§3.1", "§2.2", "§3.2"]:
+        _fail("renumber policy mutated input slides — must be immutable")
+    labels = [s.section_number for s in out]
+    if labels != ["§1", "§2", "§3"]:
+        _fail(f"expected ['§1', '§2', '§3'] after renumber; got {labels}")
+    if [s.layer_id for s in out] != ["s1", "s2", "s3"]:
+        _fail("renumber must preserve slide order + ids")
+    _ok(f"renumber: {[s.section_number for s in slides]} -> {labels}")
+
+
+def check_section_renumber_strip() -> None:
+    """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
+    every SlideNode.section_number to None without touching titles or
+    speaker notes."""
+    print("[26/27] section_number policy: strip (no API)")
+    from .util.section_renumber import apply_section_policy
+
+    slides = [
+        _make_slide("s1", title="A", section_number="§1",
+                    speaker_notes="open"),
+        _make_slide("s2", title="B", section_number="§2.1"),
+        _make_slide("s3", title="C", section_number="§3"),
+    ]
+    out = apply_section_policy(slides, "strip")
+    if any(s.section_number is not None for s in out):
+        _fail("strip policy left a non-None section_number behind")
+    if [s.section_number for s in slides] != ["§1", "§2.1", "§3"]:
+        _fail("strip policy mutated input slides — must be immutable")
+    if out[0].speaker_notes != "open":
+        _fail("strip policy clobbered speaker_notes — must only touch section_number")
+    _ok("strip: all section_number cleared, notes/titles intact")
+
+
+def check_stable_id_notes_after_reorder() -> None:
+    """v2.7.2 smoke #27 — speaker notes follow the SlideNode (by id),
+    NOT the enumerate index. Build a 4-slide deck, reorder to
+    [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
+    slide's notes match the source SlideNode it came from."""
+    print("[27/27] speaker_notes follow slide_id after reorder (no API)")
+    from pptx import Presentation as _Reopen
+
+    from .config import REPO_ROOT, Settings
+    from .schema import ArtifactType, DesignSpec
+    from .tools import ToolContext
+    from .tools.composite import composite
+    from .tools.switch_artifact_type import switch_artifact_type
+
+    out_dir = REPO_ROOT / "out" / "smoke_section_notes"
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub", planner_model="stub", critic_model="stub",
+    )
+    ctx = ToolContext(settings=settings, run_dir=out_dir, layers_dir=layers_dir,
+                      run_id="smoke-section-notes")
+
+    if switch_artifact_type({"type": "deck"}, ctx=ctx).status != "ok":
+        _fail("switch_artifact_type(deck)")
+
+    s1 = _make_slide("s1", title="Tokenizers",
+                     speaker_notes="NOTES-FOR-S1: tokenizer story")
+    s2 = _make_slide("s2", title="Decoder",
+                     speaker_notes="NOTES-FOR-S2: decoder story")
+    s3 = _make_slide("s3", title="Results",
+                     speaker_notes="NOTES-FOR-S3: results story")
+    s4 = _make_slide("s4", title="Future Work",
+                     speaker_notes="NOTES-FOR-S4: future story")
+
+    reordered = [s4, s1, s3, s2]
+    spec = DesignSpec(
+        brief="Stable-id notes binding smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        layer_graph=reordered,
+    )
+    ctx.state["design_spec"] = spec
+
+    obs = composite({}, ctx=ctx)
+    if obs.status != "ok":
+        _fail(f"composite(deck): {(obs.error_message or str(obs.payload))}")
+
+    comp = ctx.state["composition"]
+    if not comp.pptx_path or not Path(comp.pptx_path).exists():
+        _fail(f"deck PPTX missing: {comp.pptx_path}")
+
+    prs = _Reopen(comp.pptx_path)
+    if len(prs.slides) != 4:
+        _fail(f"expected 4 slides, got {len(prs.slides)}")
+
+    expected_notes = [
+        "NOTES-FOR-S4",  # s4 first
+        "NOTES-FOR-S1",
+        "NOTES-FOR-S3",
+        "NOTES-FOR-S2",
+    ]
+    for idx, marker in enumerate(expected_notes):
+        notes_text = prs.slides[idx].notes_slide.notes_text_frame.text
+        if marker not in notes_text:
+            _fail(
+                f"slide {idx} notes mismatch: expected substring {marker!r}, "
+                f"got {notes_text[:120]!r}. notes are following enumerate "
+                f"index, not slide_id"
+            )
+    _ok("notes follow slide_id across reorder [s4, s1, s3, s2]")
+
+    # The renumber policy is the default; verify each slide's title got
+    # a section prefix in the rendered .pptx so we know the
+    # apply_section_policy hook in _composite_deck actually fired.
+    sections_seen = 0
+    for idx in range(4):
+        title_text = " ".join(
+            run.text
+            for shape in prs.slides[idx].shapes if shape.has_text_frame
+            for para in shape.text_frame.paragraphs for run in para.runs
+        )
+        if "§" in title_text:
+            sections_seen += 1
+    if sections_seen == 0:
+        _fail(
+            "no slide title carries a section prefix — "
+            "apply_section_policy did not fire in _composite_deck"
+        )
+    _ok(f"apply_section_policy fired in _composite_deck "
+        f"({sections_seen}/4 slides carry section prefix)")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -2337,11 +2510,15 @@ def main() -> int:
     check_footer_leakage()
     check_callout_overlay()
     check_provenance_validator()
+    check_section_renumber_policy()
+    check_section_renumber_strip()
+    check_stable_id_notes_after_reorder()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
           "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
-          "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/")
+          "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/, "
+          "out/smoke_section_notes/")
     return 0
 
 

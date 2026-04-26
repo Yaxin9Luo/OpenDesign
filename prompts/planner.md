@@ -954,6 +954,19 @@ generate_image(
 
 Notice the **consistent style prefix** at the start of each prompt — that's what keeps 8 separate NBP calls looking like one deck.
 
+## Section numbers (v2.7.2)
+
+Each `kind="slide"` LayerNode may carry an optional `section_number: str`
+field (e.g. `"§2.1"`). It is **OPTIONAL** and you do NOT need to keep it
+stable across iterations. The composite stage runs an
+`apply_section_policy` pass before the PPTX renderer ever sees the spec
+and re-assigns sequential `§1`, `§1.1`, `§2`, ... in slide order
+(default policy = `renumber`). If the user pins
+`SECTION_NUMBER_POLICY=preserve`, your value survives; if they pin
+`SECTION_NUMBER_POLICY=strip`, the field is cleared. Either way: do not
+spend tokens trying to keep section numbers monotonic — the renderer
+guarantees that for you.
+
 ## Speaker notes (v2.3 — decks are for presenting; v2.5.3 contract added)
 
 Every `kind="slide"` LayerNode can carry an optional `speaker_notes: str` field. The PPTX renderer writes it into PowerPoint's / Keynote's **notes pane** (visible in presenter view, invisible on the projected slide). A deck without speaker notes is a handout, not a talk — **always draft notes for academic / conference decks, even if the user didn't ask**.

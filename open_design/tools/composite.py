@@ -552,6 +552,25 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
             category="validation",
         )
 
+    # v2.7.2 — apply section_number policy BEFORE hydration / write so the
+    # renderer sees a consistent, monotonic numbering. `apply_section_policy`
+    # is pure: it returns new LayerNode copies without mutating the spec.
+    # Splice the post-policy slides back into the spec's layer_graph in the
+    # same positions so write_pptx walks the renumbered nodes. Non-slide
+    # entries pass through untouched.
+    from ..util.section_renumber import apply_section_policy
+    policy = getattr(ctx.settings, "section_number_policy", "renumber")
+    renumbered = apply_section_policy(slides, policy)
+    rebuilt: list[Any] = []
+    slide_iter = iter(renumbered)
+    for node in layer_graph:
+        if getattr(node, "kind", None) == "slide":
+            rebuilt.append(next(slide_iter))
+        else:
+            rebuilt.append(node)
+    spec.layer_graph = rebuilt
+    slides = renumbered
+
     # Hydrate inline images inside slides (same pattern as landing — planner
     # may declare image children separately and call generate_image later).
     _hydrate_deck_image_srcs(slides, ctx)
