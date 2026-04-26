@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/31] imports")
+    print("[1/36] imports")
     from . import chat, cli, config, planner, runner, schema, session  # noqa
     from .agents import CriticAgent, PromptEnhancer  # noqa
     from .tools import (
@@ -49,7 +49,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/31] tool registry")
+    print("[2/36] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -82,7 +82,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/31] pydantic schema round-trip (v2)")
+    print("[3/36] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -206,7 +206,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/31] fonts")
+    print("[4/36] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -226,7 +226,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/31] composite (no API)")
+    print("[5/36] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -327,7 +327,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/31] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/36] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -401,7 +401,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/31] chat session save/load")
+    print("[7/36] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -463,7 +463,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/31] edit_layer (no API)")
+    print("[8/36] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -588,7 +588,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/31] apply-edits round-trip (no API)")
+    print("[9/36] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -667,7 +667,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/31] landing mode (no API)")
+    print("[10/36] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -843,7 +843,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/31] design-system styles (no API)")
+    print("[11/36] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -944,7 +944,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/31] landing with images (no API)")
+    print("[12/36] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1063,7 +1063,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/31] deck mode (no API)")
+    print("[13/36] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1241,7 +1241,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/31] deck design system template (no API)")
+    print("[21/36] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1365,7 +1365,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/31] footer leakage check (no API)")
+    print("[22/36] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1472,7 +1472,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/31] callout overlay (no API)")
+    print("[23/36] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1576,7 +1576,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/31] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/36] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1790,7 +1790,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/31] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/36] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1869,7 +1869,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/31] ingest_document markdown (no API)")
+    print("[15/36] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1925,7 +1925,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/31] ingest_document image (no API)")
+    print("[16/36] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1975,7 +1975,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/31] ingest_document docx (no API)")
+    print("[17/36] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2036,7 +2036,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/31] ingest_document pptx (no API)")
+    print("[18/36] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2104,7 +2104,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/31] sub-figure extraction (no API)")
+    print("[19/36] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2199,7 +2199,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/31] versioning + revise-loop preservation (no API)")
+    print("[20/36] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2347,7 +2347,7 @@ def check_section_renumber_policy() -> None:
     a deck whose planner-supplied section_number is non-monotonic and
     rewrites the labels in slide order. Three content slides come back
     as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
-    print("[25/31] section_number policy: renumber (no API)")
+    print("[25/36] section_number policy: renumber (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2371,7 +2371,7 @@ def check_section_renumber_strip() -> None:
     """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
     every SlideNode.section_number to None without touching titles or
     speaker notes."""
-    print("[26/31] section_number policy: strip (no API)")
+    print("[26/36] section_number policy: strip (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2395,7 +2395,7 @@ def check_stable_id_notes_after_reorder() -> None:
     NOT the enumerate index. Build a 4-slide deck, reorder to
     [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
     slide's notes match the source SlideNode it came from."""
-    print("[27/31] speaker_notes follow slide_id after reorder (no API)")
+    print("[27/36] speaker_notes follow slide_id after reorder (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -2614,7 +2614,7 @@ def check_critic_subagent_trajectory() -> None:
     LLMBackend that calls `report_verdict` on turn 1. Verify the resulting
     CritiqueReport has the expected verdict/score AND the trajectory file
     `critic.jsonl` lands in the run dir."""
-    print("[28/31] critic sub-agent: scripted report_verdict + trajectory written")
+    print("[28/36] critic sub-agent: scripted report_verdict + trajectory written")
     from .agents import CriticAgent
     from .schema import ArtifactType, CritiqueReport
 
@@ -2679,7 +2679,7 @@ def check_critic_subagent_max_turns() -> None:
     """smoke #26: when the mocked LLM never calls `report_verdict`,
     CriticAgent must exhaust max_turns and synthesize a `verdict='fail'`
     CritiqueReport rather than recurse forever."""
-    print("[29/31] critic sub-agent: max_turns failsafe → fail verdict")
+    print("[29/36] critic sub-agent: max_turns failsafe → fail verdict")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2726,7 +2726,7 @@ def check_critic_planner_consumption() -> None:
       revise  → state.critique_results carries verdict='revise'
       fail    → state.critique_results carries verdict='fail'
     """
-    print("[30/31] planner consumption: pass/revise/fail routing")
+    print("[30/36] planner consumption: pass/revise/fail routing")
     from .agents import CriticAgent
     from .config import REPO_ROOT
     from .schema import ArtifactType, CompositionArtifacts, DesignSpec, LayerNode
@@ -2828,7 +2828,7 @@ def check_critic_subagent_png_throughput() -> None:
     """smoke #28: long-tail check that CriticAgent + read_slide_render
     survive a 15-slide deck with realistic file sizes (no OOM, all renders
     accessible by slide_id, sub-agent terminates cleanly)."""
-    print("[31/31] critic sub-agent: 15-slide PNG throughput (no OOM)")
+    print("[31/36] critic sub-agent: 15-slide PNG throughput (no OOM)")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2900,6 +2900,431 @@ def check_critic_subagent_png_throughput() -> None:
         f"base64 payloads threaded through, verdict={report.verdict}")
 
 
+# ─────────────────────── v2.8.0 ClaimGraph extractor ────────────────────────
+
+
+def _make_smoke_claim_graph_settings(out_root: Path) -> "Settings":  # noqa: F821
+    """Build a Settings stub that points at a writable smoke run dir, with
+    `claim_graph_max_turns` low enough that the failsafe path is reachable
+    inside a unit-test budget."""
+    from .config import Settings
+    return Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub-planner",
+        critic_model="stub-critic",
+        out_dir=out_root,
+        critic_max_turns=4,
+        critic_thinking_budget=0,
+        claim_graph_max_turns=4,
+        claim_graph_thinking_budget=0,
+    )
+
+
+def check_claim_graph_extractor_trajectory() -> None:
+    """smoke #32: spawn ClaimGraphExtractor with a mock LLMBackend that
+    calls report_claim_graph on turn 1. Verify the resulting ClaimGraph has
+    the expected fields AND the trajectory file
+    `claim_graph_extractor.jsonl` lands in the run dir."""
+    print("[32/36] claim_graph extractor: scripted report_claim_graph + trajectory")
+    from .agents import ClaimGraphExtractor
+    from .config import REPO_ROOT
+    from .schema import ClaimGraph
+
+    out_root = REPO_ROOT / "out" / "smoke_claim_graph"
+    if out_root.exists():
+        import shutil
+        shutil.rmtree(out_root)
+    run_dir = out_root / "runs" / "smoke-claim-graph"
+    traj_dir = run_dir / "trajectory"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+
+    paper_text = (
+        "LongCat-Next: Lexicalizing Modalities as Discrete Tokens.\n\n"
+        "Section 1. Native multimodality requires unifying token spaces.\n"
+        "We argue the dual bottleneck in diffusion samplers can only be\n"
+        "resolved by joint training. LongCat-Next achieves 72.3% top-1 on\n"
+        "ImageNet — a clear signal that the DiNA paradigm scales.\n\n"
+        "Section 2. Limitations and conclusion."
+    )
+    paper_path = run_dir / "fake_paper.pdf"
+    paper_path.write_text("dummy", encoding="utf-8")
+
+    settings = _make_smoke_claim_graph_settings(out_root)
+
+    scripted = [
+        _ScriptedTurn(tool_calls=[
+            ("lookup_paper_section", {"query": "ImageNet"}),
+        ]),
+        _ScriptedTurn(tool_calls=[
+            ("report_claim_graph", {
+                "paper_title": "LongCat-Next",
+                "paper_anchor": "arxiv:2526.01234",
+                "thesis": "Lexicalize modalities as discrete tokens.",
+                "tensions": [
+                    {"id": "T1", "name": "understanding-generation conflict",
+                     "description": "joint training is hard", "evidence_anchor": None},
+                ],
+                "mechanisms": [
+                    {"id": "M1", "name": "DiNA paradigm",
+                     "resolves": ["T1"],
+                     "description": "discrete token unification"},
+                ],
+                "evidence": [
+                    {"id": "E1", "metric": "top-1 72.3%", "source": "intro",
+                     "raw_quote": "LongCat-Next achieves 72.3% top-1 on",
+                     "supports": ["M1"]},
+                ],
+                "implications": [
+                    {"id": "I1",
+                     "description": "Native multimodality is feasible.",
+                     "derives_from": ["M1", "E1"]},
+                ],
+            }),
+        ]),
+    ]
+    mock = _MockCriticBackend(model="stub-claim-graph", turns=scripted)
+
+    agent = ClaimGraphExtractor(settings)
+    agent.backend = mock
+    agent._system_prompt = "patched"
+
+    traj_path = traj_dir / "claim_graph_extractor.jsonl"
+    graph = agent.extract(
+        paper_path=paper_path,
+        paper_raw_text=paper_text,
+        trajectory_path=traj_path,
+    )
+
+    if not isinstance(graph, ClaimGraph):
+        _fail(f"extract should return ClaimGraph; got {type(graph).__name__}")
+    if graph.thesis != "Lexicalize modalities as discrete tokens.":
+        _fail(f"thesis lost: {graph.thesis!r}")
+    if len(graph.tensions) != 1 or graph.tensions[0].id != "T1":
+        _fail(f"tensions lost: {graph.tensions}")
+    if len(graph.evidence) != 1 or graph.evidence[0].raw_quote.startswith("?"):
+        _fail(f"evidence lost: {graph.evidence}")
+
+    if not traj_path.exists():
+        _fail(f"claim_graph_extractor.jsonl not written at {traj_path}")
+    lines = traj_path.read_text(encoding="utf-8").strip().splitlines()
+    if len(lines) != 2:
+        _fail(f"expected 2 trajectory lines (one per turn), got {len(lines)}")
+    line1 = json.loads(lines[1])
+    if not any(tc.get("name") == "report_claim_graph"
+               for tc in line1.get("tool_calls", [])):
+        _fail(f"final turn should record report_claim_graph; got {line1.get('tool_calls')}")
+    _ok(f"extractor: report_claim_graph captured + claim_graph_extractor.jsonl ({len(lines)} lines)")
+
+
+def check_claim_graph_validator_rejects_fabricated_quote() -> None:
+    """smoke #33: validate_claim_graph must REJECT an EvidenceNode whose
+    raw_quote does not appear in paper_raw_text."""
+    print("[33/36] claim_graph validator: rejects fabricated raw_quote")
+    from .schema import (
+        ClaimGraph, EvidenceNode, ImplicationNode, MechanismNode, TensionNode,
+    )
+    from .util.claim_graph_validator import validate_claim_graph
+
+    paper_text = (
+        "LongCat-Next: Lexicalizing Modalities as Discrete Tokens.\n"
+        "We argue native multimodality requires unified token spaces.\n"
+        "LongCat-Next achieves 72.3% top-1 on ImageNet."
+    )
+
+    grounded = ClaimGraph(
+        paper_title="LongCat-Next", paper_anchor="arxiv:x",
+        thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T1"],
+                                  description="d")],
+        evidence=[EvidenceNode(id="E1", metric="top-1 72.3%",
+                                source="intro",
+                                raw_quote="achieves 72.3% top-1 on ImageNet",
+                                supports=["M1"])],
+        implications=[ImplicationNode(id="I1", description="impl",
+                                       derives_from=["M1", "E1"])],
+    )
+    errs = validate_claim_graph(grounded, paper_text)
+    if errs:
+        _fail(f"grounded graph should pass; got errors: {errs}")
+
+    fabricated = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T1"],
+                                  description="d")],
+        evidence=[EvidenceNode(id="E2", metric="x",
+                                source="intro",
+                                raw_quote="LongCat-Next reaches 99.99% on every benchmark",
+                                supports=["M1"])],
+        implications=[],
+    )
+    errs2 = validate_claim_graph(fabricated, paper_text)
+    if not errs2:
+        _fail("fabricated quote should fail substring check; validator passed")
+    if not any("E2" in e and "raw_quote" in e for e in errs2):
+        _fail(f"expected error about E2 raw_quote; got {errs2}")
+
+    bad_refs = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T9"],
+                                  description="d")],
+        evidence=[],
+        implications=[ImplicationNode(id="I1", description="i",
+                                       derives_from=["X1"])],
+    )
+    errs3 = validate_claim_graph(bad_refs, paper_text)
+    if not any("T9" in e for e in errs3):
+        _fail(f"expected error about unknown tension T9; got {errs3}")
+    if not any("X1" in e for e in errs3):
+        _fail(f"expected error about unknown derives_from X1; got {errs3}")
+    _ok("validator: grounded passes, fabricated/bad-ref fail (substring + integrity)")
+
+
+def check_planner_covers_population() -> None:
+    """smoke #34: a planner-emitted DesignSpec with claim_graph attached
+    populates `slide.covers` with valid ClaimGraph node ids; the union
+    matches the graph's id catalog (i.e. every tension/mechanism/evidence
+    is covered by at least one slide)."""
+    print("[34/36] planner: SlideNode.covers populated against claim_graph ids")
+    from .schema import (
+        ArtifactType, ClaimGraph, DesignSpec, EvidenceNode,
+        ImplicationNode, LayerNode, MechanismNode, TensionNode,
+    )
+
+    graph = ClaimGraph(
+        paper_title="LongCat-Next", paper_anchor="arxiv:x",
+        thesis="t",
+        tensions=[
+            TensionNode(id="T1", name="conflict", description="d"),
+            TensionNode(id="T2", name="bottleneck", description="d"),
+        ],
+        mechanisms=[
+            MechanismNode(id="M1", name="DiNA", resolves=["T1", "T2"],
+                          description="d"),
+            MechanismNode(id="M2", name="JointTraining", resolves=["T1"],
+                          description="d"),
+        ],
+        evidence=[
+            EvidenceNode(id="E1", metric="x", source="t",
+                          raw_quote="x", supports=["M1"]),
+            EvidenceNode(id="E2", metric="x", source="t",
+                          raw_quote="x", supports=["M2"]),
+        ],
+        implications=[
+            ImplicationNode(id="I1", description="x", derives_from=["M1"]),
+        ],
+    )
+
+    # Simulate what the planner should emit when claim_graph is attached:
+    # talk arc cover → tensions → mechanisms → evidence → implications → thanks.
+    spec = DesignSpec(
+        brief="paper deck",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        layer_graph=[
+            LayerNode(layer_id="S0", name="cover", kind="slide",
+                      z_index=0, covers=[]),
+            LayerNode(layer_id="S1", name="tensions", kind="slide",
+                      z_index=1, covers=["T1", "T2"]),
+            LayerNode(layer_id="S2", name="mech-DiNA", kind="slide",
+                      z_index=2, covers=["M1"]),
+            LayerNode(layer_id="S3", name="mech-Joint", kind="slide",
+                      z_index=3, covers=["M2"]),
+            LayerNode(layer_id="S4", name="evidence", kind="slide",
+                      z_index=4, covers=["E1", "E2"]),
+            LayerNode(layer_id="S5", name="implications", kind="slide",
+                      z_index=5, covers=["I1"]),
+            LayerNode(layer_id="S6", name="thanks", kind="slide",
+                      z_index=6, covers=[]),
+        ],
+    )
+
+    # Round-trip through pydantic to confirm the field is serialisable
+    # AND the planner can read covers off a deserialized spec.
+    dumped = spec.model_dump(mode="json")
+    rehydrated = DesignSpec.model_validate(dumped)
+    if not all(hasattr(s, "covers") for s in rehydrated.layer_graph):
+        _fail("LayerNode.covers missing after round-trip")
+    if rehydrated.layer_graph[1].covers != ["T1", "T2"]:
+        _fail(f"S1 covers lost: {rehydrated.layer_graph[1].covers}")
+
+    # The union of slide.covers should cover every claim graph node id.
+    valid_ids = (
+        {t.id for t in graph.tensions}
+        | {m.id for m in graph.mechanisms}
+        | {e.id for e in graph.evidence}
+        | {i.id for i in graph.implications}
+    )
+    covered = set()
+    for slide in rehydrated.layer_graph:
+        for cid in slide.covers:
+            if cid not in valid_ids:
+                _fail(f"slide {slide.layer_id} covers unknown id {cid!r}")
+            covered.add(cid)
+    missing = valid_ids - covered
+    if missing:
+        _fail(f"planner missed claim ids in covers: {sorted(missing)}")
+    _ok(f"covers populated for all {len(valid_ids)} claim ids; round-trip preserved")
+
+
+def check_critic_claim_coverage_issue() -> None:
+    """smoke #35: CriticAgent with a non-None claim_graph parameter
+    detects an uncovered tension. Mock the LLM to read the user message,
+    then emit a claim_coverage issue. Verify the issue surfaces correctly
+    in the CritiqueReport."""
+    print("[35/36] critic: claim_coverage issue when tension uncovered")
+    from .agents import CriticAgent
+    from .schema import (
+        ArtifactType, ClaimGraph, DesignSpec, LayerNode, MechanismNode,
+        TensionNode,
+    )
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=2)
+    # Override layer_graph so slide 0 covers T1 only; T2 is uncovered.
+    spec = DesignSpec(
+        brief=spec.brief, artifact_type=spec.artifact_type,
+        canvas=spec.canvas,
+        layer_graph=[
+            LayerNode(layer_id="S0", name="s0", kind="slide", z_index=0,
+                      covers=["T1"]),
+            LayerNode(layer_id="S1", name="s1", kind="slide", z_index=1,
+                      covers=[]),
+        ],
+    )
+    settings = _make_smoke_claim_graph_settings(run_dir.parent.parent)
+
+    graph = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="t",
+        tensions=[
+            TensionNode(id="T1", name="covered", description="d"),
+            TensionNode(id="T2", name="missing", description="d"),
+        ],
+        mechanisms=[
+            MechanismNode(id="M1", name="m", resolves=["T1"],
+                          description="d"),
+        ],
+        evidence=[],
+        implications=[],
+    )
+
+    scripted = [
+        _ScriptedTurn(tool_calls=[
+            ("lookup_claim_node", {"claim_id": "T2"}),
+        ]),
+        _ScriptedTurn(tool_calls=[
+            ("report_verdict", {
+                "score": 0.6, "verdict": "revise",
+                "summary": "tension T2 not covered by any slide",
+                "issues": [
+                    {"slide_id": None, "severity": "high",
+                     "category": "claim_coverage",
+                     "description": "Tension T2 'missing' has no slide.covers reference",
+                     "evidence_paper_anchor": None},
+                ],
+            }),
+        ]),
+    ]
+    mock = _MockCriticBackend(model="stub-critic", turns=scripted)
+
+    agent = CriticAgent(settings, ArtifactType.DECK)
+    agent.backend = mock
+    agent._system_prompt = "patched"
+
+    traj_path = run_dir / "trajectory" / "critic_claim.jsonl"
+    if traj_path.exists():
+        traj_path.unlink()
+    report = agent.critique(
+        spec=spec, layer_manifest=[],
+        slide_renders=slide_paths,
+        paper_raw_text="x", claim_graph=graph,
+        iteration=1, trajectory_path=traj_path,
+    )
+
+    if report.verdict != "revise":
+        _fail(f"verdict should be 'revise'; got {report.verdict!r}")
+    cc_issues = [i for i in report.issues if i.category == "claim_coverage"]
+    if not cc_issues:
+        _fail(f"expected ≥1 claim_coverage issue; got {report.issues}")
+    if cc_issues[0].severity != "high":
+        _fail(f"uncovered tension should be severity=high; got {cc_issues[0].severity}")
+
+    # Confirm the lookup_claim_node tool actually executed and returned
+    # the T2 node payload (not an error).
+    line0 = json.loads(traj_path.read_text(encoding="utf-8").splitlines()[0])
+    tool_results_pre = line0.get("tool_results", [])
+    if not any(not tr.get("is_error", False)
+               and tr.get("name") == "lookup_claim_node"
+               for tr in tool_results_pre):
+        _fail(f"lookup_claim_node tool result missing/erred: {tool_results_pre}")
+    _ok("critic emitted high-severity claim_coverage issue + lookup_claim_node worked")
+
+
+def check_no_claim_graph_pipeline_degrades() -> None:
+    """smoke #36: when --no-claim-graph is set (or the brief has no PDF
+    attachment), `_run_claim_graph_extractor` returns None cleanly without
+    spawning the extractor, and the runner stores None in
+    `ctx.state["claim_graph"]` so the planner degrades to v2.7.3 behavior."""
+    print("[36/36] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
+    from .config import REPO_ROOT
+    from .runner import _run_claim_graph_extractor
+
+    out_root = REPO_ROOT / "out" / "smoke_no_claim_graph"
+    if out_root.exists():
+        import shutil
+        shutil.rmtree(out_root)
+    sub_traj_dir = out_root / "runs" / "smoke-no-cg" / "trajectory"
+    sub_traj_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = _make_smoke_claim_graph_settings(out_root)
+
+    # Case 1: --no-claim-graph flag → skip even with PDF present.
+    fake_pdf = out_root / "fake.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+    g1 = _run_claim_graph_extractor(
+        settings, [fake_pdf], no_claim_graph=True,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g1 is not None:
+        _fail(f"--no-claim-graph should yield None; got {type(g1).__name__}")
+    if (sub_traj_dir / "claim_graph_extractor.jsonl").exists():
+        _fail("extractor trajectory should NOT be written when skipped")
+
+    # Case 2: no PDF attachment → skip without any extraction attempt.
+    md = out_root / "notes.md"
+    md.write_text("# notes", encoding="utf-8")
+    g2 = _run_claim_graph_extractor(
+        settings, [md], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g2 is not None:
+        _fail(f"no-PDF input should yield None; got {type(g2).__name__}")
+
+    # Case 3: empty attachments → also None.
+    g3 = _run_claim_graph_extractor(
+        settings, [], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g3 is not None:
+        _fail(f"empty attachments should yield None; got {type(g3).__name__}")
+
+    # Case 4: settings.enable_claim_graph=False short-circuits even with PDF.
+    settings_off = settings.__class__(
+        **{**settings.__dict__, "enable_claim_graph": False},
+    )
+    g4 = _run_claim_graph_extractor(
+        settings_off, [fake_pdf], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g4 is not None:
+        _fail(f"enable_claim_graph=False should yield None; got {type(g4).__name__}")
+    _ok("4 skip paths all return None cleanly; no extractor spawn, no trajectory written")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -2932,13 +3357,19 @@ def main() -> int:
     check_critic_subagent_max_turns()
     check_critic_planner_consumption()
     check_critic_subagent_png_throughput()
+    check_claim_graph_extractor_trajectory()
+    check_claim_graph_validator_rejects_fabricated_quote()
+    check_planner_covers_population()
+    check_critic_claim_coverage_issue()
+    check_no_claim_graph_pipeline_degrades()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
           "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
           "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/, "
           "out/smoke_section_notes/, "
-          "out/smoke_critic_subagent/, out/smoke_critic_consume/")
+          "out/smoke_critic_subagent/, out/smoke_critic_consume/, "
+          "out/smoke_claim_graph/, out/smoke_no_claim_graph/")
     return 0
 
 
