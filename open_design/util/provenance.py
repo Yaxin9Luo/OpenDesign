@@ -214,6 +214,45 @@ def validate_provenance(spec: Any, ctx: Any) -> ProvenanceReport:
     return report
 
 
+def validate_claim_graph_quotes(
+    claim_graph: Any, ctx: Any,
+) -> list[str]:
+    """v2.8.0 — re-check `ClaimGraph.evidence[*].raw_quote` substring
+    against the same paper raw_text the v2.7 body-bullet validator uses.
+
+    The dedicated `util/claim_graph_validator.py` runs at extraction time
+    (right after the sub-agent emits a ClaimGraph). This helper exists so
+    the composite-stage validator can re-run the substring check in the
+    same place it audits body bullets — useful when downstream code
+    accidentally swaps `paper_raw_text` (e.g. apply-edits round-trip).
+
+    Returns a list of error strings (empty = pass). When `claim_graph` is
+    None or no source is available, returns []. Does NOT mutate the graph.
+    """
+    if claim_graph is None:
+        return []
+    sources_text = _collect_sources(ctx)
+    if not sources_text:
+        return []
+    haystacks = [src for _, src in sources_text]
+
+    errors: list[str] = []
+    evidence = getattr(claim_graph, "evidence", None) or []
+    for ev in evidence:
+        quote = getattr(ev, "raw_quote", None) or ""
+        normq = _norm_ws(quote)
+        ev_id = getattr(ev, "id", "?")
+        if not normq:
+            errors.append(f"evidence {ev_id}: empty raw_quote")
+            continue
+        if not any(normq in h for h in haystacks):
+            errors.append(
+                f"evidence {ev_id}: raw_quote not in paper raw_text "
+                f"(quote={quote!r:.120s})"
+            )
+    return errors
+
+
 def apply_strict_provenance(spec: Any, report: ProvenanceReport) -> int:
     """Mutate failing bullets in-place: replace numeric tokens with `[?]`.
 

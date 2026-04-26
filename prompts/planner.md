@@ -832,6 +832,27 @@ For a cover NBP background, a fresh ID + `generate_image` is correct:
 
 then `generate_image(layer_id="slide_01_bg", prompt="<style-prefix> + abstract editorial photography ...", aspect_ratio="16:9", image_size="2K")`.
 
+### v2.8.0 — ClaimGraph-driven slide arc (highest priority)
+
+When the brief carries a `ClaimGraph` (extracted from a paper PDF before you started), order slides along the **talk arc**, NOT paper chapter order:
+
+```
+cover → tensions → mechanisms → evidence → implications → takeaways → thanks
+```
+
+The ClaimGraph has four node types: `tensions` (T1/T2/...), `mechanisms` (M1/M2/...), `evidence` (E1/E2/...), `implications` (I1/I2/...) plus a one-sentence `thesis`. Treat the graph as the deck's outline:
+
+- **Cover slide** — surface the `thesis` as the subtitle.
+- **One slide per tension** (or 1 slide covering 2 tightly-related tensions). Use `slide.role: "content"` or `"section_divider"`.
+- **One slide per mechanism** in the order their `resolves` references appear. A mechanism slide should reference the tension(s) it addresses in its body.
+- **Evidence slides** — group evidence nodes that `supports` the same mechanism(s) into shared "Results" slides; for headline numbers (single big metric) prefer a sparse `evidence_snapshot`-style layout.
+- **Implications slides** — usually 1-2 slides at the end; each `derives_from` reference should be visible (mechanism name or evidence number).
+- **Final slide** — thanks / Q&A.
+
+**Every slide MUST set `covers: list[str]`** with the ClaimGraph node ids it presents (e.g. `["T1", "T2"]` or `["M2", "E5", "E6"]`). Empty list `[]` means the slide presents none of the graph's claims (cover / divider / thanks slides). This field is what the v2.7.3 critic uses for `claim_coverage` checks — uncovered tensions / mechanisms emit `severity=high, category=claim_coverage` issues; uncovered evidence emits `severity=medium`.
+
+When `claim_graph` is NOT present (free-text brief or `--no-claim-graph`), fall back to the v2.7.3 chapter-order mapping below. Do NOT invent a ClaimGraph yourself — only the extractor produces one.
+
 ### Default mapping (paper → deck slides)
 
 | Slide role | Imagery source |

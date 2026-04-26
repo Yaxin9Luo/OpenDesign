@@ -329,6 +329,120 @@ class LayerNode(BaseModel):
     evidence_quote: str | None = None
     evidence_source: str | None = None
 
+    # v2.8.0 Claim graph coverage — slide-only (kind="slide"). Holds the
+    # ClaimGraph node ids (T*/M*/E*/I*) that this slide presents to the
+    # audience. Populated by the planner when `Brief.claim_graph` is
+    # non-None; consumed by the v2.7.3 critic's `claim_coverage` rule to
+    # detect missing tensions / mechanisms / evidence. Empty list = no
+    # coverage claimed (the v2.7.3 baseline behavior — critic skips
+    # claim_coverage when the deck-wide union of `covers` is empty).
+    covers: list[str] = Field(default_factory=list)
+
+
+# v2.8.0 — Claim graph nodes.
+#
+# When the input is a paper PDF, the `ClaimGraphExtractor` sub-agent runs
+# between the enhancer and the planner and emits one `ClaimGraph` capturing
+# the paper's argumentative arc (thesis → tensions → mechanisms → evidence
+# → implications). The planner then orders slides along that arc instead of
+# walking paper chapter order, and the critic uses it to flag uncovered
+# nodes (`category="claim_coverage"`).
+#
+# Hard provenance rule: every `EvidenceNode.raw_quote` MUST be a verbatim
+# substring of the paper raw_text. `open_design/util/claim_graph_validator.py`
+# enforces this at extraction time AND `open_design/util/provenance.py`
+# re-checks it during composite. Fabricated quotes drop the whole graph
+# back to None and the planner degrades to v2.7.3 chapter-order behavior.
+
+
+class TensionNode(BaseModel):
+    """One unresolved-question / paradox the paper sets up.
+
+    Examples: "understanding-generation conflict", "dual bottleneck in
+    diffusion samplers". `evidence_anchor` is a free-form pointer ("fig 7",
+    "section 3.2") used by the planner to label the tension on slide.
+    """
+    id: str
+    name: str
+    description: str
+    evidence_anchor: str | None = None
+
+
+class MechanismNode(BaseModel):
+    """A mechanism / method / paradigm the paper introduces.
+
+    `resolves` lists tension ids the mechanism is claimed to address. Used
+    by the critic to detect "mechanism without a tension" (orphan slide)
+    and "tension without a mechanism" (uncovered tension).
+    """
+    id: str
+    name: str
+    resolves: list[str] = Field(default_factory=list)
+    description: str
+
+
+class EvidenceNode(BaseModel):
+    """One concrete result / number / table cell from the paper.
+
+    `raw_quote` MUST be a verbatim substring of the paper raw_text. The
+    extractor is told to delete any evidence whose quote it cannot ground;
+    the validator double-checks. `supports` references mechanism ids.
+    """
+    id: str
+    metric: str
+    source: str
+    raw_quote: str
+    supports: list[str] = Field(default_factory=list)
+
+
+class ImplicationNode(BaseModel):
+    """A downstream consequence / takeaway the paper draws.
+
+    `derives_from` references mechanism + evidence ids the implication is
+    grounded in. Implication slides are usually the closing 1-2 slides of
+    the talk arc.
+    """
+    id: str
+    description: str
+    derives_from: list[str] = Field(default_factory=list)
+
+
+class ClaimGraph(BaseModel):
+    """Paper-as-argument graph; consumed by planner + critic when present.
+
+    Construction is owned by `open_design/agents/claim_graph_extractor.py`.
+    Validation (substring + ref integrity) is owned by
+    `open_design/util/claim_graph_validator.py`.
+    """
+    paper_title: str
+    paper_anchor: str
+    thesis: str
+    tensions: list[TensionNode] = Field(default_factory=list)
+    mechanisms: list[MechanismNode] = Field(default_factory=list)
+    evidence: list[EvidenceNode] = Field(default_factory=list)
+    implications: list[ImplicationNode] = Field(default_factory=list)
+
+
+class Brief(BaseModel):
+    """v2.8.0 — typed envelope for the planner's input.
+
+    Until v2.8.0 the brief travelled as raw `str` (+ a separate `attachments`
+    list passed alongside it through `runner.py`). The new `Brief` model
+    mirrors that shape so the runner / planner can carry the optional
+    `claim_graph` extracted before planner.start without inventing yet
+    another out-of-band channel. Existing code paths still pass the brief
+    string verbatim into `PlannerLoop.run`; `Brief` is a typed reference
+    object the runner stores alongside `ctx.state` for tools that need it
+    (planner prompt + critic).
+
+    `attachments` carries the resolved file paths (str so the model is
+    JSON-serialisable; runner converts from Path).
+    """
+    text: str
+    attachments: list[str] = Field(default_factory=list)
+    template: str | None = None
+    claim_graph: ClaimGraph | None = None
+
 
 class DesignSpec(BaseModel):
     brief: str

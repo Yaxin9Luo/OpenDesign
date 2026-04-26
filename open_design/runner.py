@@ -15,14 +15,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .agents import EnhancerResult, PromptEnhancer
+from .agents import ClaimGraphExtractor, EnhancerResult, PromptEnhancer
+from .agents.claim_graph_extractor import EXTRACT_FAIL_THESIS
 from .agents.prompt_enhancer import load_enhancer_system_prompt
 from .config import Settings
 from .planner import PlannerLoop
 from .schema import (
-    ArtifactType, DistillTrajectory, TrainingMetadata,
+    ArtifactType, ClaimGraph, DistillTrajectory, TrainingMetadata,
 )
 from .tools import ToolContext
+from .util.claim_graph_validator import validate_claim_graph
 from .util.io import atomic_write_json, ensure_dirs
 from .util.ids import new_run_id
 from .util.logging import log
@@ -36,7 +38,8 @@ class PipelineRunner:
     def run(self, brief: str,
             attachments: list[Path] | None = None,
             template: str | None = None,
-            skip_enhancer: bool = False) -> tuple[DistillTrajectory, Path]:
+            skip_enhancer: bool = False,
+            no_claim_graph: bool = False) -> tuple[DistillTrajectory, Path]:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
@@ -73,6 +76,18 @@ class PipelineRunner:
             settings=self.settings, run_dir=run_dir,
             layers_dir=layers_dir, run_id=run_id,
         )
+
+        # v2.8.0 ClaimGraph extractor — runs between enhancer and planner
+        # whenever the brief attaches a PDF and the stage is enabled.
+        # Result lives in `ctx.state["claim_graph"]` so the planner prompt
+        # + critic can reference it; on validation failure we drop back to
+        # None and degrade to v2.7.3 chapter-order behavior.
+        claim_graph = _run_claim_graph_extractor(
+            self.settings, attachments,
+            no_claim_graph=no_claim_graph,
+            sub_traj_dir=sub_traj_dir,
+        )
+        ctx.state["claim_graph"] = claim_graph
 
         system_prompt = (self.settings.prompts_dir / "planner.md").read_text(encoding="utf-8")
         planner = PlannerLoop(self.settings, system_prompt)
@@ -183,6 +198,105 @@ def _run_enhancer(
         )
     enhancer = PromptEnhancer(settings, system_prompt)
     return enhancer.enhance(effective_brief)
+
+
+def _run_claim_graph_extractor(
+    settings: Settings,
+    attachments: list[Path],
+    *,
+    no_claim_graph: bool,
+    sub_traj_dir: Path,
+) -> ClaimGraph | None:
+    """v2.8.0 — extract a `ClaimGraph` from the first attached PDF.
+
+    Skip conditions (any one returns None):
+      - `no_claim_graph` (`--no-claim-graph` CLI flag) is True
+      - `settings.enable_claim_graph` is False
+      - no PDF in attachments
+      - PDF text extraction fails
+      - extractor returns the sentinel "<extraction failed: timeout>"
+        thesis (max_turns / api_error)
+      - validator rejects the graph
+
+    Failures are logged but never raise — the planner degrades to
+    v2.7.3 chapter-order behavior on any of the above.
+    """
+    if no_claim_graph:
+        log("claim_graph.skipped", reason="--no-claim-graph")
+        return None
+    if not settings.enable_claim_graph:
+        log("claim_graph.skipped", reason="disabled in settings")
+        return None
+
+    pdf = next((p for p in attachments if p.suffix.lower() == ".pdf"), None)
+    if pdf is None:
+        log("claim_graph.skipped", reason="no PDF attachment")
+        return None
+
+    try:
+        paper_raw_text = _extract_pdf_text_for_claim_graph(pdf)
+    except Exception as e:
+        log("claim_graph.skipped",
+            reason=f"pdf_text_extract_failed: {type(e).__name__}: {e}")
+        return None
+    if not paper_raw_text or len(paper_raw_text) < 200:
+        log("claim_graph.skipped",
+            reason="paper_raw_text too short", chars=len(paper_raw_text or ""))
+        return None
+
+    trajectory_path = sub_traj_dir / "claim_graph_extractor.jsonl"
+    try:
+        extractor = ClaimGraphExtractor(settings)
+    except Exception as e:
+        log("claim_graph.skipped",
+            reason=f"extractor_init_failed: {type(e).__name__}: {e}")
+        return None
+
+    try:
+        graph = extractor.extract(
+            paper_path=pdf,
+            paper_raw_text=paper_raw_text,
+            trajectory_path=trajectory_path,
+        )
+    except Exception as e:
+        log("claim_graph.skipped",
+            reason=f"extractor_failed: {type(e).__name__}: {e}")
+        return None
+
+    if graph.thesis == EXTRACT_FAIL_THESIS:
+        log("claim_graph.degraded",
+            reason="extractor returned sentinel thesis (max_turns/api_error)")
+        return None
+
+    errors = validate_claim_graph(graph, paper_raw_text)
+    if errors:
+        log("claim_graph.invalid",
+            n_errors=len(errors), first_errors=errors[:3])
+        return None
+
+    log("claim_graph.ready",
+        thesis_chars=len(graph.thesis),
+        n_tensions=len(graph.tensions),
+        n_mechanisms=len(graph.mechanisms),
+        n_evidence=len(graph.evidence),
+        n_implications=len(graph.implications))
+    return graph
+
+
+def _extract_pdf_text_for_claim_graph(pdf: Path) -> str:
+    """Cheap text-only PDF extraction. Mirrors the page-text path from
+    `tools.ingest_document._ingest_pdf` but skips figure / table / VLM
+    work — the extractor only needs raw text to ground evidence quotes."""
+    import fitz  # pymupdf
+
+    from .util.pdf import extract_page_text
+
+    doc = fitz.open(pdf)
+    try:
+        page_texts = extract_page_text(doc)
+    finally:
+        doc.close()
+    return "\n\n".join(page_texts)
 
 
 def _derive_episode_outcome(

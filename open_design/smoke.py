@@ -3270,6 +3270,431 @@ def check_archetype_determinism() -> None:
         f"({len(xml_1)} chars)")
 
 
+# ─────────────────────── v2.8.0 ClaimGraph extractor ────────────────────────
+
+
+def _make_smoke_claim_graph_settings(out_root: Path) -> "Settings":  # noqa: F821
+    """Build a Settings stub that points at a writable smoke run dir, with
+    `claim_graph_max_turns` low enough that the failsafe path is reachable
+    inside a unit-test budget."""
+    from .config import Settings
+    return Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub-planner",
+        critic_model="stub-critic",
+        out_dir=out_root,
+        critic_max_turns=4,
+        critic_thinking_budget=0,
+        claim_graph_max_turns=4,
+        claim_graph_thinking_budget=0,
+    )
+
+
+def check_claim_graph_extractor_trajectory() -> None:
+    """smoke #32: spawn ClaimGraphExtractor with a mock LLMBackend that
+    calls report_claim_graph on turn 1. Verify the resulting ClaimGraph has
+    the expected fields AND the trajectory file
+    `claim_graph_extractor.jsonl` lands in the run dir."""
+    print("[32/42] claim_graph extractor: scripted report_claim_graph + trajectory")
+    from .agents import ClaimGraphExtractor
+    from .config import REPO_ROOT
+    from .schema import ClaimGraph
+
+    out_root = REPO_ROOT / "out" / "smoke_claim_graph"
+    if out_root.exists():
+        import shutil
+        shutil.rmtree(out_root)
+    run_dir = out_root / "runs" / "smoke-claim-graph"
+    traj_dir = run_dir / "trajectory"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+
+    paper_text = (
+        "LongCat-Next: Lexicalizing Modalities as Discrete Tokens.\n\n"
+        "Section 1. Native multimodality requires unifying token spaces.\n"
+        "We argue the dual bottleneck in diffusion samplers can only be\n"
+        "resolved by joint training. LongCat-Next achieves 72.3% top-1 on\n"
+        "ImageNet — a clear signal that the DiNA paradigm scales.\n\n"
+        "Section 2. Limitations and conclusion."
+    )
+    paper_path = run_dir / "fake_paper.pdf"
+    paper_path.write_text("dummy", encoding="utf-8")
+
+    settings = _make_smoke_claim_graph_settings(out_root)
+
+    scripted = [
+        _ScriptedTurn(tool_calls=[
+            ("lookup_paper_section", {"query": "ImageNet"}),
+        ]),
+        _ScriptedTurn(tool_calls=[
+            ("report_claim_graph", {
+                "paper_title": "LongCat-Next",
+                "paper_anchor": "arxiv:2526.01234",
+                "thesis": "Lexicalize modalities as discrete tokens.",
+                "tensions": [
+                    {"id": "T1", "name": "understanding-generation conflict",
+                     "description": "joint training is hard", "evidence_anchor": None},
+                ],
+                "mechanisms": [
+                    {"id": "M1", "name": "DiNA paradigm",
+                     "resolves": ["T1"],
+                     "description": "discrete token unification"},
+                ],
+                "evidence": [
+                    {"id": "E1", "metric": "top-1 72.3%", "source": "intro",
+                     "raw_quote": "LongCat-Next achieves 72.3% top-1 on",
+                     "supports": ["M1"]},
+                ],
+                "implications": [
+                    {"id": "I1",
+                     "description": "Native multimodality is feasible.",
+                     "derives_from": ["M1", "E1"]},
+                ],
+            }),
+        ]),
+    ]
+    mock = _MockCriticBackend(model="stub-claim-graph", turns=scripted)
+
+    agent = ClaimGraphExtractor(settings)
+    agent.backend = mock
+    agent._system_prompt = "patched"
+
+    traj_path = traj_dir / "claim_graph_extractor.jsonl"
+    graph = agent.extract(
+        paper_path=paper_path,
+        paper_raw_text=paper_text,
+        trajectory_path=traj_path,
+    )
+
+    if not isinstance(graph, ClaimGraph):
+        _fail(f"extract should return ClaimGraph; got {type(graph).__name__}")
+    if graph.thesis != "Lexicalize modalities as discrete tokens.":
+        _fail(f"thesis lost: {graph.thesis!r}")
+    if len(graph.tensions) != 1 or graph.tensions[0].id != "T1":
+        _fail(f"tensions lost: {graph.tensions}")
+    if len(graph.evidence) != 1 or graph.evidence[0].raw_quote.startswith("?"):
+        _fail(f"evidence lost: {graph.evidence}")
+
+    if not traj_path.exists():
+        _fail(f"claim_graph_extractor.jsonl not written at {traj_path}")
+    lines = traj_path.read_text(encoding="utf-8").strip().splitlines()
+    if len(lines) != 2:
+        _fail(f"expected 2 trajectory lines (one per turn), got {len(lines)}")
+    line1 = json.loads(lines[1])
+    if not any(tc.get("name") == "report_claim_graph"
+               for tc in line1.get("tool_calls", [])):
+        _fail(f"final turn should record report_claim_graph; got {line1.get('tool_calls')}")
+    _ok(f"extractor: report_claim_graph captured + claim_graph_extractor.jsonl ({len(lines)} lines)")
+
+
+def check_claim_graph_validator_rejects_fabricated_quote() -> None:
+    """smoke #33: validate_claim_graph must REJECT an EvidenceNode whose
+    raw_quote does not appear in paper_raw_text."""
+    print("[33/42] claim_graph validator: rejects fabricated raw_quote")
+    from .schema import (
+        ClaimGraph, EvidenceNode, ImplicationNode, MechanismNode, TensionNode,
+    )
+    from .util.claim_graph_validator import validate_claim_graph
+
+    paper_text = (
+        "LongCat-Next: Lexicalizing Modalities as Discrete Tokens.\n"
+        "We argue native multimodality requires unified token spaces.\n"
+        "LongCat-Next achieves 72.3% top-1 on ImageNet."
+    )
+
+    grounded = ClaimGraph(
+        paper_title="LongCat-Next", paper_anchor="arxiv:x",
+        thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T1"],
+                                  description="d")],
+        evidence=[EvidenceNode(id="E1", metric="top-1 72.3%",
+                                source="intro",
+                                raw_quote="achieves 72.3% top-1 on ImageNet",
+                                supports=["M1"])],
+        implications=[ImplicationNode(id="I1", description="impl",
+                                       derives_from=["M1", "E1"])],
+    )
+    errs = validate_claim_graph(grounded, paper_text)
+    if errs:
+        _fail(f"grounded graph should pass; got errors: {errs}")
+
+    fabricated = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T1"],
+                                  description="d")],
+        evidence=[EvidenceNode(id="E2", metric="x",
+                                source="intro",
+                                raw_quote="LongCat-Next reaches 99.99% on every benchmark",
+                                supports=["M1"])],
+        implications=[],
+    )
+    errs2 = validate_claim_graph(fabricated, paper_text)
+    if not errs2:
+        _fail("fabricated quote should fail substring check; validator passed")
+    if not any("E2" in e and "raw_quote" in e for e in errs2):
+        _fail(f"expected error about E2 raw_quote; got {errs2}")
+
+    bad_refs = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="x",
+        tensions=[TensionNode(id="T1", name="t", description="d")],
+        mechanisms=[MechanismNode(id="M1", name="m", resolves=["T9"],
+                                  description="d")],
+        evidence=[],
+        implications=[ImplicationNode(id="I1", description="i",
+                                       derives_from=["X1"])],
+    )
+    errs3 = validate_claim_graph(bad_refs, paper_text)
+    if not any("T9" in e for e in errs3):
+        _fail(f"expected error about unknown tension T9; got {errs3}")
+    if not any("X1" in e for e in errs3):
+        _fail(f"expected error about unknown derives_from X1; got {errs3}")
+    _ok("validator: grounded passes, fabricated/bad-ref fail (substring + integrity)")
+
+
+def check_planner_covers_population() -> None:
+    """smoke #34: a planner-emitted DesignSpec with claim_graph attached
+    populates `slide.covers` with valid ClaimGraph node ids; the union
+    matches the graph's id catalog (i.e. every tension/mechanism/evidence
+    is covered by at least one slide)."""
+    print("[34/42] planner: SlideNode.covers populated against claim_graph ids")
+    from .schema import (
+        ArtifactType, ClaimGraph, DesignSpec, EvidenceNode,
+        ImplicationNode, LayerNode, MechanismNode, TensionNode,
+    )
+
+    graph = ClaimGraph(
+        paper_title="LongCat-Next", paper_anchor="arxiv:x",
+        thesis="t",
+        tensions=[
+            TensionNode(id="T1", name="conflict", description="d"),
+            TensionNode(id="T2", name="bottleneck", description="d"),
+        ],
+        mechanisms=[
+            MechanismNode(id="M1", name="DiNA", resolves=["T1", "T2"],
+                          description="d"),
+            MechanismNode(id="M2", name="JointTraining", resolves=["T1"],
+                          description="d"),
+        ],
+        evidence=[
+            EvidenceNode(id="E1", metric="x", source="t",
+                          raw_quote="x", supports=["M1"]),
+            EvidenceNode(id="E2", metric="x", source="t",
+                          raw_quote="x", supports=["M2"]),
+        ],
+        implications=[
+            ImplicationNode(id="I1", description="x", derives_from=["M1"]),
+        ],
+    )
+
+    # Simulate what the planner should emit when claim_graph is attached:
+    # talk arc cover → tensions → mechanisms → evidence → implications → thanks.
+    spec = DesignSpec(
+        brief="paper deck",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        layer_graph=[
+            LayerNode(layer_id="S0", name="cover", kind="slide",
+                      z_index=0, covers=[]),
+            LayerNode(layer_id="S1", name="tensions", kind="slide",
+                      z_index=1, covers=["T1", "T2"]),
+            LayerNode(layer_id="S2", name="mech-DiNA", kind="slide",
+                      z_index=2, covers=["M1"]),
+            LayerNode(layer_id="S3", name="mech-Joint", kind="slide",
+                      z_index=3, covers=["M2"]),
+            LayerNode(layer_id="S4", name="evidence", kind="slide",
+                      z_index=4, covers=["E1", "E2"]),
+            LayerNode(layer_id="S5", name="implications", kind="slide",
+                      z_index=5, covers=["I1"]),
+            LayerNode(layer_id="S6", name="thanks", kind="slide",
+                      z_index=6, covers=[]),
+        ],
+    )
+
+    # Round-trip through pydantic to confirm the field is serialisable
+    # AND the planner can read covers off a deserialized spec.
+    dumped = spec.model_dump(mode="json")
+    rehydrated = DesignSpec.model_validate(dumped)
+    if not all(hasattr(s, "covers") for s in rehydrated.layer_graph):
+        _fail("LayerNode.covers missing after round-trip")
+    if rehydrated.layer_graph[1].covers != ["T1", "T2"]:
+        _fail(f"S1 covers lost: {rehydrated.layer_graph[1].covers}")
+
+    # The union of slide.covers should cover every claim graph node id.
+    valid_ids = (
+        {t.id for t in graph.tensions}
+        | {m.id for m in graph.mechanisms}
+        | {e.id for e in graph.evidence}
+        | {i.id for i in graph.implications}
+    )
+    covered = set()
+    for slide in rehydrated.layer_graph:
+        for cid in slide.covers:
+            if cid not in valid_ids:
+                _fail(f"slide {slide.layer_id} covers unknown id {cid!r}")
+            covered.add(cid)
+    missing = valid_ids - covered
+    if missing:
+        _fail(f"planner missed claim ids in covers: {sorted(missing)}")
+    _ok(f"covers populated for all {len(valid_ids)} claim ids; round-trip preserved")
+
+
+def check_critic_claim_coverage_issue() -> None:
+    """smoke #35: CriticAgent with a non-None claim_graph parameter
+    detects an uncovered tension. Mock the LLM to read the user message,
+    then emit a claim_coverage issue. Verify the issue surfaces correctly
+    in the CritiqueReport."""
+    print("[35/42] critic: claim_coverage issue when tension uncovered")
+    from .agents import CriticAgent
+    from .schema import (
+        ArtifactType, ClaimGraph, DesignSpec, LayerNode, MechanismNode,
+        TensionNode,
+    )
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=2)
+    # Override layer_graph so slide 0 covers T1 only; T2 is uncovered.
+    spec = DesignSpec(
+        brief=spec.brief, artifact_type=spec.artifact_type,
+        canvas=spec.canvas,
+        layer_graph=[
+            LayerNode(layer_id="S0", name="s0", kind="slide", z_index=0,
+                      covers=["T1"]),
+            LayerNode(layer_id="S1", name="s1", kind="slide", z_index=1,
+                      covers=[]),
+        ],
+    )
+    settings = _make_smoke_claim_graph_settings(run_dir.parent.parent)
+
+    graph = ClaimGraph(
+        paper_title="x", paper_anchor="x", thesis="t",
+        tensions=[
+            TensionNode(id="T1", name="covered", description="d"),
+            TensionNode(id="T2", name="missing", description="d"),
+        ],
+        mechanisms=[
+            MechanismNode(id="M1", name="m", resolves=["T1"],
+                          description="d"),
+        ],
+        evidence=[],
+        implications=[],
+    )
+
+    scripted = [
+        _ScriptedTurn(tool_calls=[
+            ("lookup_claim_node", {"claim_id": "T2"}),
+        ]),
+        _ScriptedTurn(tool_calls=[
+            ("report_verdict", {
+                "score": 0.6, "verdict": "revise",
+                "summary": "tension T2 not covered by any slide",
+                "issues": [
+                    {"slide_id": None, "severity": "high",
+                     "category": "claim_coverage",
+                     "description": "Tension T2 'missing' has no slide.covers reference",
+                     "evidence_paper_anchor": None},
+                ],
+            }),
+        ]),
+    ]
+    mock = _MockCriticBackend(model="stub-critic", turns=scripted)
+
+    agent = CriticAgent(settings, ArtifactType.DECK)
+    agent.backend = mock
+    agent._system_prompt = "patched"
+
+    traj_path = run_dir / "trajectory" / "critic_claim.jsonl"
+    if traj_path.exists():
+        traj_path.unlink()
+    report = agent.critique(
+        spec=spec, layer_manifest=[],
+        slide_renders=slide_paths,
+        paper_raw_text="x", claim_graph=graph,
+        iteration=1, trajectory_path=traj_path,
+    )
+
+    if report.verdict != "revise":
+        _fail(f"verdict should be 'revise'; got {report.verdict!r}")
+    cc_issues = [i for i in report.issues if i.category == "claim_coverage"]
+    if not cc_issues:
+        _fail(f"expected ≥1 claim_coverage issue; got {report.issues}")
+    if cc_issues[0].severity != "high":
+        _fail(f"uncovered tension should be severity=high; got {cc_issues[0].severity}")
+
+    # Confirm the lookup_claim_node tool actually executed and returned
+    # the T2 node payload (not an error).
+    line0 = json.loads(traj_path.read_text(encoding="utf-8").splitlines()[0])
+    tool_results_pre = line0.get("tool_results", [])
+    if not any(not tr.get("is_error", False)
+               and tr.get("name") == "lookup_claim_node"
+               for tr in tool_results_pre):
+        _fail(f"lookup_claim_node tool result missing/erred: {tool_results_pre}")
+    _ok("critic emitted high-severity claim_coverage issue + lookup_claim_node worked")
+
+
+def check_no_claim_graph_pipeline_degrades() -> None:
+    """smoke #36: when --no-claim-graph is set (or the brief has no PDF
+    attachment), `_run_claim_graph_extractor` returns None cleanly without
+    spawning the extractor, and the runner stores None in
+    `ctx.state["claim_graph"]` so the planner degrades to v2.7.3 behavior."""
+    print("[36/42] --no-claim-graph degrades to v2.7.3 cleanly (no errors)")
+    from .config import REPO_ROOT
+    from .runner import _run_claim_graph_extractor
+
+    out_root = REPO_ROOT / "out" / "smoke_no_claim_graph"
+    if out_root.exists():
+        import shutil
+        shutil.rmtree(out_root)
+    sub_traj_dir = out_root / "runs" / "smoke-no-cg" / "trajectory"
+    sub_traj_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = _make_smoke_claim_graph_settings(out_root)
+
+    # Case 1: --no-claim-graph flag → skip even with PDF present.
+    fake_pdf = out_root / "fake.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake")
+    g1 = _run_claim_graph_extractor(
+        settings, [fake_pdf], no_claim_graph=True,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g1 is not None:
+        _fail(f"--no-claim-graph should yield None; got {type(g1).__name__}")
+    if (sub_traj_dir / "claim_graph_extractor.jsonl").exists():
+        _fail("extractor trajectory should NOT be written when skipped")
+
+    # Case 2: no PDF attachment → skip without any extraction attempt.
+    md = out_root / "notes.md"
+    md.write_text("# notes", encoding="utf-8")
+    g2 = _run_claim_graph_extractor(
+        settings, [md], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g2 is not None:
+        _fail(f"no-PDF input should yield None; got {type(g2).__name__}")
+
+    # Case 3: empty attachments → also None.
+    g3 = _run_claim_graph_extractor(
+        settings, [], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g3 is not None:
+        _fail(f"empty attachments should yield None; got {type(g3).__name__}")
+
+    # Case 4: settings.enable_claim_graph=False short-circuits even with PDF.
+    settings_off = settings.__class__(
+        **{**settings.__dict__, "enable_claim_graph": False},
+    )
+    g4 = _run_claim_graph_extractor(
+        settings_off, [fake_pdf], no_claim_graph=False,
+        sub_traj_dir=sub_traj_dir,
+    )
+    if g4 is not None:
+        _fail(f"enable_claim_graph=False should yield None; got {type(g4).__name__}")
+    _ok("4 skip paths all return None cleanly; no extractor spawn, no trajectory written")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -3308,13 +3733,21 @@ def main() -> int:
     check_archetype_thanks_qa()
     check_archetype_fallback_default()
     check_archetype_determinism()
+
+
+    check_claim_graph_extractor_trajectory()
+    check_claim_graph_validator_rejects_fabricated_quote()
+    check_planner_covers_population()
+    check_critic_claim_coverage_issue()
+    check_no_claim_graph_pipeline_degrades()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
           "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
           "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/, "
           "out/smoke_section_notes/, "
-          "out/smoke_critic_subagent/, out/smoke_critic_consume/")
+          "out/smoke_critic_subagent/, out/smoke_critic_consume/, "
+          "out/smoke_claim_graph/, out/smoke_no_claim_graph/")
     return 0
 
 
