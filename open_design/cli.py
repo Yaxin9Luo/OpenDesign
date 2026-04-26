@@ -85,6 +85,17 @@ def main(argv: list[str] | None = None) -> int:
               "verbatim — useful for power users with hand-crafted "
               "briefs or for A/B comparisons."),
     )
+    run_p.add_argument(
+        "--no-claim-graph",
+        action="store_true",
+        default=False,
+        help=("Skip the v2.8.0 ClaimGraph extractor stage (runs "
+              "between enhancer and planner whenever a PDF is "
+              "attached). Default: ON for paper inputs. Pass this "
+              "flag to fall back to the v2.7.3 chapter-order "
+              "behavior — useful for A/B comparisons or when the "
+              "extractor regresses on a particular paper."),
+    )
 
     # apply-edits (round-trip edited HTML)
     ae_p = subparsers.add_parser(
@@ -117,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             getattr(args, "from_file", []) or [],
             template=getattr(args, "template", None),
             skip_enhancer=getattr(args, "skip_enhancer", False),
+            no_claim_graph=getattr(args, "no_claim_graph", False),
         )
 
     if args.subcommand == "apply-edits":
@@ -128,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_oneshot(brief: str, from_file: list[str],
                  *, template: str | None = None,
-                 skip_enhancer: bool = False) -> int:
+                 skip_enhancer: bool = False,
+                 no_claim_graph: bool = False) -> int:
     """One-shot mode — single brief (+ optional attachments) → single trajectory."""
     # v1.1: resolve --from-file attachments into Path objects and validate early.
     attachments: list[Path] = []
@@ -155,7 +168,8 @@ def _run_oneshot(brief: str, from_file: list[str],
     runner = PipelineRunner(settings)
     traj, traj_path = runner.run(brief, attachments=attachments,
                                   template=template,
-                                  skip_enhancer=skip_enhancer)
+                                  skip_enhancer=skip_enhancer,
+                                  no_claim_graph=no_claim_graph)
 
     # v2 trajectory carries no product paths. Locate run dir from the
     # trajectory file's sibling structure. v2.2 versioning: composites
