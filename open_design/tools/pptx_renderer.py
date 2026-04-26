@@ -40,6 +40,48 @@ _ALIGN_MAP = {
 }
 
 
+# v2.7.2 — child name substrings that mark a text layer as the slide
+# title. Used by `_with_section_prefix` to decide which text node should
+# receive the section_number prefix at render time. The lookup is
+# case-insensitive substring on `child.name` plus an exact match on
+# `child.template_slot` (the templated path uses slot names rather than
+# free-form names).
+_TITLE_NAME_HINTS = ("title", "headline", "section_title")
+
+
+def _is_title_child(child: Any) -> bool:
+    name = (getattr(child, "name", None) or "").lower()
+    slot = (getattr(child, "template_slot", None) or "").lower()
+    if slot == "title" or slot == "headline":
+        return True
+    return any(h in name for h in _TITLE_NAME_HINTS)
+
+
+def _with_section_prefix(child: Any, section_number: str | None) -> Any:
+    """Return a per-render copy of ``child`` with ``section_number``
+    prepended to its text (e.g. "§2.2 · Vision tokenizer").
+
+    Pure: never mutates the input child. Returns the original child
+    unchanged when there is no section_number, no text, or the prefix
+    already appears at the start of the text (idempotent — safe to
+    re-render).
+    """
+    if not section_number:
+        return child
+    text = (getattr(child, "text", None) or "").strip()
+    if not text:
+        return child
+    if text.startswith(section_number):
+        return child
+    new_text = f"{section_number} · {text}"
+    try:
+        return child.model_copy(update={"text": new_text})
+    except Exception:
+        # Fallback for non-pydantic proxies — shouldn't happen for
+        # LayerNode but defensive.
+        return child
+
+
 def write_pptx(spec: Any, pptx_path: Path, ctx: ToolContext) -> int:
     """Walk the slide tree and emit a .pptx file. Returns slide count.
 
@@ -322,6 +364,12 @@ def _render_templated_slide(
     # places everything except callouts; pass 2 places callouts.
     placed_anchors: dict[str, tuple[int, int, int, int]] = {}
 
+    # v2.7.2 — prepend slide.section_number to the first title-bearing
+    # text child. Title detection is template_slot="title" first, then
+    # name-substring fallback.
+    section_number = getattr(slide_node, "section_number", None)
+    title_seen = False
+
     for child in children:
         kind = getattr(child, "kind", None)
         if kind == "callout":
@@ -329,12 +377,16 @@ def _render_templated_slide(
         slot_name = getattr(child, "template_slot", None)
 
         if kind == "text":
+            effective = child
+            if not title_seen and _is_title_child(child):
+                effective = _with_section_prefix(child, section_number)
+                title_seen = True
             target = inv.get(slot_name) if slot_name else None
             if target is not None and target.has_text_frame:
-                replace_text_in_shape(target, _text_to_paragraphs(child))
+                replace_text_in_shape(target, _text_to_paragraphs(effective))
             else:
                 # No matching slot — render as floating textbox at child.bbox.
-                _add_text_frame(slide, child, slide_w, slide_h)
+                _add_text_frame(slide, effective, slide_w, slide_h)
 
         elif kind == "image":
             slot = inv.get(slot_name) if slot_name else inv.get("image_slot")
@@ -477,16 +529,26 @@ def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
     # Sort by z_index so higher z draws on top (pptx respects insertion order).
     children.sort(key=lambda c: int(getattr(c, "z_index", 0) or 0))
 
+    # v2.7.2 — prepend slide.section_number to the first title-bearing
+    # text child. Only the first match is decorated so multi-text slides
+    # don't double-stamp.
+    section_number = getattr(slide_node, "section_number", None)
+    title_seen = False
+
     for child in children:
         kind = getattr(child, "kind", None)
+        effective = child
+        if kind == "text" and not title_seen and _is_title_child(child):
+            effective = _with_section_prefix(child, section_number)
+            title_seen = True
         if kind == "background":
-            _add_background(slide, child, slide_w, slide_h)
+            _add_background(slide, effective, slide_w, slide_h)
         elif kind == "image":
-            _add_picture(slide, child, slide_w, slide_h)
+            _add_picture(slide, effective, slide_w, slide_h)
         elif kind == "text":
-            _add_text_frame(slide, child, slide_w, slide_h)
+            _add_text_frame(slide, effective, slide_w, slide_h)
         elif kind == "table":
-            _add_table(slide, child, slide_w, slide_h)
+            _add_table(slide, effective, slide_w, slide_h)
         # silently skip unknown kinds; planner enforces vocab
 
     # v2.3 — populate PowerPoint's notes pane from slide.speaker_notes.
