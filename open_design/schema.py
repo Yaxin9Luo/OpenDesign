@@ -228,7 +228,19 @@ class LayerNode(BaseModel):
     # v2.3 deck speaker notes — slide-only (kind="slide"); ignored on other kinds.
     # Populates `slide.notes_slide.notes_text_frame.text` in the PPTX renderer,
     # so the notes show in PowerPoint / Keynote presenter view but not on slides.
+    # v2.7.2 — read by `slide_id` (this LayerNode), NEVER by enumerate index.
+    # Cloud Design dogfood (2026-04-26) showed an off-by-one cascade when
+    # slides were inserted post-notes-generation; binding by id eliminates it.
     speaker_notes: str | None = None
+
+    # v2.7.2 deck section number — slide-only (kind="slide"). Optional label
+    # like "§1", "§2.1", "§3" prepended to the slide title at render time.
+    # Planner does NOT need to keep this stable across iterations: the
+    # composite stage runs `apply_section_policy` (default = "renumber")
+    # to assign monotonic section numbers in slide order before write_pptx
+    # ever sees the spec. Set `SECTION_NUMBER_POLICY=preserve` to opt out
+    # of renumbering, or `="strip"` to drop the field entirely.
+    section_number: str | None = None
 
     # v2.5.2 deck templating — slide-only (kind="slide"); names which template
     # layout to clone. Renderer maps role → layout index; falls back to
