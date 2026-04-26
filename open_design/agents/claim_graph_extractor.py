@@ -30,6 +30,7 @@ the sentinel.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -316,6 +317,25 @@ class ClaimGraphExtractor:
                 continue
 
             if resp.stop_reason == "end_turn":
+                if _looks_like_kimi_template_leak(resp) and turn + 1 < (
+                    self.settings.claim_graph_max_turns
+                ):
+                    log("claim_graph.kimi_template_leak_retry",
+                        turn=turn + 1)
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous turn emitted "
+                            "`<|tool_calls_section_begin|>` as plain "
+                            "text inside thinking instead of using the "
+                            "structured tool_calls field. Tool calls "
+                            "MUST be returned via the API's tool-use "
+                            "mechanism, not as template tokens. Retry "
+                            "now: either call `lookup_paper_section` "
+                            "or call `report_claim_graph` to finish."
+                        ),
+                    })
+                    continue
                 log("claim_graph.end_turn_no_report", turn=turn + 1)
                 break
 
@@ -413,32 +433,136 @@ def _build_user_text(
         + (
             "Use `lookup_paper_section(query=...)` to pull excerpts from "
             "the rest of the paper before grounding any evidence quote. "
+            "Lookup is whitespace-tolerant (matches across PDF line "
+            "wraps) and case-insensitive; if the full phrase misses, it "
+            "falls back to the longest single token. Prefer 3-6 word "
+            "phrases over single keywords. Empty excerpt = phrase truly "
+            "absent — pick a different anchor.\n\n"
             "FINISH with exactly one `report_claim_graph` call. Every "
             "EvidenceNode.raw_quote MUST be a verbatim substring of the "
-            "paper raw_text — if you cannot ground a quote, DELETE that "
-            "evidence node, do NOT fabricate."
+            "paper raw_text — if you cannot ground a quote after 2-3 "
+            "lookup attempts, DELETE that evidence node, do NOT fabricate."
         )
     )
 
 
+_WS_RE = re.compile(r"\s+")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_]{2,}")
+
+
 def _extract_paper_excerpt(raw: str | None, query: str) -> str:
-    """Naive substring search with windowed context. Returns up to ~2000
-    chars centered on the first hit. Empty string when no match. Mirrors
-    `critic_agent._extract_paper_excerpt` so the two sub-agents behave
-    identically."""
+    """Whitespace-tolerant substring search with windowed context.
+
+    Returns up to ~3000 chars centered on the first hit, or empty string
+    when no match found. Mirrors the validator's `_norm_ws` semantics so
+    a query that the model intends to use as a `raw_quote` matches here
+    iff it would also pass `validate_claim_graph` — closing the v2.8.0
+    Sonnet-failure loop where the lookup tool was stricter than the
+    validator (newlines / double-spaces in PDF text broke matches).
+
+    Two-tier fallback when the verbatim-normalized match misses:
+      1. Try the longest single token in the query (handles PDF queries
+         like "Table 1: comparison" where colons / numerals don't appear
+         verbatim). Returns the first match's window.
+      2. Empty string — caller (LLM) interprets as "not in paper".
+    """
     if not raw or not query:
         return ""
-    needle = query.lower()
-    haystack_lower = raw.lower()
-    pos = haystack_lower.find(needle)
+
+    norm_query = _norm_ws(query).lower()
+    if not norm_query:
+        return ""
+
+    norm_raw, mapping = _norm_ws_with_mapping(raw)
+    haystack_lower = norm_raw.lower()
+    pos = haystack_lower.find(norm_query)
+
+    if pos < 0:
+        tokens = sorted(
+            _TOKEN_RE.findall(norm_query), key=len, reverse=True,
+        )
+        for tok in tokens[:5]:
+            tok_pos = haystack_lower.find(tok)
+            if tok_pos >= 0:
+                pos = tok_pos
+                norm_query = tok
+                break
+
     if pos < 0:
         return ""
-    window = 1000
-    start = max(0, pos - window)
-    end = min(len(raw), pos + len(query) + window)
+
+    raw_pos = mapping[pos] if pos < len(mapping) else mapping[-1]
+    end_norm = pos + len(norm_query)
+    raw_end_anchor = (
+        mapping[end_norm - 1] + 1 if end_norm - 1 < len(mapping)
+        else len(raw)
+    )
+
+    window = 1500
+    start = max(0, raw_pos - window)
+    end = min(len(raw), raw_end_anchor + window)
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(raw) else ""
     return f"{prefix}{raw[start:end]}{suffix}"
+
+
+def _norm_ws(s: str) -> str:
+    """Collapse runs of whitespace. Mirrors
+    `util.claim_graph_validator._norm_ws` so lookup semantics match the
+    validator's substring-match semantics."""
+    return _WS_RE.sub(" ", s or "").strip()
+
+
+def _norm_ws_with_mapping(raw: str) -> tuple[str, list[int]]:
+    """Normalize whitespace + return per-char index mapping back to raw.
+    `mapping[i]` is the index in `raw` that produced `norm[i]`. The
+    mapping lets us locate a normalized hit in the original (unnormalized)
+    text so the returned excerpt preserves the paper's real layout."""
+    out_chars: list[str] = []
+    mapping: list[int] = []
+    in_ws = False
+    started = False
+    for i, ch in enumerate(raw):
+        if ch.isspace():
+            if started and not in_ws:
+                out_chars.append(" ")
+                mapping.append(i)
+                in_ws = True
+        else:
+            out_chars.append(ch)
+            mapping.append(i)
+            in_ws = False
+            started = True
+    while out_chars and out_chars[-1] == " ":
+        out_chars.pop()
+        mapping.pop()
+    return "".join(out_chars), mapping
+
+
+_KIMI_LEAK_MARKERS: tuple[str, ...] = (
+    "<|tool_calls_section_begin|>",
+    "<|tool_call_begin|>",
+    "<|tool_calls_section_end|>",
+)
+
+
+def _looks_like_kimi_template_leak(resp: TurnResponse) -> bool:
+    """True iff the response has no structured tool_calls but the model
+    emitted a Kimi/OpenAI-compat tool-use template token in either text
+    or thinking blocks. Kimi K2.6 via OpenRouter occasionally serializes
+    its tool-call template into the THINKING channel instead of the
+    structured `tool_calls` array; this lets us recover with one retry
+    rather than burning the whole turn budget on a parse glitch."""
+    if resp.tool_calls:
+        return False
+    haystacks: list[str] = [resp.text or ""]
+    for block in resp.thinking_blocks or []:
+        try:
+            haystacks.append(block.thinking or "")
+        except AttributeError:
+            haystacks.append(str(block))
+    blob = "\n".join(haystacks)
+    return any(marker in blob for marker in _KIMI_LEAK_MARKERS)
 
 
 def _build_failsafe_graph(
