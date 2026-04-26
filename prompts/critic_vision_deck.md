@@ -4,8 +4,8 @@ You are a forked sub-agent. Your one job is to review the latest deck composite 
 
 ## Inputs you have
 
-- `read_slide_render(slide_id)` — fetches the rendered PNG for a single slide. Use this for visual inspection (typography, layout, hierarchy). Call it for every slide you intend to flag and for a sampling of the rest.
-- `read_paper_section(query)` — pulls a ~2000-char excerpt from the paper raw_text by keyword search. Use BEFORE flagging any provenance issue.
+- `read_slide_render(slide_id)` — fetches the rendered PNG for a single slide. Use this for visual inspection (typography, layout, hierarchy). Call it for every slide you intend to flag and for a sampling of the rest. **Chunk your inspection**: there is a per-turn image cap (the first user message tells you the exact number, default 4). Calls beyond the cap return `{"deferred": true}` and must be re-issued on a later turn. The PNG itself is NEVER inlined into the tool result — it arrives as a real image content block on the immediately following user turn so you can actually see it.
+- `read_paper_section(query)` — pulls a ~2000-char excerpt from the paper raw_text by keyword search. The full paper is NEVER preloaded into your context — every excerpt costs you one tool call. Use BEFORE flagging any provenance issue.
 - `lookup_claim_node(claim_id)` — v2.8.0+ — fetch a single ClaimGraph node by id (T*/M*/E*/I*). Use to verify that a slide actually presents the claim its `covers` field lists.
 - The first user message gives you: the full DesignSpec JSON, the composited layer manifest, the list of valid `slide_id`s, and (when v2.8.0 ran) a summary of the ClaimGraph nodes — including the full id catalogs of tensions / mechanisms / evidence / implications.
 

@@ -70,6 +70,23 @@ class CriticTrajectoryRecord:
     usage: dict[str, int]
 
 
+@dataclass
+class _VisionAttachment:
+    """One pending image to deliver as a follow-up user-role vision block.
+
+    Lives only for the duration of a single turn. Created by the
+    `read_slide_render` dispatcher; consumed by `critique()` after
+    `append_tool_results`. Never written to trajectory in expanded form
+    (the trajectory records the slide_id + a small image_bytes count
+    via `_summarize_tool_input`)."""
+    slide_id: str
+    image_b64: str
+    media_type: str
+
+
+_PAPER_EXCERPT_HARD_CAP_CHARS: int = 8000
+
+
 # ─────────────────────────── Tool schemas ──────────────────────────────────
 
 _CRITIC_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -78,10 +95,13 @@ _CRITIC_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "description": (
             "Fetch a rendered slide PNG by its slide_id (deck) or by the "
             "deck-grid index (poster/landing fall back to a single slide_id "
-            "matching the only render available). Returns base64-encoded "
-            "PNG bytes that the next turn sees as a vision content block. "
-            "Call this whenever you need to inspect the actual rendered "
-            "output rather than reasoning over the DesignSpec text only."
+            "matching the only render available). The PNG is delivered "
+            "to you as a real vision content block on the next turn — the "
+            "tool result itself returns only a small ack JSON, so this "
+            "call is cheap to repeat. There is a per-turn cap (see the "
+            "first user message); calls beyond the cap return "
+            "`{\"deferred\": true}` and you should refetch them on a "
+            "later turn after acting on the images you already have."
         ),
         "input_schema": {
             "type": "object",
@@ -267,6 +287,7 @@ class CriticAgent:
             slide_index=slide_index, paper_raw_text=paper_raw_text,
             claim_graph=claim_graph, iteration=iteration,
             max_iters=self.settings.max_critique_iters,
+            max_images_per_turn=self.settings.critic_max_images_per_turn,
         )
         messages: list[Any] = [{"role": "user", "content": user_text}]
 
@@ -311,12 +332,20 @@ class CriticAgent:
 
             tool_results_for_api: list[tuple[str, str, bool]] = []
             tool_records: list[dict[str, Any]] = []
+            pending_vision: list[_VisionAttachment] = []
+            image_budget = self.settings.critic_max_images_per_turn
             for tc in resp.tool_calls:
-                payload, is_err, terminal = self._dispatch_tool(
+                allow_image = (
+                    tc.name == "read_slide_render"
+                    and len(pending_vision) < image_budget
+                )
+                payload, is_err, terminal, attachment = self._dispatch_tool(
                     tc, slide_index=slide_index,
                     paper_raw_text=paper_raw_text,
                     claim_graph=claim_graph,
                     iteration=iteration,
+                    allow_image=allow_image,
+                    image_budget=image_budget,
                 )
                 tool_results_for_api.append((tc.id, payload, is_err))
                 tool_records.append({
@@ -324,6 +353,8 @@ class CriticAgent:
                     "input": _summarize_tool_input(tc.name, tc.input),
                     "is_error": is_err,
                 })
+                if attachment is not None:
+                    pending_vision.append(attachment)
                 if terminal is not None:
                     terminal_report = terminal
 
@@ -353,6 +384,12 @@ class CriticAgent:
 
             if tool_results_for_api:
                 self.backend.append_tool_results(messages, tool_results_for_api)
+                if pending_vision:
+                    _append_vision_messages(
+                        backend=self.backend,
+                        messages=messages,
+                        attachments=pending_vision,
+                    )
                 continue
 
             if resp.stop_reason == "end_turn":
@@ -387,8 +424,17 @@ class CriticAgent:
         paper_raw_text: str | None,
         claim_graph: ClaimGraph | None,
         iteration: int,
-    ) -> tuple[str, bool, CritiqueReport | None]:
-        """Returns (json_payload, is_error, terminal_report_or_None)."""
+        allow_image: bool = True,
+        image_budget: int = 0,
+    ) -> tuple[str, bool, CritiqueReport | None, _VisionAttachment | None]:
+        """Returns (json_payload, is_error, terminal_report, vision_attachment).
+
+        For `read_slide_render` the JSON payload is a small ack — the
+        actual base64 image rides on a separate `_VisionAttachment` so
+        the caller can deliver it as a real vision content block on a
+        follow-up user message instead of stuffing 12k+ tokens of base64
+        into a `tool` role message that subsequent turns must replay.
+        """
         if tc.name == "read_slide_render":
             slide_id = str(tc.input.get("slide_id", ""))
             path = slide_index.get(slide_id)
@@ -397,27 +443,41 @@ class CriticAgent:
                     f"slide_id={slide_id!r} not found. Available: "
                     f"{sorted(slide_index.keys())[:20]}"
                 )
-                return json.dumps({"error": msg}), True, None
+                return json.dumps({"error": msg}), True, None, None
+            if not allow_image:
+                ack = json.dumps({
+                    "slide_id": slide_id,
+                    "deferred": True,
+                    "reason": (
+                        f"per-turn image budget ({image_budget}) exhausted; "
+                        "call read_slide_render again on a later turn to "
+                        "fetch this slide"
+                    ),
+                })
+                return ack, False, None, None
             try:
                 b64, media_type = _downscale_b64(
                     path, self.settings.critic_preview_max_edge,
                 )
             except Exception as e:
-                return json.dumps({"error": f"{type(e).__name__}: {e}"}), True, None
-            return (
-                json.dumps({
-                    "slide_id": slide_id,
-                    "media_type": media_type,
-                    "image_b64_len": len(b64),
-                    "image_b64": b64,
-                }),
-                False, None,
+                return json.dumps({"error": f"{type(e).__name__}: {e}"}), True, None, None
+            ack = json.dumps({
+                "slide_id": slide_id,
+                "media_type": media_type,
+                "delivered_as": "user_image_block",
+                "image_b64_len": len(b64),
+            })
+            return ack, False, None, _VisionAttachment(
+                slide_id=slide_id, image_b64=b64, media_type=media_type,
             )
 
         if tc.name == "read_paper_section":
             query = str(tc.input.get("query", "")).strip()
             excerpt = _extract_paper_excerpt(paper_raw_text, query)
-            return json.dumps({"query": query, "excerpt": excerpt}), False, None
+            return (
+                json.dumps({"query": query, "excerpt": excerpt}),
+                False, None, None,
+            )
 
         if tc.name == "lookup_claim_node":
             claim_id = str(tc.input.get("claim_id", "")).strip()
@@ -427,7 +487,7 @@ class CriticAgent:
                         "error": "no claim_graph attached to this run",
                         "claim_id": claim_id,
                     }),
-                    True, None,
+                    True, None, None,
                 )
             node = _find_claim_node(claim_graph, claim_id)
             if node is None:
@@ -436,7 +496,7 @@ class CriticAgent:
                         "error": f"unknown claim_id {claim_id!r}",
                         "available_ids": _list_claim_ids(claim_graph),
                     }),
-                    True, None,
+                    True, None, None,
                 )
             return (
                 json.dumps({
@@ -444,7 +504,7 @@ class CriticAgent:
                     "kind": node["kind"],
                     "node": node["node"],
                 }, ensure_ascii=False),
-                False, None,
+                False, None, None,
             )
 
         if tc.name == "report_verdict":
@@ -458,16 +518,16 @@ class CriticAgent:
                     "report_verdict failed schema: "
                     f"{e.errors(include_url=False)[:3]}"
                 )
-                return json.dumps({"error": err_msg}), True, None
+                return json.dumps({"error": err_msg}), True, None, None
             ack = json.dumps({
                 "verdict": report.verdict, "score": report.score,
                 "ack": "verdict recorded; loop will exit",
             })
-            return ack, False, report
+            return ack, False, report, None
 
         return (
             json.dumps({"error": f"unknown tool: {tc.name}"}),
-            True, None,
+            True, None, None,
         )
 
 
@@ -542,12 +602,14 @@ def _build_user_text(
     claim_graph: ClaimGraph | None,
     iteration: int,
     max_iters: int,
+    max_images_per_turn: int,
 ) -> str:
     available_ids = sorted(slide_index.keys())
     paper_blurb = (
         f"paper_raw_text available — {len(paper_raw_text):,} chars. "
-        "Use `read_paper_section` to pull excerpts before flagging "
-        "provenance issues."
+        "Use `read_paper_section(query)` to pull short excerpts before "
+        "flagging provenance issues. The paper itself is NEVER preloaded "
+        "into your context — every excerpt costs you one tool call."
         if paper_raw_text
         else "paper_raw_text NOT available (free-text brief)."
     )
@@ -575,7 +637,12 @@ def _build_user_text(
         f"## Artifact type\n{spec.artifact_type.value}\n\n"
         f"## Renders available\n"
         f"slide_ids you may pass to `read_slide_render`: "
-        f"{available_ids}\n\n"
+        f"{available_ids}\n"
+        f"per-turn image cap: at most {max_images_per_turn} PNGs delivered "
+        "per assistant turn. Surplus calls return "
+        "`{\"deferred\": true}` and you must refetch them on a later "
+        "turn — chunk your inspection across multiple turns rather than "
+        "asking for the whole deck at once.\n\n"
         f"## Source material\n{paper_blurb}\n{claim_blurb}\n\n"
         f"## DesignSpec snapshot\n```json\n{spec_json}\n```\n\n"
         f"## Composited layer manifest\n```json\n{manifest_json}\n```\n\n"
@@ -637,7 +704,11 @@ def _append_trajectory(
 
 def _extract_paper_excerpt(raw: str | None, query: str) -> str:
     """Naive substring search with windowed context. Returns up to ~2000
-    chars centered on the first hit. Empty string when no match."""
+    chars centered on the first hit. Empty string when no match.
+
+    Hard-capped at `_PAPER_EXCERPT_HARD_CAP_CHARS` regardless of the
+    window math — defense against an extreme `query` that would
+    otherwise let the model exfiltrate the whole paper text."""
     if not raw or not query:
         return ""
     needle = query.lower()
@@ -650,7 +721,30 @@ def _extract_paper_excerpt(raw: str | None, query: str) -> str:
     end = min(len(raw), pos + len(query) + window)
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(raw) else ""
-    return f"{prefix}{raw[start:end]}{suffix}"
+    excerpt = f"{prefix}{raw[start:end]}{suffix}"
+    if len(excerpt) > _PAPER_EXCERPT_HARD_CAP_CHARS:
+        excerpt = excerpt[:_PAPER_EXCERPT_HARD_CAP_CHARS] + "…"
+    return excerpt
+
+
+def _append_vision_messages(
+    *,
+    backend: LLMBackend,
+    messages: list[Any],
+    attachments: list[_VisionAttachment],
+) -> None:
+    """Deliver each pending PNG as a real vision content block via the
+    backend's `vision_user_message`. We use one message per attachment
+    so providers that cap images-per-message (some OpenAI-compat
+    routers do) stay under the limit, and so the trailing `text` clearly
+    labels which slide_id each image corresponds to."""
+    for att in attachments:
+        msg = backend.vision_user_message(
+            image_b64=att.image_b64,
+            media_type=att.media_type,
+            text=f"[render of slide_id={att.slide_id}]",
+        )
+        messages.append(msg)
 
 
 def _downscale_b64(path: Path, max_edge: int) -> tuple[str, str]:
