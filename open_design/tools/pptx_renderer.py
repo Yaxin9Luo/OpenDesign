@@ -522,9 +522,21 @@ class _BboxOverride:
         return getattr(self._node, name)
 
 
-def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
-                  ctx: ToolContext) -> None:
-    """Add shapes for each child element of a slide LayerNode."""
+def _default_render_slide(slide: Any, slide_node: Any, slide_w: int,
+                          slide_h: int, ctx: ToolContext) -> None:
+    """Original inline per-slide layout (pre-v2.8.1).
+
+    Walks the slide's children in z_index order, renders every text /
+    image / background / table child via the matching `_add_*` helper,
+    decorates the first title-bearing text child with v2.7.2's
+    `section_number` prefix, and writes `speaker_notes` to the notes
+    pane.
+
+    This is the byte-identical fallback the v2.8.1 dispatcher reaches
+    for whenever an archetype renderer is unavailable (Phase 2/3
+    placeholder OR `archetype="evidence_snapshot"` on a slide without
+    a big-number child).
+    """
     children = list(getattr(slide_node, "children", None) or [])
     # Sort by z_index so higher z draws on top (pptx respects insertion order).
     children.sort(key=lambda c: int(getattr(c, "z_index", 0) or 0))
@@ -558,6 +570,59 @@ def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
     notes = getattr(slide_node, "speaker_notes", None)
     if notes:
         slide.notes_slide.notes_text_frame.text = notes
+
+
+def _render_slide(slide: Any, slide_node: Any, slide_w: int, slide_h: int,
+                  ctx: ToolContext) -> None:
+    """v2.8.1 dispatcher.
+
+    Layered approach so backgrounds / images / tables stay on the
+    default render path even when an archetype claims the text layout:
+
+    1. Render every non-text child via `_add_background` / `_add_picture`
+       / `_add_table` (z_index sorted) — archetype renderers only emit
+       text shapes, so this preserves figures + cover photos.
+    2. Look up the archetype renderer in `archetypes.get_renderer`. When
+       a renderer exists, call it (it handles text + speaker_notes +
+       section_number prefix). When it returns None — Phase 2/3
+       placeholders, missing archetype, OR evidence_snapshot without a
+       big-number child — fall through to `_default_render_slide`.
+
+    The default render path remains byte-identical for every pre-v2.8.1
+    deck because the schema default `archetype="evidence_snapshot"`
+    routes through the placeholder branch when no big-number is
+    present.
+    """
+    # Lazy import to avoid a circular `tools.archetypes._common` →
+    # `tools.pptx_renderer` cycle at module load time.
+    from .archetypes import get_renderer
+    from .archetypes.evidence_snapshot import has_big_number
+
+    archetype = getattr(slide_node, "archetype", None)
+    renderer = get_renderer(archetype)
+    if renderer is not None and archetype == "evidence_snapshot" \
+            and not has_big_number(slide_node):
+        renderer = None
+
+    if renderer is None:
+        _default_render_slide(slide, slide_node, slide_w, slide_h, ctx)
+        return
+
+    # Archetype path — first place non-text children (figures /
+    # backgrounds / tables) so the archetype's text shapes layer on
+    # top. The archetype itself owns title decoration + speaker_notes.
+    children = list(getattr(slide_node, "children", None) or [])
+    children.sort(key=lambda c: int(getattr(c, "z_index", 0) or 0))
+    for child in children:
+        kind = getattr(child, "kind", None)
+        if kind == "background":
+            _add_background(slide, child, slide_w, slide_h)
+        elif kind == "image":
+            _add_picture(slide, child, slide_w, slide_h)
+        elif kind == "table":
+            _add_table(slide, child, slide_w, slide_h)
+        # text + unknown kinds → archetype's responsibility (or skipped)
+    renderer(slide_node, slide, slide_w, slide_h, ctx)
 
 
 def _bbox_to_emu(bbox: Any, slide_w: int, slide_h: int,
