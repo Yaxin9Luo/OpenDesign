@@ -55,6 +55,7 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
 
     slide_renders = _collect_slide_renders(spec, composition, Path(preview_path))
     paper_raw_text = _join_paper_raw_text(ctx)
+    claim_graph = ctx.state.get("claim_graph")
 
     iteration = prior + 1
     trajectory_path = ctx.run_dir / "trajectory" / "critic.jsonl"
@@ -67,6 +68,7 @@ def critique(args: dict[str, Any], *, ctx: ToolContext) -> ToolResultRecord:
             layer_manifest=composition.layer_manifest or [],
             slide_renders=slide_renders,
             paper_raw_text=paper_raw_text,
+            claim_graph=claim_graph,
             iteration=iteration,
             trajectory_path=trajectory_path,
         )

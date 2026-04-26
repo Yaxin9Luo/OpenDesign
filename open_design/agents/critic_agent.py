@@ -43,7 +43,7 @@ from pydantic import ValidationError
 from ..config import Settings
 from ..llm_backend import LLMBackend, ToolCall, TurnResponse, make_backend
 from ..schema import (
-    ArtifactType, CritiqueIssue, CritiqueReport, DesignSpec,
+    ArtifactType, ClaimGraph, CritiqueIssue, CritiqueReport, DesignSpec,
     ThinkingBlockRecord,
 )
 from ..util.io import ensure_dirs
@@ -121,6 +121,31 @@ _CRITIC_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "lookup_claim_node",
+        "description": (
+            "v2.8.0+ — fetch a single ClaimGraph node by id (T*/M*/E*/I*). "
+            "Returns the node's serialized fields so you can verify "
+            "whether a slide actually presents that claim. Returns "
+            "{\"error\": ...} when no claim_graph is attached or the id "
+            "does not exist. Use this when you suspect a tension / "
+            "mechanism / evidence node was dropped from the deck."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "claim_id": {
+                    "type": "string",
+                    "description": (
+                        "ClaimGraph node id. Tensions T1/T2/..., "
+                        "mechanisms M1/M2/..., evidence E1/E2/..., "
+                        "implications I1/I2/..."
+                    ),
+                },
+            },
+            "required": ["claim_id"],
         },
     },
     {
@@ -217,8 +242,7 @@ class CriticAgent:
         layer_manifest: list[dict[str, Any]],
         slide_renders: list[Path],
         paper_raw_text: str | None,
-        # claim_graph: ClaimGraph | None = None as of v2.8.0
-        claim_graph: object | None = None,
+        claim_graph: ClaimGraph | None = None,
         iteration: int = 1,
         trajectory_path: Path | None = None,
     ) -> CritiqueReport:
@@ -291,6 +315,7 @@ class CriticAgent:
                 payload, is_err, terminal = self._dispatch_tool(
                     tc, slide_index=slide_index,
                     paper_raw_text=paper_raw_text,
+                    claim_graph=claim_graph,
                     iteration=iteration,
                 )
                 tool_results_for_api.append((tc.id, payload, is_err))
@@ -360,6 +385,7 @@ class CriticAgent:
         *,
         slide_index: dict[str, Path],
         paper_raw_text: str | None,
+        claim_graph: ClaimGraph | None,
         iteration: int,
     ) -> tuple[str, bool, CritiqueReport | None]:
         """Returns (json_payload, is_error, terminal_report_or_None)."""
@@ -392,6 +418,34 @@ class CriticAgent:
             query = str(tc.input.get("query", "")).strip()
             excerpt = _extract_paper_excerpt(paper_raw_text, query)
             return json.dumps({"query": query, "excerpt": excerpt}), False, None
+
+        if tc.name == "lookup_claim_node":
+            claim_id = str(tc.input.get("claim_id", "")).strip()
+            if claim_graph is None:
+                return (
+                    json.dumps({
+                        "error": "no claim_graph attached to this run",
+                        "claim_id": claim_id,
+                    }),
+                    True, None,
+                )
+            node = _find_claim_node(claim_graph, claim_id)
+            if node is None:
+                return (
+                    json.dumps({
+                        "error": f"unknown claim_id {claim_id!r}",
+                        "available_ids": _list_claim_ids(claim_graph),
+                    }),
+                    True, None,
+                )
+            return (
+                json.dumps({
+                    "claim_id": claim_id,
+                    "kind": node["kind"],
+                    "node": node["node"],
+                }, ensure_ascii=False),
+                False, None,
+            )
 
         if tc.name == "report_verdict":
             try:
@@ -444,13 +498,48 @@ def _index_renders(slide_renders: list[Path], spec: DesignSpec) -> dict[str, Pat
     return {key: slide_renders[0]}
 
 
+def _find_claim_node(
+    graph: ClaimGraph, claim_id: str,
+) -> dict[str, Any] | None:
+    """Locate a node by id across all four lists. Returns
+    {"kind": "tension"|"mechanism"|"evidence"|"implication",
+     "node": <serialized dict>} or None when no match."""
+    for tension in graph.tensions:
+        if tension.id == claim_id:
+            return {"kind": "tension",
+                    "node": tension.model_dump(mode="json")}
+    for mech in graph.mechanisms:
+        if mech.id == claim_id:
+            return {"kind": "mechanism",
+                    "node": mech.model_dump(mode="json")}
+    for ev in graph.evidence:
+        if ev.id == claim_id:
+            return {"kind": "evidence",
+                    "node": ev.model_dump(mode="json")}
+    for impl in graph.implications:
+        if impl.id == claim_id:
+            return {"kind": "implication",
+                    "node": impl.model_dump(mode="json")}
+    return None
+
+
+def _list_claim_ids(graph: ClaimGraph) -> dict[str, list[str]]:
+    """Compact id catalog for the lookup_claim_node error path."""
+    return {
+        "tensions": [t.id for t in graph.tensions],
+        "mechanisms": [m.id for m in graph.mechanisms],
+        "evidence": [e.id for e in graph.evidence],
+        "implications": [i.id for i in graph.implications],
+    }
+
+
 def _build_user_text(
     *,
     spec: DesignSpec,
     layer_manifest: list[dict[str, Any]],
     slide_index: dict[str, Path],
     paper_raw_text: str | None,
-    claim_graph: object | None,
+    claim_graph: ClaimGraph | None,
     iteration: int,
     max_iters: int,
 ) -> str:
@@ -462,12 +551,21 @@ def _build_user_text(
         if paper_raw_text
         else "paper_raw_text NOT available (free-text brief)."
     )
-    claim_blurb = (
-        "claim_graph: present (v2.8.0+ — query nodes via lookup tools "
-        "when available)."
-        if claim_graph is not None
-        else "claim_graph: not available (v2.7.3 baseline)."
-    )
+    if claim_graph is not None:
+        claim_blurb = (
+            "claim_graph: present (v2.8.0). thesis="
+            f"{claim_graph.thesis!r}. "
+            f"tensions={[t.id for t in claim_graph.tensions]}; "
+            f"mechanisms={[m.id for m in claim_graph.mechanisms]}; "
+            f"evidence={[e.id for e in claim_graph.evidence]}; "
+            f"implications={[i.id for i in claim_graph.implications]}. "
+            "Cross-check `slide.covers` against these ids — any "
+            "tension/mechanism with no slide.covers reference is a "
+            "claim_coverage issue. Use `lookup_claim_node(claim_id)` "
+            "to inspect a specific node."
+        )
+    else:
+        claim_blurb = "claim_graph: not available (v2.7.3 baseline)."
     spec_json = json.dumps(spec.model_dump(mode="json"),
                            ensure_ascii=False, indent=2)
     manifest_json = json.dumps(layer_manifest, ensure_ascii=False, indent=2)
