@@ -392,19 +392,28 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "critique",
         "description": (
-            "Run a vision-based self-critique on the latest preview.png against "
-            "design_spec. Returns a tool result with a CritiqueResult payload "
-            "JSON in artifacts[0]. Use AT MOST max_critique_iters times. If "
-            "verdict='revise', adjust text layers (positions/colors/sizes) and "
-            "call composite again; do NOT regenerate background unless a blocker "
-            "requires it."
+            "Spawn the v2.7.3 vision critic sub-agent. The sub-agent runs its "
+            "own loop with vision capability for ALL artifact types (deck "
+            "slides / landing preview / poster preview), pulls relevant paper "
+            "passages on demand, and emits a structured CritiqueReport with "
+            "verdict (pass/revise/fail), score, and a list of typed issues. "
+            "The full report JSON lands in tool_result.payload. Call AT MOST "
+            "max_critique_iters times per run. On verdict='revise', address "
+            "the listed issues via propose_design_spec or render_text_layer "
+            "and call composite again; on verdict='fail', call finalize. "
+            "Do NOT regenerate the background unless an issue with category "
+            "'layout' and severity 'blocker' points at the background itself."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "preview_path": {
                     "type": "string",
-                    "description": "Optional override; defaults to last composite output.",
+                    "description": (
+                        "Optional override; defaults to the last composite "
+                        "preview.png. Per-slide PNGs are auto-discovered for "
+                        "decks under composites/iter_NN/slides/."
+                    ),
                 },
             },
         },
