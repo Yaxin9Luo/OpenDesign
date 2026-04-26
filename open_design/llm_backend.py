@@ -387,9 +387,17 @@ class OpenAICompatBackend:
 
         # Build the assistant message dict for round-tripping into the next turn.
         # Some providers (e.g. Anthropic-via-OpenRouter via OpenAI endpoint)
-        # reject `reasoning_content` on subsequent turns, so we DON'T include
-        # it in the round-tripped message. The original reasoning is preserved
-        # in our trajectory via thinking_blocks.
+        # reject `reasoning_content` on subsequent turns, so by default we
+        # DON'T include it. The original reasoning is preserved in our
+        # trajectory via thinking_blocks regardless.
+        #
+        # v2.7.2 — DeepSeek V4-pro (and presumably future DeepSeek thinking
+        # models) ENFORCE `reasoning_content` round-trip when reasoning is
+        # enabled — without it the next turn 400s with
+        # `The reasoning_content in the thinking mode must be passed back
+        # to the API`. Detected by model id prefix `deepseek/`. This may
+        # also be needed for other thinking-strict families later; extend
+        # the prefix tuple as those surface.
         assistant_msg: dict[str, Any] = {"role": "assistant"}
         if msg.content is not None:
             assistant_msg["content"] = msg.content
@@ -405,6 +413,9 @@ class OpenAICompatBackend:
                 }
                 for tc in msg.tool_calls
             ]
+        _STRICT_REASONING_PREFIXES = ("deepseek/",)
+        if reasoning_text and self.model.startswith(_STRICT_REASONING_PREFIXES):
+            assistant_msg["reasoning_content"] = reasoning_text
 
         return TurnResponse(
             thinking_blocks=thinking,
