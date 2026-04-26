@@ -35,7 +35,7 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/31] imports")
+    print("[1/42] imports")
     from . import chat, cli, config, planner, runner, schema, session  # noqa
     from .agents import CriticAgent, PromptEnhancer  # noqa
     from .tools import (
@@ -49,7 +49,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/31] tool registry")
+    print("[2/42] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -82,7 +82,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/31] pydantic schema round-trip (v2)")
+    print("[3/42] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -206,7 +206,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/31] fonts")
+    print("[4/42] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -226,7 +226,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/31] composite (no API)")
+    print("[5/42] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -327,7 +327,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/31] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/42] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -401,7 +401,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/31] chat session save/load")
+    print("[7/42] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -463,7 +463,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/31] edit_layer (no API)")
+    print("[8/42] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -588,7 +588,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/31] apply-edits round-trip (no API)")
+    print("[9/42] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -667,7 +667,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/31] landing mode (no API)")
+    print("[10/42] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -843,7 +843,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/31] design-system styles (no API)")
+    print("[11/42] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -944,7 +944,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/31] landing with images (no API)")
+    print("[12/42] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1063,7 +1063,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/31] deck mode (no API)")
+    print("[13/42] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1241,7 +1241,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/31] deck design system template (no API)")
+    print("[21/42] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1365,7 +1365,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/31] footer leakage check (no API)")
+    print("[22/42] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1472,7 +1472,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/31] callout overlay (no API)")
+    print("[23/42] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1576,7 +1576,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/31] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/42] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1790,7 +1790,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/31] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/42] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1869,7 +1869,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/31] ingest_document markdown (no API)")
+    print("[15/42] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1925,7 +1925,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/31] ingest_document image (no API)")
+    print("[16/42] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1975,7 +1975,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/31] ingest_document docx (no API)")
+    print("[17/42] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2036,7 +2036,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/31] ingest_document pptx (no API)")
+    print("[18/42] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2104,7 +2104,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/31] sub-figure extraction (no API)")
+    print("[19/42] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2199,7 +2199,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/31] versioning + revise-loop preservation (no API)")
+    print("[20/42] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2347,7 +2347,7 @@ def check_section_renumber_policy() -> None:
     a deck whose planner-supplied section_number is non-monotonic and
     rewrites the labels in slide order. Three content slides come back
     as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
-    print("[25/31] section_number policy: renumber (no API)")
+    print("[25/42] section_number policy: renumber (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2371,7 +2371,7 @@ def check_section_renumber_strip() -> None:
     """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
     every SlideNode.section_number to None without touching titles or
     speaker notes."""
-    print("[26/31] section_number policy: strip (no API)")
+    print("[26/42] section_number policy: strip (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2395,7 +2395,7 @@ def check_stable_id_notes_after_reorder() -> None:
     NOT the enumerate index. Build a 4-slide deck, reorder to
     [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
     slide's notes match the source SlideNode it came from."""
-    print("[27/31] speaker_notes follow slide_id after reorder (no API)")
+    print("[27/42] speaker_notes follow slide_id after reorder (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -2614,7 +2614,7 @@ def check_critic_subagent_trajectory() -> None:
     LLMBackend that calls `report_verdict` on turn 1. Verify the resulting
     CritiqueReport has the expected verdict/score AND the trajectory file
     `critic.jsonl` lands in the run dir."""
-    print("[28/31] critic sub-agent: scripted report_verdict + trajectory written")
+    print("[28/42] critic sub-agent: scripted report_verdict + trajectory written")
     from .agents import CriticAgent
     from .schema import ArtifactType, CritiqueReport
 
@@ -2679,7 +2679,7 @@ def check_critic_subagent_max_turns() -> None:
     """smoke #26: when the mocked LLM never calls `report_verdict`,
     CriticAgent must exhaust max_turns and synthesize a `verdict='fail'`
     CritiqueReport rather than recurse forever."""
-    print("[29/31] critic sub-agent: max_turns failsafe → fail verdict")
+    print("[29/42] critic sub-agent: max_turns failsafe → fail verdict")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2726,7 +2726,7 @@ def check_critic_planner_consumption() -> None:
       revise  → state.critique_results carries verdict='revise'
       fail    → state.critique_results carries verdict='fail'
     """
-    print("[30/31] planner consumption: pass/revise/fail routing")
+    print("[30/42] planner consumption: pass/revise/fail routing")
     from .agents import CriticAgent
     from .config import REPO_ROOT
     from .schema import ArtifactType, CompositionArtifacts, DesignSpec, LayerNode
@@ -2828,7 +2828,7 @@ def check_critic_subagent_png_throughput() -> None:
     """smoke #28: long-tail check that CriticAgent + read_slide_render
     survive a 15-slide deck with realistic file sizes (no OOM, all renders
     accessible by slide_id, sub-agent terminates cleanly)."""
-    print("[31/31] critic sub-agent: 15-slide PNG throughput (no OOM)")
+    print("[31/42] critic sub-agent: 15-slide PNG throughput (no OOM)")
     from .agents import CriticAgent
     from .schema import ArtifactType
 
@@ -2900,6 +2900,376 @@ def check_critic_subagent_png_throughput() -> None:
         f"base64 payloads threaded through, verdict={report.verdict}")
 
 
+# ─────────────────────── v2.8.1 archetype Phase 1 ──────────────────────
+
+
+def _make_archetype_slide(
+    *,
+    layer_id: str,
+    archetype: str,
+    children: list[LayerNode],
+    section_number: str | None = None,
+    speaker_notes: str | None = None,
+    name: str | None = None,
+) -> LayerNode:
+    """LayerNode factory for archetype smokes — emits a kind="slide"
+    with the given children and the specified archetype label."""
+    return LayerNode(
+        layer_id=layer_id,
+        name=name or layer_id,
+        kind="slide",
+        z_index=1,
+        archetype=archetype,  # type: ignore[arg-type]
+        section_number=section_number,
+        speaker_notes=speaker_notes,
+        children=children,
+    )
+
+
+def _new_blank_slide(slide_w: int = 1920, slide_h: int = 1080) -> tuple:
+    """Spin up a fresh blank Presentation + add one blank slide.
+
+    Returns (Presentation, Slide). Used by every archetype smoke so
+    each runs in isolation."""
+    from pptx import Presentation as _Pres
+    from pptx.util import Emu as _Emu
+    prs = _Pres()
+    prs.slide_width = _Emu(slide_w * 9525)
+    prs.slide_height = _Emu(slide_h * 9525)
+    blank = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank)
+    return prs, slide
+
+
+def _make_archetype_ctx() -> "ToolContext":  # noqa: F821
+    """Lightweight ToolContext stub for archetype smokes — no API
+    keys, no real run dir; archetype renderers don't touch ctx beyond
+    settings.fonts on the preview path (which we don't exercise here)."""
+    from .config import REPO_ROOT, Settings
+    from .tools import ToolContext
+
+    settings = Settings(
+        anthropic_api_key="sk-stub", anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub", critic_model="stub",
+    )
+    out_dir = REPO_ROOT / "out" / "smoke_archetype"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    layers_dir = out_dir / "layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+    return ToolContext(
+        settings=settings, run_dir=out_dir,
+        layers_dir=layers_dir, run_id="smoke-archetype",
+    )
+
+
+def _all_textframes(slide: "Any") -> list:  # noqa: F821
+    """Return the slide's shapes that carry a text_frame (covers
+    textboxes, autoshapes, and placeholders)."""
+    return [s for s in slide.shapes if s.has_text_frame]
+
+
+def _shape_text(shape: "Any") -> str:  # noqa: F821
+    return shape.text_frame.text or ""
+
+
+def _shape_max_pt(shape: "Any") -> int:  # noqa: F821
+    """Largest run font size (in pt) across the shape's text frame.
+    Returns 0 when no run sets an explicit size."""
+    best = 0
+    for para in shape.text_frame.paragraphs:
+        for run in para.runs:
+            sz = getattr(run.font, "size", None)
+            if sz is not None:
+                # `sz` is an Emu-like length subclass with `.pt` attr.
+                try:
+                    best = max(best, int(sz.pt))
+                except Exception:
+                    pass
+    return best
+
+
+def check_archetype_cover_editorial() -> None:
+    """v2.8.1 smoke #37 — `cover_editorial` renders ≥3 native shapes
+    (title + subtitle + author strip), all backed by TextFrames. When
+    the slide carries a `section_number`, the title text picks up the
+    `§N · ` prefix from v2.7.2's `_with_section_prefix`."""
+    print("[37/42] archetype cover_editorial: ≥3 textframes + section prefix")
+    from .tools.pptx_renderer import _render_slide
+
+    title = LayerNode(
+        layer_id="c1_title", name="title", kind="text", z_index=10,
+        text="OpenDesign", font_family="NotoSerifSC-Bold", font_size_px=120,
+        align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    subtitle = LayerNode(
+        layer_id="c1_sub", name="subtitle", kind="text", z_index=10,
+        text="A conversational design agent", font_family="NotoSansSC-Bold",
+        font_size_px=36, align="left", effects=TextEffect(fill="#475569"),
+    )
+    authors = LayerNode(
+        layer_id="c1_authors", name="author_byline", kind="text", z_index=10,
+        text="Yaxin Luo · Anthropic Skill Team", font_family="NotoSansSC-Bold",
+        font_size_px=26, align="left", effects=TextEffect(fill="#64748b"),
+    )
+    slide_node = _make_archetype_slide(
+        layer_id="cover", archetype="cover_editorial",
+        section_number="§1",
+        children=[title, subtitle, authors],
+    )
+    _, slide = _new_blank_slide()
+    _render_slide(slide, slide_node, 1920, 1080, _make_archetype_ctx())
+
+    frames = _all_textframes(slide)
+    if len(frames) < 3:
+        _fail(f"cover_editorial should emit ≥3 TextFrames; got {len(frames)}")
+
+    texts = [_shape_text(f) for f in frames]
+    title_match = [t for t in texts if "OpenDesign" in t]
+    if not title_match:
+        _fail(f"cover_editorial title not rendered; texts={texts}")
+    if not title_match[0].startswith("§1"):
+        _fail(f"section_number prefix missing; title={title_match[0]!r}")
+    if not any("conversational" in t for t in texts):
+        _fail(f"subtitle missing from cover; texts={texts}")
+    if not any("Yaxin Luo" in t for t in texts):
+        _fail(f"authors strip missing from cover; texts={texts}")
+    _ok(f"cover_editorial: {len(frames)} textframes, "
+        f"section prefix '§1' on title, subtitle + authors present")
+
+
+def check_archetype_evidence_snapshot() -> None:
+    """v2.8.1 smoke #38 — `evidence_snapshot` renders one giant number
+    (≥200 pt source ⇒ ≥150 pt rendered) plus a footnote textframe."""
+    print("[38/42] archetype evidence_snapshot: huge number + footnote")
+    from .tools.pptx_renderer import _render_slide
+
+    big = LayerNode(
+        layer_id="e1_big", name="big_number", kind="text", z_index=10,
+        text="72.3%", font_family="NotoSerifSC-Bold", font_size_px=240,
+        align="center", effects=TextEffect(fill="#0f172a"),
+    )
+    foot = LayerNode(
+        layer_id="e1_foot", name="stat_caption", kind="text", z_index=10,
+        text="ImageNet top-1, single-crop", font_family="NotoSansSC-Bold",
+        font_size_px=28, align="center", effects=TextEffect(fill="#475569"),
+    )
+    slide_node = _make_archetype_slide(
+        layer_id="ev1", archetype="evidence_snapshot",
+        children=[big, foot],
+    )
+    _, slide = _new_blank_slide()
+    _render_slide(slide, slide_node, 1920, 1080, _make_archetype_ctx())
+
+    frames = _all_textframes(slide)
+    if len(frames) < 2:
+        _fail(f"evidence_snapshot should emit ≥2 TextFrames; got {len(frames)}")
+
+    big_frames = [f for f in frames if "72.3%" in _shape_text(f)]
+    if not big_frames:
+        _fail(f"big number frame missing; texts={[_shape_text(f) for f in frames]}")
+    big_pt = _shape_max_pt(big_frames[0])
+    # 240 px source × 0.75 px-to-pt ≈ 180 pt; threshold 150 leaves
+    # room for any minor calibration drift.
+    if big_pt < 150:
+        _fail(f"big number font too small: {big_pt} pt; want ≥150")
+    if not any("ImageNet" in _shape_text(f) for f in frames):
+        _fail(f"footnote missing; texts={[_shape_text(f) for f in frames]}")
+    _ok(f"evidence_snapshot: number frame at {big_pt} pt, footnote present")
+
+
+def check_archetype_takeaway_list() -> None:
+    """v2.8.1 smoke #39 — `takeaway_list` renders 3 bullet groups
+    (marker + body shapes per row), giving ≥6 textframes plus the
+    title."""
+    print("[39/42] archetype takeaway_list: 3 bullet groups")
+    from .tools.pptx_renderer import _render_slide
+
+    title = LayerNode(
+        layer_id="t1_title", name="title", kind="text", z_index=10,
+        text="Three things to remember", font_family="NotoSerifSC-Bold",
+        font_size_px=72, align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    bullets = [
+        LayerNode(
+            layer_id=f"t1_b{i}", name=f"bullet_{i}", kind="text", z_index=10,
+            text=text, font_family="NotoSansSC-Bold", font_size_px=36,
+            align="left", effects=TextEffect(fill="#0f172a"),
+        )
+        for i, text in enumerate([
+            "Editability beats prettier raster output.",
+            "Provenance is a hard gate, not a soft check.",
+            "Archetypes give the planner a vocabulary.",
+        ], start=1)
+    ]
+    slide_node = _make_archetype_slide(
+        layer_id="tk1", archetype="takeaway_list",
+        children=[title, *bullets],
+    )
+    _, slide = _new_blank_slide()
+    _render_slide(slide, slide_node, 1920, 1080, _make_archetype_ctx())
+
+    frames = _all_textframes(slide)
+    # 1 title + 3 markers + 3 bodies = 7 minimum
+    if len(frames) < 7:
+        _fail(f"takeaway_list should emit ≥7 TextFrames (title+3 markers+3 bodies); "
+              f"got {len(frames)}")
+
+    body_texts = [_shape_text(f) for f in frames]
+    for marker in ("01", "02", "03"):
+        if not any(marker == t.strip() for t in body_texts):
+            _fail(f"takeaway marker '{marker}' missing; texts={body_texts}")
+    for needle in ("Editability", "Provenance", "Archetypes"):
+        if not any(needle in t for t in body_texts):
+            _fail(f"takeaway body missing '{needle}'; texts={body_texts}")
+    _ok(f"takeaway_list: {len(frames)} textframes, all 3 bullet groups present")
+
+
+def check_archetype_thanks_qa() -> None:
+    """v2.8.1 smoke #40 — `thanks_qa` renders a thanks/Q&A headline,
+    a contact row, and an optional code link."""
+    print("[40/42] archetype thanks_qa: headline + contact row")
+    from .tools.pptx_renderer import _render_slide
+
+    title = LayerNode(
+        layer_id="q1_title", name="title", kind="text", z_index=10,
+        text="Thanks · Questions?", font_family="NotoSerifSC-Bold",
+        font_size_px=96, align="center", effects=TextEffect(fill="#0f172a"),
+    )
+    contact = LayerNode(
+        layer_id="q1_email", name="contact_email", kind="text", z_index=10,
+        text="luoyaxin999@gmail.com", font_family="NotoSansSC-Bold",
+        font_size_px=28, align="center", effects=TextEffect(fill="#475569"),
+    )
+    code = LayerNode(
+        layer_id="q1_link", name="code_link", kind="text", z_index=10,
+        text="github.com/yaxin/open-design", font_family="JetBrainsMono",
+        font_size_px=24, align="center", effects=TextEffect(fill="#7f1d1d"),
+    )
+    slide_node = _make_archetype_slide(
+        layer_id="ty", archetype="thanks_qa",
+        children=[title, contact, code],
+    )
+    _, slide = _new_blank_slide()
+    _render_slide(slide, slide_node, 1920, 1080, _make_archetype_ctx())
+
+    frames = _all_textframes(slide)
+    if len(frames) < 3:
+        _fail(f"thanks_qa should emit ≥3 TextFrames; got {len(frames)}")
+    texts = [_shape_text(f) for f in frames]
+    if not any("Thanks" in t and "Questions" in t for t in texts):
+        _fail(f"thanks_qa headline missing; texts={texts}")
+    if not any("luoyaxin999" in t for t in texts):
+        _fail(f"thanks_qa contact missing; texts={texts}")
+    if not any("github.com" in t for t in texts):
+        _fail(f"thanks_qa code link missing; texts={texts}")
+    _ok(f"thanks_qa: headline + contact + link rendered ({len(frames)} frames)")
+
+
+def check_archetype_fallback_default() -> None:
+    """v2.8.1 smoke #41 — when `archetype` is the schema default
+    (`"evidence_snapshot"`) and the slide has no big-number child,
+    the dispatcher falls through to the original default render. Same
+    for any Phase 2/3 placeholder. No exceptions; output matches the
+    pre-v2.8.1 inline path."""
+    print("[41/42] archetype fallback: default + Phase 2/3 placeholder")
+    from .tools.pptx_renderer import _render_slide
+
+    # Case A: default archetype, ordinary slide (no big number, no
+    # bullets). Should fall through to default render without errors.
+    title = LayerNode(
+        layer_id="d1_title", name="title", kind="text", z_index=10,
+        text="An ordinary slide", font_family="NotoSerifSC-Bold",
+        font_size_px=72, align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    body = LayerNode(
+        layer_id="d1_body", name="body", kind="text", z_index=10,
+        text="Two paragraph body that should render through the\n"
+             "v2.7.2 default path because no big number is declared.",
+        font_family="NotoSansSC-Bold", font_size_px=32,
+        align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    slide_default = LayerNode(
+        layer_id="ds1", name="ds1", kind="slide", z_index=1,
+        section_number="§2",  # exercise v2.7.2 prefix on default path
+        children=[title, body],
+        # archetype omitted → schema default "evidence_snapshot"
+    )
+    _, slide_a = _new_blank_slide()
+    _render_slide(slide_a, slide_default, 1920, 1080, _make_archetype_ctx())
+    frames_a = _all_textframes(slide_a)
+    if not frames_a:
+        _fail("default-archetype fallback emitted no shapes")
+    if not any("§2" in _shape_text(f) for f in frames_a):
+        _fail("v2.7.2 section prefix missing on default-render fallback path")
+
+    # Case B: Phase 2/3 placeholder archetype. Dispatcher should fall
+    # through to default render without raising.
+    slide_placeholder = _make_archetype_slide(
+        layer_id="ds2", archetype="pipeline_horizontal",
+        children=[title, body],
+    )
+    _, slide_b = _new_blank_slide()
+    _render_slide(slide_b, slide_placeholder, 1920, 1080, _make_archetype_ctx())
+    frames_b = _all_textframes(slide_b)
+    if not frames_b:
+        _fail("Phase 2 placeholder fallback emitted no shapes")
+    _ok(f"fallback paths intact: default ({len(frames_a)} frames) + "
+        f"placeholder pipeline_horizontal ({len(frames_b)} frames)")
+
+
+def check_archetype_determinism() -> None:
+    """v2.8.1 smoke #42 — rendering the same SlideNode twice produces
+    byte-identical slide XML. Guards against accidental nondeterminism
+    (time-based ids, random shape positions) creeping into archetype
+    renderers."""
+    print("[42/42] archetype determinism: two renders → identical XML")
+    from xml.etree import ElementTree as ET
+    from .tools.pptx_renderer import _render_slide
+
+    title = LayerNode(
+        layer_id="d_title", name="title", kind="text", z_index=10,
+        text="Deterministic cover", font_family="NotoSerifSC-Bold",
+        font_size_px=120, align="left", effects=TextEffect(fill="#0f172a"),
+    )
+    subtitle = LayerNode(
+        layer_id="d_sub", name="subtitle", kind="text", z_index=10,
+        text="Same input → same shapes", font_family="NotoSansSC-Bold",
+        font_size_px=36, align="left", effects=TextEffect(fill="#475569"),
+    )
+    authors = LayerNode(
+        layer_id="d_auth", name="author_byline", kind="text", z_index=10,
+        text="OpenDesign", font_family="NotoSansSC-Bold",
+        font_size_px=26, align="left", effects=TextEffect(fill="#64748b"),
+    )
+    spec_node = _make_archetype_slide(
+        layer_id="dcov", archetype="cover_editorial",
+        section_number="§1",
+        children=[title, subtitle, authors],
+    )
+
+    _, slide_1 = _new_blank_slide()
+    _render_slide(slide_1, spec_node, 1920, 1080, _make_archetype_ctx())
+    _, slide_2 = _new_blank_slide()
+    _render_slide(slide_2, spec_node, 1920, 1080, _make_archetype_ctx())
+
+    xml_1 = ET.tostring(slide_1._element, encoding="unicode")
+    xml_2 = ET.tostring(slide_2._element, encoding="unicode")
+
+    if xml_1 != xml_2:
+        # Surface a small diff hint for triage.
+        for i, (a, b) in enumerate(zip(xml_1, xml_2)):
+            if a != b:
+                _fail(
+                    f"determinism violated at char {i}: "
+                    f"...{xml_1[max(0,i-30):i+30]!r} vs "
+                    f"...{xml_2[max(0,i-30):i+30]!r}"
+                )
+        _fail("determinism violated (lengths differ)")
+    _ok(f"determinism: byte-identical slide XML across two renders "
+        f"({len(xml_1)} chars)")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -2932,6 +3302,12 @@ def main() -> int:
     check_critic_subagent_max_turns()
     check_critic_planner_consumption()
     check_critic_subagent_png_throughput()
+    check_archetype_cover_editorial()
+    check_archetype_evidence_snapshot()
+    check_archetype_takeaway_list()
+    check_archetype_thanks_qa()
+    check_archetype_fallback_default()
+    check_archetype_determinism()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
