@@ -155,6 +155,17 @@ class Settings:
     # through unchanged. Override per-run via `SECTION_NUMBER_POLICY=...`.
     section_number_policy: SectionNumberPolicy = "renumber"
 
+    # v2.7.3 — Vision critic sub-agent (CriticAgent in
+    # open_design/agents/critic_agent.py). The critic now runs as an
+    # independent loop with its own LLMBackend instance, its own turn
+    # budget, and its own trajectory file. `critic_max_turns` caps the
+    # sub-agent's loop in case the model never calls `report_verdict`;
+    # on hit we force-emit a fail verdict rather than recurse forever.
+    # `max_critique_iters` above is now the planner-side cap on how many
+    # times the planner spawns the sub-agent per run (one CriticAgent
+    # invocation == one revise round).
+    critic_max_turns: int = 10
+
     # Extended thinking — applies to BOTH backends (Anthropic uses thinking=
     # block; OpenAI-compat uses extra_body.reasoning.max_tokens for OpenRouter
     # unified format). budget=0 disables thinking entirely.
@@ -262,6 +273,7 @@ def load_settings() -> Settings:
 
     planner_budget = _parse_int_env("PLANNER_THINKING_BUDGET", 10000)
     critic_budget = _parse_int_env("CRITIC_THINKING_BUDGET", 10000)
+    critic_max_turns_env = _parse_int_env("CRITIC_MAX_TURNS", 10)
     interleaved = os.getenv("ENABLE_INTERLEAVED_THINKING", "1").strip() not in (
         "0", "false", "False", "no", "",
     )
@@ -295,6 +307,7 @@ def load_settings() -> Settings:
         ingest_http_timeout=ingest_timeout,
         planner_thinking_budget=planner_budget,
         critic_thinking_budget=critic_budget,
+        critic_max_turns=critic_max_turns_env,
         enable_interleaved_thinking=interleaved,
         **({"image_model": image_model_env} if image_model_env else {}),
         image_provider=image_provider_env,

@@ -35,8 +35,9 @@ def _ok(msg: str) -> None:
 
 
 def check_imports() -> None:
-    print("[1/27] imports")
-    from . import chat, cli, config, critic, planner, runner, schema, session  # noqa
+    print("[1/31] imports")
+    from . import chat, cli, config, planner, runner, schema, session  # noqa
+    from .agents import CriticAgent, PromptEnhancer  # noqa
     from .tools import (
         TOOL_HANDLERS, TOOL_SCHEMAS, ToolContext,
         composite, critique_tool, edit_layer, fetch_brand_asset, finalize,
@@ -48,7 +49,7 @@ def check_imports() -> None:
 
 
 def check_tool_registry() -> None:
-    print("[2/27] tool registry")
+    print("[2/31] tool registry")
     from .tools import TOOL_HANDLERS, TOOL_SCHEMAS
 
     expected = {"switch_artifact_type", "propose_design_spec",
@@ -81,7 +82,7 @@ def check_pydantic_roundtrip() -> None:
     plus all step types (input / reasoning / tool_call / tool_result /
     finalize), ToolResultRecord (success + error variants), and
     ThinkingBlockRecord (plain + redacted)."""
-    print("[3/27] pydantic schema round-trip (v2)")
+    print("[3/31] pydantic schema round-trip (v2)")
     plain_thinking = ThinkingBlockRecord(
         thinking="I should declare poster type then propose a 3:4 spec.",
         signature="sig_opaque_anthropic",
@@ -205,7 +206,7 @@ def check_pydantic_roundtrip() -> None:
 
 
 def check_fonts() -> None:
-    print("[4/27] fonts")
+    print("[4/31] fonts")
     from PIL import ImageFont
     from .config import REPO_ROOT
     for fname in ("NotoSansSC-Bold.otf", "NotoSerifSC-Bold.otf"):
@@ -225,7 +226,7 @@ def check_composite_no_api() -> None:
     Also exercises switch_artifact_type → propose_design_spec plumbing
     (artifact_type fallback from ctx.state when spec omits it).
     """
-    print("[5/27] composite (no API)")
+    print("[5/31] composite (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -326,7 +327,7 @@ def check_composite_no_api() -> None:
 
 
 def check_svg_text_is_vector() -> None:
-    print("[6/27] SVG + HTML content (vector text, contenteditable, inline fonts)")
+    print("[6/31] SVG + HTML content (vector text, contenteditable, inline fonts)")
     from .config import REPO_ROOT
     # v2.1 versioned layout: composite writes to composites/iter_NN/ and
     # maintains final/ symlinks to the latest iter. Read through final/ so
@@ -400,7 +401,7 @@ def check_svg_text_is_vector() -> None:
 
 def check_chat_session_roundtrip() -> None:
     """ChatSession pydantic + save/load cycle — no API calls."""
-    print("[7/27] chat session save/load")
+    print("[7/31] chat session save/load")
     from .config import REPO_ROOT
     from .session import (
         ChatMessage, ChatSession, TrajectoryRef,
@@ -462,7 +463,7 @@ def check_chat_session_roundtrip() -> None:
 
 def check_edit_layer_no_api() -> None:
     """edit_layer semantics — subset-merge, delegates re-render, refuses non-text."""
-    print("[8/27] edit_layer (no API)")
+    print("[8/31] edit_layer (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.edit_layer import edit_layer
@@ -587,7 +588,7 @@ def check_edit_layer_no_api() -> None:
 
 def check_apply_edits_roundtrip() -> None:
     """HTML → apply-edits → new PSD/SVG/HTML/preview with same semantic content."""
-    print("[9/27] apply-edits round-trip (no API)")
+    print("[9/31] apply-edits round-trip (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
 
@@ -666,7 +667,7 @@ def check_landing_mode() -> None:
     the `<footer>` auto-upgrade. 4 sections triggers auto-nav, and the
     round-trip must preserve CTA nodes with href + variant.
     """
-    print("[10/27] landing mode (no API)")
+    print("[10/31] landing mode (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -842,7 +843,7 @@ def check_landing_mode() -> None:
 def check_design_system_styles() -> None:
     """Render a landing in each of the 6 bundled styles, verify the matching
     CSS got inlined and the style-specific signature tokens are present."""
-    print("[11/27] design-system styles (no API)")
+    print("[11/31] design-system styles (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -943,7 +944,7 @@ def check_landing_with_images() -> None:
     """Landing mode with image children in sections. No NBP call —
     pre-stages a stub PNG in rendered_layers and asserts the renderer
     inlines it + apply-edits round-trips the image layer."""
-    print("[12/27] landing with images (no API)")
+    print("[12/31] landing with images (no API)")
     from .apply_edits import apply_edits
     from .config import REPO_ROOT, Settings
     from .schema import ArtifactType
@@ -1062,7 +1063,7 @@ def check_landing_with_images() -> None:
 def check_deck_mode() -> None:
     """Deck end-to-end: slide-tree spec → PPTX + per-slide PNGs + preview grid.
     No API — python-pptx writes a real .pptx that we reopen + verify."""
-    print("[13/27] deck mode (no API)")
+    print("[13/31] deck mode (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1240,7 +1241,7 @@ def check_deck_design_system_template() -> None:
     Verifies named slots get filled, image_slot gets a real picture, footer +
     slide_number auto-inject, and the original template slides are removed
     from the slide list."""
-    print("[21/27] deck design system template (no API)")
+    print("[21/31] deck design system template (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1364,7 +1365,7 @@ def check_footer_leakage() -> None:
     `ingested` entry on `ctx.state` with manifest.title set, and asserts
     the rendered footer reads the paper title — not the brief, not empty.
     Also asserts the leakage blacklist rejects user-command phrases."""
-    print("[22/27] footer leakage check (no API)")
+    print("[22/31] footer leakage check (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1471,7 +1472,7 @@ def check_callout_overlay() -> None:
     """v2.6 callout system: kind="callout" children render as shapes
     overlaid on top of the anchor picture/table. Verifies all 3 styles
     (highlight / label / circle) plus the optional arrow connector."""
-    print("[23/27] callout overlay (no API)")
+    print("[23/31] callout overlay (no API)")
     from pptx import Presentation as _Reopen
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -1575,7 +1576,7 @@ def check_provenance_validator() -> None:
          emits placeholder text
       g. _add_table truncates >8-col tables to 6 cols + caption marker
     """
-    print("[24/27] provenance validator + cover authors + wide-table cap (no API)")
+    print("[24/31] provenance validator + cover authors + wide-table cap (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -1789,7 +1790,7 @@ def check_reasoning_step_roundtrip() -> None:
     _last_critique_payload / _count_unique_layers) correctly recover state
     from a synthetic v2 trajectory shape.
     """
-    print("[14/27] v2 trajectory: derive metadata from agent_trace only")
+    print("[14/31] v2 trajectory: derive metadata from agent_trace only")
     from .chat import (
         _last_artifact_type, _last_design_spec, _last_critique_payload,
         _count_unique_layers,
@@ -1868,7 +1869,7 @@ def check_ingest_document_markdown() -> None:
     """Markdown ingestion: seed a stub .md with a relative image ref, verify
     ingest_document registers the image in rendered_layers + returns the raw
     text. No API — markdown path doesn't call Anthropic."""
-    print("[15/27] ingest_document markdown (no API)")
+    print("[15/31] ingest_document markdown (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1924,7 +1925,7 @@ def check_ingest_document_markdown() -> None:
 def check_ingest_document_image() -> None:
     """Standalone image ingestion: seed a PNG, verify ingest_document copies
     into layers_dir + registers a passthrough layer with correct shape."""
-    print("[16/27] ingest_document image (no API)")
+    print("[16/31] ingest_document image (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import ingest_document
@@ -1974,7 +1975,7 @@ def check_ingest_document_docx() -> None:
     """Docx ingestion (v1.2.5): build a minimal Word doc with headings +
     an inline image, verify ingest_document extracts sections + figures
     without any VLM call."""
-    print("[17/27] ingest_document docx (no API)")
+    print("[17/31] ingest_document docx (no API)")
     from docx import Document
     from docx.shared import Inches
     from .config import REPO_ROOT, Settings
@@ -2035,7 +2036,7 @@ def check_ingest_document_pptx() -> None:
     """Pptx ingestion (v1.2.5): build a 2-slide PowerPoint with a title,
     body bullets, and an embedded picture; verify slides become sections
     and the picture becomes an ingest_fig_NN layer."""
-    print("[18/27] ingest_document pptx (no API)")
+    print("[18/31] ingest_document pptx (no API)")
     from pptx import Presentation
     from pptx.util import Inches
     from .config import REPO_ROOT, Settings
@@ -2103,7 +2104,7 @@ def check_sub_figure_registration() -> None:
     - parent_layer_id breadcrumb set on children
     - Layer_id naming convention `ingest_fig_NN_<label>` holds
     """
-    print("[19/27] sub-figure extraction (no API)")
+    print("[19/31] sub-figure extraction (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.ingest_document import _register_sub_panels
@@ -2198,7 +2199,7 @@ def check_versioning_no_api() -> None:
       - final/ symlinks point at iter_02 (the latest)
       - tool_result.payload exposes relative_path / version / supersedes_*
     """
-    print("[20/27] versioning + revise-loop preservation (no API)")
+    print("[20/31] versioning + revise-loop preservation (no API)")
     from .config import REPO_ROOT, Settings
     from .tools import ToolContext
     from .tools.composite import composite
@@ -2346,7 +2347,7 @@ def check_section_renumber_policy() -> None:
     a deck whose planner-supplied section_number is non-monotonic and
     rewrites the labels in slide order. Three content slides come back
     as §1 / §2 / §3 (no shared title prefix → no sub-rhythm)."""
-    print("[25/27] section_number policy: renumber (no API)")
+    print("[25/31] section_number policy: renumber (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2370,7 +2371,7 @@ def check_section_renumber_strip() -> None:
     """v2.7.2 smoke #26 — `apply_section_policy(policy="strip")` clears
     every SlideNode.section_number to None without touching titles or
     speaker notes."""
-    print("[26/27] section_number policy: strip (no API)")
+    print("[26/31] section_number policy: strip (no API)")
     from .util.section_renumber import apply_section_policy
 
     slides = [
@@ -2394,7 +2395,7 @@ def check_stable_id_notes_after_reorder() -> None:
     NOT the enumerate index. Build a 4-slide deck, reorder to
     [s4, s1, s3, s2], composite to .pptx, reopen and confirm each
     slide's notes match the source SlideNode it came from."""
-    print("[27/27] speaker_notes follow slide_id after reorder (no API)")
+    print("[27/31] speaker_notes follow slide_id after reorder (no API)")
     from pptx import Presentation as _Reopen
 
     from .config import REPO_ROOT, Settings
@@ -2485,6 +2486,420 @@ def check_stable_id_notes_after_reorder() -> None:
         f"({sections_seen}/4 slides carry section prefix)")
 
 
+# ─────────────────────── v2.7.3 vision critic sub-agent ─────────────────────
+
+
+class _ScriptedTurn:
+    """One pre-baked turn the mock backend will replay. `tool_calls` is a list
+    of `(tool_name, tool_input_dict)` tuples; the backend wraps each in a
+    ToolCall with a synthetic id."""
+
+    def __init__(self,
+                 tool_calls: list[tuple[str, dict]] | None = None,
+                 text: str = "",
+                 stop_reason: str = "tool_use") -> None:
+        self.tool_calls = tool_calls or []
+        self.text = text
+        self.stop_reason = stop_reason
+
+
+class _MockCriticBackend:
+    """Minimal LLMBackend stand-in for v2.7.3 sub-agent smokes.
+
+    Replays a scripted list of turns. Each `create_turn` call records the
+    incoming messages so the assertions can verify image bytes were threaded
+    through, then returns the next scripted TurnResponse. Round-trip
+    methods (`append_assistant`, `append_tool_results`) are no-ops since
+    our scripted turns don't depend on prior context.
+    """
+
+    name = "mock"
+
+    def __init__(self, model: str, turns: list[_ScriptedTurn]) -> None:
+        self.model = model
+        self._turns = list(turns)
+        self.observed_messages: list[list] = []
+        self._call_count = 0
+
+    def create_turn(self, *, system, messages, tools, thinking_budget=0,
+                    max_tokens=16384, extra_headers=None):
+        from .llm_backend import ToolCall, TurnResponse
+        # Snapshot the messages list so smokes can assert on what got
+        # passed in (e.g. image bytes from prior tool_result turns).
+        self.observed_messages.append(list(messages))
+        if self._call_count >= len(self._turns):
+            # No more scripted turns: emit a do-nothing end_turn so the
+            # CriticAgent's max_turns failsafe triggers naturally.
+            return TurnResponse(stop_reason="end_turn", raw_assistant_content={"role": "assistant"})
+        scripted = self._turns[self._call_count]
+        self._call_count += 1
+        tcs = [
+            ToolCall(id=f"toolu_mock_{i}", name=name, input=dict(args))
+            for i, (name, args) in enumerate(scripted.tool_calls)
+        ]
+        return TurnResponse(
+            text=scripted.text,
+            tool_calls=tcs,
+            stop_reason=scripted.stop_reason,
+            usage={"input": 100, "output": 50, "cache_read": 0, "cache_create": 0},
+            raw_assistant_content={"role": "assistant", "content": scripted.text},
+        )
+
+    def append_assistant(self, messages, response):
+        messages.append(response.raw_assistant_content)
+
+    def append_tool_results(self, messages, results):
+        for tu_id, payload, _is_err in results:
+            messages.append({"role": "tool", "tool_call_id": tu_id, "content": payload})
+
+    def vision_user_message(self, *, image_b64, media_type, text):
+        return {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}},
+            {"type": "text", "text": text},
+        ]}
+
+
+def _make_smoke_settings(out_root: Path) -> "Settings":  # noqa: F821
+    """Build a Settings stub that points at a writable smoke run dir."""
+    from .config import Settings
+    return Settings(
+        anthropic_api_key="sk-stub",
+        anthropic_base_url=None,
+        gemini_api_key="stub",
+        planner_model="stub-planner",
+        critic_model="stub-critic",
+        out_dir=out_root,
+        critic_max_turns=4,
+        critic_thinking_budget=0,
+    )
+
+
+def _make_smoke_deck_spec(n_slides: int = 3) -> tuple["DesignSpec", list[Path], Path]:  # noqa: F821
+    """Build a DesignSpec for a deck plus N rendered PNG files on disk under
+    a temp dir (no real composite — we just need bytes for read_slide_render
+    to base64-encode). Returns (spec, slide_paths, run_dir)."""
+    from .config import REPO_ROOT
+    from .schema import ArtifactType, DesignSpec, LayerNode
+
+    run_dir = REPO_ROOT / "out" / "smoke_critic_subagent"
+    if run_dir.exists():
+        import shutil
+        shutil.rmtree(run_dir)
+    slides_dir = run_dir / "composites" / "iter_01" / "slides"
+    slides_dir.mkdir(parents=True, exist_ok=True)
+
+    slide_paths: list[Path] = []
+    slide_nodes: list[LayerNode] = []
+    for i in range(n_slides):
+        png = slides_dir / f"slide_{i:02d}.png"
+        Image.new("RGB", (640, 360), (200, 50 + i * 10, 80)).save(png)
+        slide_paths.append(png)
+        slide_nodes.append(LayerNode(
+            layer_id=f"S{i}", name=f"slide_{i}", kind="slide",
+            z_index=i, children=[],
+        ))
+
+    spec = DesignSpec(
+        brief="smoke critic subagent",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        layer_graph=slide_nodes,
+    )
+    return spec, slide_paths, run_dir
+
+
+def check_critic_subagent_trajectory() -> None:
+    """smoke #25: spawn CriticAgent on a fixture deck with a mocked
+    LLMBackend that calls `report_verdict` on turn 1. Verify the resulting
+    CritiqueReport has the expected verdict/score AND the trajectory file
+    `critic.jsonl` lands in the run dir."""
+    print("[28/31] critic sub-agent: scripted report_verdict + trajectory written")
+    from .agents import CriticAgent
+    from .schema import ArtifactType, CritiqueReport
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=3)
+    settings = _make_smoke_settings(run_dir.parent.parent)
+
+    scripted = [
+        _ScriptedTurn(tool_calls=[
+            ("read_slide_render", {"slide_id": "S0"}),
+        ]),
+        _ScriptedTurn(tool_calls=[
+            ("report_verdict", {
+                "score": 0.82,
+                "verdict": "pass",
+                "summary": "structurally sound; minor typography drift only",
+                "issues": [
+                    {"slide_id": "S1", "severity": "low",
+                     "category": "typography",
+                     "description": "body font 22px below 24px lower bound",
+                     "evidence_paper_anchor": None},
+                ],
+            }),
+        ]),
+    ]
+    mock = _MockCriticBackend(model="stub-critic", turns=scripted)
+
+    agent = CriticAgent(settings, ArtifactType.DECK)
+    agent.backend = mock  # inject after construction (no API call needed)
+
+    traj_path = run_dir / "trajectory" / "critic.jsonl"
+    report = agent.critique(
+        spec=spec, layer_manifest=[],
+        slide_renders=slide_paths,
+        paper_raw_text="LongCat-Next achieves 72.3% top-1 on ImageNet.",
+        iteration=1, trajectory_path=traj_path,
+    )
+
+    if not isinstance(report, CritiqueReport):
+        _fail(f"report should be CritiqueReport; got {type(report).__name__}")
+    if report.verdict != "pass":
+        _fail(f"verdict should be 'pass'; got {report.verdict!r}")
+    if abs(report.score - 0.82) > 0.001:
+        _fail(f"score not preserved: {report.score}")
+    if len(report.issues) != 1 or report.issues[0].category != "typography":
+        _fail(f"issues lost in roundtrip: {report.issues}")
+
+    if not traj_path.exists():
+        _fail(f"critic.jsonl not written at {traj_path}")
+    lines = traj_path.read_text(encoding="utf-8").strip().splitlines()
+    if len(lines) != 2:
+        _fail(f"expected 2 trajectory lines (one per turn), got {len(lines)}")
+    line0 = json.loads(lines[0])
+    line1 = json.loads(lines[1])
+    if line0.get("iteration") != 1 or line1.get("iteration") != 1:
+        _fail(f"trajectory iteration field corrupted: {line0}, {line1}")
+    if not any(tc.get("name") == "report_verdict" for tc in line1.get("tool_calls", [])):
+        _fail(f"final turn should record report_verdict; got {line1.get('tool_calls')}")
+    _ok(f"critic sub-agent: report_verdict captured + critic.jsonl ({len(lines)} lines)")
+
+
+def check_critic_subagent_max_turns() -> None:
+    """smoke #26: when the mocked LLM never calls `report_verdict`,
+    CriticAgent must exhaust max_turns and synthesize a `verdict='fail'`
+    CritiqueReport rather than recurse forever."""
+    print("[29/31] critic sub-agent: max_turns failsafe → fail verdict")
+    from .agents import CriticAgent
+    from .schema import ArtifactType
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=2)
+    settings = _make_smoke_settings(run_dir.parent.parent)
+
+    # Every scripted turn calls a non-terminal tool — never report_verdict.
+    scripted = [
+        _ScriptedTurn(tool_calls=[("read_slide_render", {"slide_id": "S0"})])
+        for _ in range(settings.critic_max_turns + 4)
+    ]
+    mock = _MockCriticBackend(model="stub-critic", turns=scripted)
+
+    agent = CriticAgent(settings, ArtifactType.DECK)
+    agent.backend = mock
+
+    traj_path = run_dir / "trajectory" / "critic.jsonl"
+    if traj_path.exists():
+        traj_path.unlink()
+    report = agent.critique(
+        spec=spec, layer_manifest=[],
+        slide_renders=slide_paths, paper_raw_text=None,
+        iteration=1, trajectory_path=traj_path,
+    )
+
+    if report.verdict != "fail":
+        _fail(f"max_turns exhaustion should yield 'fail'; got {report.verdict!r}")
+    if report.score != 0.0:
+        _fail(f"failsafe report should have score=0.0; got {report.score}")
+    if mock._call_count != settings.critic_max_turns:
+        _fail(f"backend should be called critic_max_turns ({settings.critic_max_turns}) "
+              f"times; got {mock._call_count}")
+    if not report.issues or report.issues[0].severity != "blocker":
+        _fail(f"failsafe report should carry a blocker issue: {report.issues}")
+    _ok(f"max_turns ({settings.critic_max_turns}) hit → fail verdict synthesized "
+        f"(no infinite loop; {mock._call_count} backend calls)")
+
+
+def check_critic_planner_consumption() -> None:
+    """smoke #27: the critique tool wraps CriticAgent and returns a
+    CritiqueReport JSON in tool_result.payload. Verify that for each
+    verdict (pass/revise/fail) the planner can route correctly:
+      pass    → state.critique_results carries verdict='pass'
+      revise  → state.critique_results carries verdict='revise'
+      fail    → state.critique_results carries verdict='fail'
+    """
+    print("[30/31] planner consumption: pass/revise/fail routing")
+    from .agents import CriticAgent
+    from .config import REPO_ROOT
+    from .schema import ArtifactType, CompositionArtifacts, DesignSpec, LayerNode
+    from .tools import ToolContext
+    from .tools.critique_tool import critique
+
+    out_dir = REPO_ROOT / "out" / "smoke_critic_consume"
+    if out_dir.exists():
+        import shutil
+        shutil.rmtree(out_dir)
+    layers_dir = out_dir / "layers"
+    slides_dir = out_dir / "composites" / "iter_01" / "slides"
+    slides_dir.mkdir(parents=True, exist_ok=True)
+
+    preview_path = slides_dir.parent / "preview.png"
+    Image.new("RGB", (320, 180), (40, 40, 40)).save(preview_path)
+    for i in range(2):
+        Image.new("RGB", (320, 180), (90, 90, 90)).save(slides_dir / f"slide_{i:02d}.png")
+
+    spec = DesignSpec(
+        brief="planner consumption smoke",
+        artifact_type=ArtifactType.DECK,
+        canvas={"w_px": 1920, "h_px": 1080, "dpi": 96,
+                "aspect_ratio": "16:9", "color_mode": "RGB"},
+        layer_graph=[
+            LayerNode(layer_id="S0", name="cover", kind="slide", z_index=0),
+            LayerNode(layer_id="S1", name="content", kind="slide", z_index=1),
+        ],
+    )
+
+    settings = _make_smoke_settings(out_dir.parent.parent)
+    # Allow several critique invocations within a single fixture run.
+    settings = settings.__class__(
+        **{**settings.__dict__, "max_critique_iters": 5},
+    )
+
+    def _new_ctx() -> ToolContext:
+        ctx = ToolContext(settings=settings, run_dir=out_dir,
+                          layers_dir=layers_dir, run_id="smoke-critic-consume")
+        ctx.state["design_spec"] = spec
+        ctx.state["composition"] = CompositionArtifacts(
+            preview_path=str(preview_path),
+            layer_manifest=[
+                {"layer_id": "S0", "name": "cover", "kind": "slide",
+                 "index": 0, "children": []},
+                {"layer_id": "S1", "name": "content", "kind": "slide",
+                 "index": 1, "children": []},
+            ],
+        )
+        return ctx
+
+    def _run_with_verdict(verdict: str, score: float) -> dict:
+        ctx = _new_ctx()
+        scripted = [_ScriptedTurn(tool_calls=[(
+            "report_verdict", {"score": score, "verdict": verdict,
+                               "summary": f"smoke {verdict}", "issues": []},
+        )])]
+        mock = _MockCriticBackend(model="stub-critic", turns=scripted)
+
+        # Patch CriticAgent so the inner make_backend call is bypassed.
+        original_init = CriticAgent.__init__
+
+        def _patched_init(self, settings_, artifact_type):
+            self.settings = settings_
+            self.artifact_type = artifact_type
+            self.backend = mock
+            self._system_prompt = "patched"
+
+        CriticAgent.__init__ = _patched_init  # type: ignore[assignment]
+        try:
+            obs = critique({}, ctx=ctx)
+        finally:
+            CriticAgent.__init__ = original_init  # type: ignore[assignment]
+
+        if obs.status != "ok":
+            _fail(f"critique tool errored on verdict={verdict}: {obs.error_message}")
+        crits = ctx.state["critique_results"]
+        if not crits:
+            _fail(f"critique_results empty after verdict={verdict}")
+        if crits[-1].verdict != verdict:
+            _fail(f"verdict roundtrip {verdict} → {crits[-1].verdict}")
+        return obs.payload
+
+    pass_payload = _run_with_verdict("pass", 0.85)
+    revise_payload = _run_with_verdict("revise", 0.62)
+    fail_payload = _run_with_verdict("fail", 0.30)
+
+    for label, p in (("pass", pass_payload), ("revise", revise_payload),
+                     ("fail", fail_payload)):
+        if p.get("verdict") != label:
+            _fail(f"tool_result.payload.verdict {label} mismatch: {p}")
+        if "score" not in p or "summary" not in p:
+            _fail(f"tool_result.payload missing fields for {label}: {sorted(p.keys())}")
+    _ok("CritiqueReport JSON pass/revise/fail all surface in tool_result.payload "
+        "with verdict + score + summary intact")
+
+
+def check_critic_subagent_png_throughput() -> None:
+    """smoke #28: long-tail check that CriticAgent + read_slide_render
+    survive a 15-slide deck with realistic file sizes (no OOM, all renders
+    accessible by slide_id, sub-agent terminates cleanly)."""
+    print("[31/31] critic sub-agent: 15-slide PNG throughput (no OOM)")
+    from .agents import CriticAgent
+    from .schema import ArtifactType
+
+    spec, slide_paths, run_dir = _make_smoke_deck_spec(n_slides=15)
+    # Re-write each slide PNG at a more realistic resolution so the base64
+    # path actually exercises non-trivial bytes — 1920x1080 is the deck
+    # canvas default. Keeps the encode under 200KB per slide post-jpeg.
+    for i, p in enumerate(slide_paths):
+        Image.new("RGB", (1920, 1080), (30 + i * 5, 60, 90)).save(p)
+
+    settings = _make_smoke_settings(run_dir.parent.parent)
+
+    # Script: read every slide once, then report_verdict.
+    read_calls = [
+        _ScriptedTurn(tool_calls=[
+            ("read_slide_render", {"slide_id": f"S{i}"}),
+        ])
+        for i in range(15)
+    ]
+    final_call = _ScriptedTurn(tool_calls=[(
+        "report_verdict",
+        {"score": 0.78, "verdict": "pass", "summary": "all 15 slides reviewed",
+         "issues": []},
+    )])
+    # Because critic_max_turns defaults to 4 in the smoke settings, raise
+    # it for this stress test so the agent reaches the terminal call.
+    big_settings = settings.__class__(
+        **{**settings.__dict__, "critic_max_turns": 20,
+           "critic_preview_max_edge": 1024},
+    )
+    mock = _MockCriticBackend(model="stub-critic", turns=read_calls + [final_call])
+
+    agent = CriticAgent(big_settings, ArtifactType.DECK)
+    agent.backend = mock
+
+    traj_path = run_dir / "trajectory" / "critic_long.jsonl"
+    if traj_path.exists():
+        traj_path.unlink()
+    report = agent.critique(
+        spec=spec, layer_manifest=[], slide_renders=slide_paths,
+        paper_raw_text=None, iteration=1, trajectory_path=traj_path,
+    )
+
+    if report.verdict != "pass" or len(report.issues) != 0:
+        _fail(f"15-slide run should pass cleanly; got verdict={report.verdict} "
+              f"issues={len(report.issues)}")
+    if mock._call_count != 16:
+        _fail(f"expected 16 backend calls (15 reads + 1 verdict); got {mock._call_count}")
+
+    # Spot-check that the first read_slide_render result actually carried
+    # base64 PNG bytes (not a stub). The mock records observed_messages —
+    # the second create_turn call sees the tool result for slide S0.
+    if len(mock.observed_messages) < 2:
+        _fail("mock should have observed at least 2 turns of messages")
+    second_turn_msgs = mock.observed_messages[1]
+    found_b64 = False
+    for m in second_turn_msgs:
+        # The OpenAI-style tool result is `{"role": "tool", "content": "..."}`
+        # carrying the JSON-serialized payload from the critic dispatch.
+        if isinstance(m, dict) and m.get("role") == "tool":
+            content = m.get("content") or ""
+            if "image_b64" in content and len(content) > 1000:
+                found_b64 = True
+                break
+    if not found_b64:
+        _fail("second turn's messages should carry base64 PNG payload from "
+              "first read_slide_render call")
+    _ok(f"15-slide PNG throughput: {mock._call_count} backend calls, "
+        f"base64 payloads threaded through, verdict={report.verdict}")
+
+
 def main() -> int:
     check_imports()
     check_tool_registry()
@@ -2513,12 +2928,17 @@ def main() -> int:
     check_section_renumber_policy()
     check_section_renumber_strip()
     check_stable_id_notes_after_reorder()
+    check_critic_subagent_trajectory()
+    check_critic_subagent_max_turns()
+    check_critic_planner_consumption()
+    check_critic_subagent_png_throughput()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "
           "out/smoke_landing/, out/smoke_styles/, out/smoke_landing_img/, "
           "out/smoke_deck/, out/smoke_ingest_md/, out/smoke_ingest_image/, "
           "out/smoke_ingest_docx/, out/smoke_ingest_pptx/, out/smoke_sub_figs/, "
-          "out/smoke_section_notes/")
+          "out/smoke_section_notes/, "
+          "out/smoke_critic_subagent/, out/smoke_critic_consume/")
     return 0
 
 

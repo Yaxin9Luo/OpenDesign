@@ -338,9 +338,11 @@ class ThinkingBlockRecord(BaseModel):
     is_redacted: bool = False
 
 
-class CritiqueIssue(BaseModel):
-    """Runtime model used by Critic. Not persisted directly in trajectory —
-    instead embedded inside the critique tool's tool_result.payload."""
+class LegacyCritiqueIssue(BaseModel):
+    """Legacy single-call critic issue (pre v2.7.3). Retained because old
+    trajectories on disk reference this shape via `CritiqueResult.issues`.
+    New code uses `CritiqueIssue` (the v2.7.3 sub-agent shape) below.
+    """
     severity: Severity
     layer_id: str | None = None
     category: IssueCategory
@@ -379,14 +381,70 @@ class CritiqueIssue(BaseModel):
 
 
 class CritiqueResult(BaseModel):
-    """Runtime model used by Critic. The full result is dumped into the
-    `payload` of the corresponding tool_result step (so the policy sees
-    verdict / score / issues / rationale exactly as the critic emitted)."""
+    """Legacy critic result (pre v2.7.3 inline-tool path). Retained so old
+    trajectories on disk still load. The runner / planner now consumes
+    `CritiqueReport` produced by `agents.critic_agent.CriticAgent`; this
+    class only survives because `_derive_episode_outcome` and the chat
+    helpers index past trajectories by its `verdict` / `score` shape, both
+    of which the new `CritiqueReport` also exposes.
+    """
     iteration: int
     verdict: Verdict
     score: float
-    issues: list[CritiqueIssue] = Field(default_factory=list)
+    issues: list[LegacyCritiqueIssue] = Field(default_factory=list)
     rationale: str = ""
+
+    @field_validator("score")
+    @classmethod
+    def _score_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("score must be in [0, 1]")
+        return v
+
+
+# v2.7.3 — vision critic sub-agent shape.
+#
+# The inline `Critic` class is gone; `agents.critic_agent.CriticAgent` now
+# spawns its own LLM loop, sees slide PNGs (vision for ALL artifact types,
+# not just poster), and emits one of these as the terminal `report_verdict`
+# tool call. The planner consumes the JSON via the unchanged `critique`
+# tool signature — see `tools/critique_tool.py`.
+#
+# Severity vocab is intentionally distinct from the legacy `Severity`
+# (`major`/`minor`) because the sub-agent operates closer to the human
+# code-review vocabulary (`high`/`medium`/`low`) and we don't want to
+# silently overload the legacy enum.
+CritiqueIssueSeverity = Literal["blocker", "high", "medium", "low"]
+CritiqueIssueCategory = Literal[
+    "provenance",          # number / quote / paper terminology not in source
+    "claim_coverage",      # key paper claim not represented (v2.8.0 will wire)
+    "visual_hierarchy",    # title vs body vs caption sizing / contrast
+    "typography",          # font choice, leading, punctuation
+    "layout",              # shape overlap / out-of-bounds / cramped slots
+    "narrative_flow",      # slide ordering / transitions / arc
+    "factual_error",       # asserts something the paper does not support
+]
+CritiqueVerdict = Literal["pass", "revise", "fail"]
+
+
+class CritiqueIssue(BaseModel):
+    """One concrete issue raised by the v2.7.3 vision critic sub-agent."""
+    slide_id: str | None = None
+    severity: CritiqueIssueSeverity
+    category: CritiqueIssueCategory
+    description: str
+    evidence_paper_anchor: str | None = None
+
+
+class CritiqueReport(BaseModel):
+    """Terminal output of `CriticAgent.critique`. Embedded verbatim into
+    the planner-facing `critique` tool_result.payload so the planner can
+    decide between finalize / propose_design_spec / abort."""
+    score: float
+    verdict: CritiqueVerdict
+    issues: list[CritiqueIssue] = Field(default_factory=list)
+    summary: str = ""
+    iteration: int = 1
 
     @field_validator("score")
     @classmethod

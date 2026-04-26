@@ -40,8 +40,13 @@ class PipelineRunner:
         run_id = new_run_id()
         run_dir = self.settings.out_dir / "runs" / run_id
         layers_dir = run_dir / "layers"
+        # v2.7.3 — sub-agents (CriticAgent, future ClaimGraphExtractor)
+        # write per-call JSONL into this dir alongside the planner's
+        # top-level trajectory JSON. Each sub-agent owns its own file so
+        # SFT/DPO can flatten by actor without parsing the run-level JSON.
+        sub_traj_dir = run_dir / "trajectory"
         traj_dir = self.settings.out_dir / "trajectories"
-        ensure_dirs(run_dir, layers_dir, traj_dir)
+        ensure_dirs(run_dir, layers_dir, sub_traj_dir, traj_dir)
 
         # v1.1: inject an "Attached files" prologue into the brief so the
         # planner knows to call `ingest_document` FIRST. We don't change the
