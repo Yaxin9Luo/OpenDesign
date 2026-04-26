@@ -598,6 +598,129 @@ def _detect_orphan_callouts(
     return orphans, warnings
 
 
+# v2.8.2 C3 — closing slot enforcer. Last slide of a deck must contain
+# substantive takeaways, not the template-default "Thank You" stub.
+# Detection only — emits a warning to the planner via tool_result so it
+# can populate the closing slide on the next iteration. No auto-fix.
+#
+# Same blacklist as v2.8.2 C1 sanitizer; kept local to avoid cross-module
+# import in case C1 hasn't merged yet.
+_CLOSING_STUB_PHRASES: tuple[str, ...] = (
+    "thank you",
+    "thanks",
+    "questions",
+    "q&a",
+    "q & a",
+    "any questions",
+)
+
+_CLOSING_PLACEHOLDER_SUBSTRINGS: tuple[str, ...] = (
+    "paper title goes here",
+    "author one",
+    "author two",
+    "affiliation goes here",
+    "yyyy-mm-dd",
+    "your name here",
+)
+
+
+def _collect_closing_text_runs(node: Any) -> list[str]:
+    """Returns all non-empty text runs from a slide subtree.
+
+    Walks ``text`` and ``caption`` on the node and recurses into
+    ``children``. Empty / whitespace-only runs are filtered out.
+    """
+    runs: list[str] = []
+    text = getattr(node, "text", None)
+    if text and str(text).strip():
+        runs.append(str(text).strip())
+    caption = getattr(node, "caption", None)
+    if caption and str(caption).strip():
+        runs.append(str(caption).strip())
+    for child in (getattr(node, "children", None) or []):
+        runs.extend(_collect_closing_text_runs(child))
+    return runs
+
+
+def _find_closing_slide(spec: Any) -> Any | None:
+    """Returns the closing slide LayerNode by ``role="closing"`` (preferred)
+    or the last slide (``kind="slide"``) in ``layer_graph`` (fallback).
+    Returns None if no slides found.
+    """
+    layer_graph = getattr(spec, "layer_graph", None) or []
+    closing = None
+    last_slide = None
+    for node in layer_graph:
+        if getattr(node, "kind", None) != "slide":
+            continue
+        last_slide = node
+        if getattr(node, "role", None) == "closing":
+            closing = node
+    return closing or last_slide
+
+
+def _detect_closing_stub(spec: Any) -> list[dict[str, Any]]:
+    """Returns warnings if the last slide's content is too thin or stub-like.
+
+    Stub criteria (any one triggers warning):
+    - Fewer than 3 non-empty text runs across all descendants
+    - All runs match ``_CLOSING_STUB_PHRASES`` (e.g. just "Thank you" / "Q&A")
+    - All runs match ``_CLOSING_PLACEHOLDER_SUBSTRINGS``
+
+    Operates on structural properties only — no per-paper heuristics, so
+    the check generalizes across paper / blog / .docx / free-text decks.
+    Returns ``[]`` when the closing slide is substantive (the common case).
+    """
+    closing = _find_closing_slide(spec)
+    if closing is None:
+        return []
+    runs = _collect_closing_text_runs(closing)
+    warnings: list[dict[str, Any]] = []
+    slide_id = (
+        getattr(closing, "layer_id", None)
+        or getattr(closing, "name", None)
+        or "<closing>"
+    )
+    if len(runs) < 3:
+        entry = {
+            "slide_id": slide_id,
+            "reason": "thin_content",
+            "text_run_count": len(runs),
+            "preview": runs[:3],
+        }
+        warnings.append(entry)
+        log("composite.closing_stub_warning", **entry)
+        return warnings
+    lower_runs = [r.lower() for r in runs]
+    all_stub = all(
+        any(needle in r for needle in _CLOSING_STUB_PHRASES) for r in lower_runs
+    )
+    if all_stub:
+        entry = {
+            "slide_id": slide_id,
+            "reason": "all_stub_phrases",
+            "text_run_count": len(runs),
+            "preview": runs[:3],
+        }
+        warnings.append(entry)
+        log("composite.closing_stub_warning", **entry)
+        return warnings
+    all_placeholder = all(
+        any(needle in r for needle in _CLOSING_PLACEHOLDER_SUBSTRINGS)
+        for r in lower_runs
+    )
+    if all_placeholder:
+        entry = {
+            "slide_id": slide_id,
+            "reason": "all_placeholders",
+            "text_run_count": len(runs),
+            "preview": runs[:3],
+        }
+        warnings.append(entry)
+        log("composite.closing_stub_warning", **entry)
+    return warnings
+
+
 def _aspect_fit_contain(
     src_size: tuple[int, int],
     dst_size: tuple[int, int],
@@ -985,6 +1108,14 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
     alignment_warnings = detect_alignment_warnings(spec)
     ctx.state["alignment_warnings"] = alignment_warnings
 
+    # v2.8.2 C3 — closing slot enforcer. Warn the planner when the last
+    # slide is the template-default "Thank You" stub (or thin / placeholder
+    # content). Detection only — the renderer continues with the existing
+    # spec; the warning surfaces in the tool_result payload so the planner
+    # can populate real takeaways on the next iteration.
+    closing_warnings = _detect_closing_stub(spec)
+    ctx.state["closing_warnings"] = closing_warnings
+
     try:
         slide_count = write_pptx(spec, pptx_path, ctx)
     except Exception as e:
@@ -1045,7 +1176,8 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         slides=slide_count, images=image_ct,
         text_overlaps=len(deck_text_overlaps),
         orphan_callouts=len(orphan_callout_warnings),
-        alignment_warnings=len(alignment_warnings))
+        alignment_warnings=len(alignment_warnings),
+        closing_warnings=len(closing_warnings))
 
     _refresh_final_links(iter_dir, ctx, ["deck.pptx", "preview.png"])
     preview_sha = sha256_file(preview_path)
@@ -1071,6 +1203,10 @@ def _composite_deck(spec: Any, ctx: ToolContext) -> ToolResultRecord:
         # v2.8.2-C2 — naive set-overlap signal. Slides whose title noun
         # phrases don't appear in the body/figure text. Empty = clean.
         "alignment_warnings": alignment_warnings,
+        # v2.8.2 C3 — empty list means the closing slide carries real
+        # takeaways; non-empty means the planner left the template stub
+        # ("Thank You" / "Q&A") and should populate it on the next pass.
+        "closing_warnings": closing_warnings,
     }
     if prior_preview_sha:
         payload["supersedes_preview_sha256"] = prior_preview_sha
