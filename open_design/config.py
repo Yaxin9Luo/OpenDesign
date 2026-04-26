@@ -188,6 +188,19 @@ class Settings:
     # invocation == one revise round).
     critic_max_turns: int = 10
 
+    # v2.7.3 hotfix (2026-04-26) — cap how many slide PNGs the critic
+    # may pull into a single turn via `read_slide_render`. The 153K-token
+    # context blow-up on longcat-next-2026.pdf came from a 13-slide deck
+    # being fetched in parallel and the JSON-encoded base64 leaking into
+    # subsequent turns as plain `tool` messages. We now deliver each
+    # PNG as a real vision content block on a follow-up user message,
+    # but the per-turn cap defends against the model still trying to
+    # haul the whole deck in one go (Qwen-VL-Max bills ~1k image tokens
+    # each; 4 per turn ≈ 4k image tokens + the small ack JSONs).
+    # Surplus calls return a "deferred" ack and re-queue for the next
+    # turn so the model learns to chunk its inspection.
+    critic_max_images_per_turn: int = 4
+
     # Extended thinking — applies to BOTH backends (Anthropic uses thinking=
     # block; OpenAI-compat uses extra_body.reasoning.max_tokens for OpenRouter
     # unified format). budget=0 disables thinking entirely.
@@ -315,6 +328,7 @@ def load_settings() -> Settings:
     planner_budget = _parse_int_env("PLANNER_THINKING_BUDGET", 10000)
     critic_budget = _parse_int_env("CRITIC_THINKING_BUDGET", 10000)
     critic_max_turns_env = _parse_int_env("CRITIC_MAX_TURNS", 10)
+    critic_max_images_env = _parse_int_env("CRITIC_MAX_IMAGES_PER_TURN", 4)
     interleaved = os.getenv("ENABLE_INTERLEAVED_THINKING", "1").strip() not in (
         "0", "false", "False", "no", "",
     )
@@ -354,6 +368,7 @@ def load_settings() -> Settings:
         planner_thinking_budget=planner_budget,
         critic_thinking_budget=critic_budget,
         critic_max_turns=critic_max_turns_env,
+        critic_max_images_per_turn=critic_max_images_env,
         enable_interleaved_thinking=interleaved,
         **({"image_model": image_model_env} if image_model_env else {}),
         image_provider=image_provider_env,
