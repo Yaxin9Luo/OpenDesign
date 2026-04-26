@@ -1,0 +1,485 @@
+"""ClaimGraphExtractor — v2.8.0 paper → claim graph sub-agent.
+
+Runs between the v2.4 enhancer and the v2.7 planner whenever the brief
+attaches a PDF. Owns its own LLMBackend, its own turn budget, its own
+trajectory file. Consumes the paper raw_text (from `ingest_document` or
+the runner's pre-pass) and emits one `ClaimGraph` via the terminal
+`report_claim_graph` tool.
+
+Why a sub-agent instead of an inline call: the extractor needs multiple
+LLM turns to walk the paper (peek section-by-section, locate evidence
+quotes, double-check substring matches) and benefits from its own
+trajectory file for SFT/DPO. Same architectural pattern as
+`agents/critic_agent.py`.
+
+Hard rules (mirrored in `prompts/claim_graph_extractor.md`):
+  - Every `EvidenceNode.raw_quote` MUST be a verbatim substring of
+    paper_raw_text. The validator (`util/claim_graph_validator.py`) drops
+    the whole graph if any quote fails substring match — so the model is
+    instructed to DELETE evidence nodes whose quote it cannot ground.
+  - Node ids follow T*/M*/E*/I* (e.g. T1, M2, E5, I3).
+  - `report_claim_graph` is terminal; the loop exits the moment it fires.
+
+On max_turns exhaustion without a terminal call, the agent returns a
+sentinel `ClaimGraph` whose `thesis` carries the failure marker
+"<extraction failed: timeout>". The runner treats that exact thesis as
+"None" and degrades to v2.7.3 chapter-order behavior; planner never sees
+the sentinel.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from ..config import Settings
+from ..llm_backend import LLMBackend, ToolCall, TurnResponse, make_backend
+from ..schema import ClaimGraph
+from ..util.io import ensure_dirs
+from ..util.logging import log
+
+
+# Sentinel thesis returned on timeout / API error. The runner checks the
+# exact string before passing the graph to the planner; matching graphs
+# are dropped to None.
+EXTRACT_FAIL_THESIS = "<extraction failed: timeout>"
+
+
+@dataclass
+class ClaimGraphTrajectoryRecord:
+    """One LLM turn's worth of extractor state, written as a JSONL line.
+    Mirrors the critic.jsonl shape so SFT/DPO loaders share one parser."""
+    turn: int
+    model: str
+    backend: str
+    thinking_blocks: list[dict[str, Any]]
+    tool_calls: list[dict[str, Any]]
+    tool_results: list[dict[str, Any]]
+    text: str
+    stop_reason: str | None
+    usage: dict[str, int]
+
+
+_EXTRACTOR_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "lookup_paper_section",
+        "description": (
+            "Pull a ~2000 char excerpt from the paper raw_text by keyword "
+            "or substring. Use this to verify that a candidate "
+            "EvidenceNode.raw_quote actually appears in the paper before "
+            "you emit it via report_claim_graph. Returns empty string when "
+            "the query has no match."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "A short phrase, section heading, or candidate "
+                        "quote to locate in the paper. Case-insensitive."
+                    ),
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "report_claim_graph",
+        "description": (
+            "TERMINAL TOOL. Emit your final ClaimGraph and exit. Must be "
+            "called exactly once per extraction. Every evidence raw_quote "
+            "MUST be a verbatim substring of the paper raw_text — if you "
+            "cannot ground a quote via lookup_paper_section, DELETE that "
+            "evidence node, do NOT fabricate."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paper_title": {"type": "string"},
+                "paper_anchor": {"type": "string"},
+                "thesis": {"type": "string"},
+                "tensions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                            "evidence_anchor": {
+                                "type": ["string", "null"],
+                            },
+                        },
+                        "required": ["id", "name", "description"],
+                    },
+                },
+                "mechanisms": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "resolves": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "description": {"type": "string"},
+                        },
+                        "required": ["id", "name", "description"],
+                    },
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "metric": {"type": "string"},
+                            "source": {"type": "string"},
+                            "raw_quote": {"type": "string"},
+                            "supports": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["id", "metric", "source", "raw_quote"],
+                    },
+                },
+                "implications": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "description": {"type": "string"},
+                            "derives_from": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["id", "description"],
+                    },
+                },
+            },
+            "required": [
+                "paper_title", "paper_anchor", "thesis",
+                "tensions", "mechanisms", "evidence", "implications",
+            ],
+        },
+    },
+]
+
+
+class ClaimGraphExtractor:
+    """Forked sub-agent that extracts a `ClaimGraph` from a paper.
+
+    Stateless across calls — instantiate once per paper, call `extract`
+    once, then drop. Trajectory file is append-only; the caller passes a
+    distinct path per call (typically `out/<run>/trajectory/
+    claim_graph_extractor.jsonl`).
+    """
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.backend: LLMBackend = make_backend(
+            settings, settings.claim_graph_model,
+            role="claim_graph_extractor",
+        )
+        self._system_prompt: str | None = None
+
+    def _system(self) -> str:
+        if self._system_prompt is None:
+            path: Path = (
+                self.settings.prompts_dir / "claim_graph_extractor.md"
+            )
+            self._system_prompt = path.read_text(encoding="utf-8")
+        return self._system_prompt
+
+    def extract(
+        self,
+        paper_path: Path,
+        paper_raw_text: str,
+        trajectory_path: Path | None = None,
+    ) -> ClaimGraph:
+        """Run the sub-agent loop and return the final ClaimGraph.
+
+        On max_turns exhaustion or API error returns a sentinel ClaimGraph
+        whose thesis equals `EXTRACT_FAIL_THESIS`; the runner treats that
+        as a degraded extract and falls back to v2.7.3 behavior.
+        """
+        backend_name = self.backend.name
+        model = self.backend.model
+        log("claim_graph.start", model=model, backend=backend_name,
+            paper=str(paper_path),
+            paper_chars=len(paper_raw_text or ""),
+            max_turns=self.settings.claim_graph_max_turns)
+        wall_start = time.monotonic()
+
+        user_text = _build_user_text(
+            paper_path=paper_path,
+            paper_raw_text=paper_raw_text,
+            max_turns=self.settings.claim_graph_max_turns,
+        )
+        messages: list[Any] = [{"role": "user", "content": user_text}]
+
+        thinking_budget = self.settings.claim_graph_thinking_budget
+        max_tokens = (
+            max(2048, thinking_budget + 2048)
+            if thinking_budget > 0 else 8192
+        )
+
+        terminal_graph: ClaimGraph | None = None
+        last_response: TurnResponse | None = None
+
+        for turn in range(self.settings.claim_graph_max_turns):
+            try:
+                resp: TurnResponse = self.backend.create_turn(
+                    system=self._system(),
+                    messages=messages,
+                    tools=_EXTRACTOR_TOOL_SCHEMAS,
+                    thinking_budget=thinking_budget,
+                    max_tokens=max_tokens,
+                )
+            except Exception as e:
+                log("claim_graph.api_error", turn=turn + 1,
+                    error=f"{type(e).__name__}: {e}")
+                terminal_graph = _build_failsafe_graph(
+                    paper_path=paper_path,
+                    summary=(
+                        f"api_error: {type(e).__name__}: {e}"
+                    ),
+                )
+                _append_trajectory(
+                    trajectory_path,
+                    ClaimGraphTrajectoryRecord(
+                        turn=turn + 1, model=model, backend=backend_name,
+                        thinking_blocks=[], tool_calls=[],
+                        tool_results=[{"error": str(e)}],
+                        text="", stop_reason="api_error", usage={},
+                    ),
+                )
+                break
+
+            last_response = resp
+            self.backend.append_assistant(messages, resp)
+
+            tool_results_for_api: list[tuple[str, str, bool]] = []
+            tool_records: list[dict[str, Any]] = []
+            for tc in resp.tool_calls:
+                payload, is_err, terminal = self._dispatch_tool(
+                    tc, paper_raw_text=paper_raw_text,
+                    paper_path=paper_path,
+                )
+                tool_results_for_api.append((tc.id, payload, is_err))
+                tool_records.append({
+                    "id": tc.id, "name": tc.name,
+                    "input": _summarize_tool_input(tc.name, tc.input),
+                    "is_error": is_err,
+                })
+                if terminal is not None:
+                    terminal_graph = terminal
+
+            _append_trajectory(
+                trajectory_path,
+                ClaimGraphTrajectoryRecord(
+                    turn=turn + 1, model=model, backend=backend_name,
+                    thinking_blocks=[
+                        b.model_dump(mode="json")
+                        for b in resp.thinking_blocks
+                    ],
+                    tool_calls=[
+                        {"id": tc.id, "name": tc.name,
+                         "input": _summarize_tool_input(tc.name, tc.input)}
+                        for tc in resp.tool_calls
+                    ],
+                    tool_results=tool_records,
+                    text=resp.text or "",
+                    stop_reason=resp.stop_reason,
+                    usage=resp.usage or {},
+                ),
+            )
+
+            if terminal_graph is not None:
+                break
+
+            if tool_results_for_api:
+                self.backend.append_tool_results(
+                    messages, tool_results_for_api,
+                )
+                continue
+
+            if resp.stop_reason == "end_turn":
+                log("claim_graph.end_turn_no_report", turn=turn + 1)
+                break
+
+        if terminal_graph is None:
+            terminal_graph = _build_failsafe_graph(
+                paper_path=paper_path,
+                summary=(
+                    f"max_turns ({self.settings.claim_graph_max_turns}) "
+                    "hit without report_claim_graph"
+                ),
+            )
+
+        wall_s = round(time.monotonic() - wall_start, 2)
+        usage = (
+            last_response.usage if last_response is not None else {}
+        ) or {}
+        log("claim_graph.done", model=model,
+            thesis_chars=len(terminal_graph.thesis),
+            n_tensions=len(terminal_graph.tensions),
+            n_mechanisms=len(terminal_graph.mechanisms),
+            n_evidence=len(terminal_graph.evidence),
+            n_implications=len(terminal_graph.implications),
+            input_tokens=usage.get("input", 0),
+            output_tokens=usage.get("output", 0),
+            wall_s=wall_s,
+            failed=terminal_graph.thesis == EXTRACT_FAIL_THESIS)
+        return terminal_graph
+
+    def _dispatch_tool(
+        self,
+        tc: ToolCall,
+        *,
+        paper_raw_text: str,
+        paper_path: Path,
+    ) -> tuple[str, bool, ClaimGraph | None]:
+        """Returns (json_payload, is_error, terminal_graph_or_None)."""
+        if tc.name == "lookup_paper_section":
+            query = str(tc.input.get("query", "")).strip()
+            excerpt = _extract_paper_excerpt(paper_raw_text, query)
+            return (
+                json.dumps({"query": query, "excerpt": excerpt}),
+                False, None,
+            )
+
+        if tc.name == "report_claim_graph":
+            try:
+                payload = dict(tc.input)
+                payload.setdefault("tensions", [])
+                payload.setdefault("mechanisms", [])
+                payload.setdefault("evidence", [])
+                payload.setdefault("implications", [])
+                graph = ClaimGraph.model_validate(payload)
+            except ValidationError as e:
+                err_msg = (
+                    "report_claim_graph failed schema: "
+                    f"{e.errors(include_url=False)[:3]}"
+                )
+                return json.dumps({"error": err_msg}), True, None
+            ack = json.dumps({
+                "thesis_chars": len(graph.thesis),
+                "n_tensions": len(graph.tensions),
+                "n_mechanisms": len(graph.mechanisms),
+                "n_evidence": len(graph.evidence),
+                "n_implications": len(graph.implications),
+                "ack": "graph recorded; loop will exit",
+            })
+            return ack, False, graph
+
+        return (
+            json.dumps({"error": f"unknown tool: {tc.name}"}),
+            True, None,
+        )
+
+
+def _build_user_text(
+    *,
+    paper_path: Path,
+    paper_raw_text: str,
+    max_turns: int,
+) -> str:
+    paper_chars = len(paper_raw_text or "")
+    head = (paper_raw_text or "")[:4000]
+    tail_pos = max(paper_chars - 2000, 4000)
+    tail = (paper_raw_text or "")[tail_pos:] if paper_chars > 6000 else ""
+    return (
+        f"## ClaimGraph extraction\n\n"
+        f"Paper file: {paper_path.name}\n"
+        f"Paper raw_text length: {paper_chars:,} chars\n"
+        f"Turn budget: {max_turns}\n\n"
+        f"## Head (first 4000 chars)\n```\n{head}\n```\n\n"
+        + (
+            f"## Tail (last 2000 chars)\n```\n{tail}\n```\n\n"
+            if tail else ""
+        )
+        + (
+            "Use `lookup_paper_section(query=...)` to pull excerpts from "
+            "the rest of the paper before grounding any evidence quote. "
+            "FINISH with exactly one `report_claim_graph` call. Every "
+            "EvidenceNode.raw_quote MUST be a verbatim substring of the "
+            "paper raw_text — if you cannot ground a quote, DELETE that "
+            "evidence node, do NOT fabricate."
+        )
+    )
+
+
+def _extract_paper_excerpt(raw: str | None, query: str) -> str:
+    """Naive substring search with windowed context. Returns up to ~2000
+    chars centered on the first hit. Empty string when no match. Mirrors
+    `critic_agent._extract_paper_excerpt` so the two sub-agents behave
+    identically."""
+    if not raw or not query:
+        return ""
+    needle = query.lower()
+    haystack_lower = raw.lower()
+    pos = haystack_lower.find(needle)
+    if pos < 0:
+        return ""
+    window = 1000
+    start = max(0, pos - window)
+    end = min(len(raw), pos + len(query) + window)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(raw) else ""
+    return f"{prefix}{raw[start:end]}{suffix}"
+
+
+def _build_failsafe_graph(
+    *, paper_path: Path, summary: str,
+) -> ClaimGraph:
+    """Return a sentinel ClaimGraph whose thesis carries the failure
+    marker. Runner checks `graph.thesis == EXTRACT_FAIL_THESIS` to drop
+    the graph back to None."""
+    log("claim_graph.failsafe", paper=str(paper_path), summary=summary)
+    return ClaimGraph(
+        paper_title=paper_path.stem,
+        paper_anchor="unknown",
+        thesis=EXTRACT_FAIL_THESIS,
+        tensions=[], mechanisms=[], evidence=[], implications=[],
+    )
+
+
+def _summarize_tool_input(name: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """Strip large blobs (full graph payload) before serializing into
+    trajectory. Caps strings at 2000 chars so the JSONL stays bounded."""
+    out = dict(raw or {})
+    for key, val in list(out.items()):
+        if isinstance(val, str) and len(val) > 2000:
+            out[key] = val[:2000] + f"…[truncated {len(val) - 2000} chars]"
+    return out
+
+
+def _append_trajectory(
+    path: Path | None, record: ClaimGraphTrajectoryRecord,
+) -> None:
+    if path is None:
+        return
+    ensure_dirs(path.parent)
+    line = json.dumps({
+        "turn": record.turn,
+        "model": record.model, "backend": record.backend,
+        "thinking_blocks": record.thinking_blocks,
+        "tool_calls": record.tool_calls,
+        "tool_results": record.tool_results,
+        "text": record.text, "stop_reason": record.stop_reason,
+        "usage": record.usage,
+    }, ensure_ascii=False)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line + "\n")

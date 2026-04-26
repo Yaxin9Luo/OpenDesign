@@ -81,6 +81,15 @@ ANTHROPIC_FALLBACK_CRITIC = "claude-opus-4-7"
 DEFAULT_ENHANCER_MODEL = "moonshotai/kimi-k2.6"
 ANTHROPIC_FALLBACK_ENHANCER = "claude-opus-4-7"
 
+# v2.8.0 ClaimGraph extractor — runs between enhancer and planner when
+# the input attaches a PDF. Default Kimi K2.6 (same agent-coding model as
+# planner+enhancer; strict JSON output discipline). Users override via
+# `CLAIM_GRAPH_MODEL=anthropic/claude-opus-4-7` when capability matters
+# more than cost. Anthropic-only fallback strips the OpenRouter prefix
+# the same way enhancer fallback does.
+DEFAULT_CLAIM_GRAPH_MODEL = "moonshotai/kimi-k2.6"
+ANTHROPIC_FALLBACK_CLAIM_GRAPH = "claude-opus-4-7"
+
 
 ProviderChoice = Literal["auto", "anthropic", "openai_compat"]
 ImageProviderChoice = Literal["auto", "gemini", "openrouter"]
@@ -116,6 +125,19 @@ class Settings:
     enhancer_provider: ProviderChoice = "auto"
     enhancer_thinking_budget: int = 10000
     enable_prompt_enhancer: bool = True
+
+    # v2.8.0 ClaimGraph extractor stage — runs between the enhancer and
+    # the planner whenever the brief attaches a PDF. `claim_graph_max_turns`
+    # caps the sub-agent's loop in case the model never calls
+    # `report_claim_graph`; on hit we synthesize a sentinel graph and the
+    # runner drops it back to None so the planner degrades to v2.7.3
+    # chapter-order behavior. `enable_claim_graph` gates the whole stage;
+    # the `--no-claim-graph` CLI flag sets it to False per-run.
+    claim_graph_model: str = DEFAULT_CLAIM_GRAPH_MODEL
+    claim_graph_provider: ProviderChoice = "auto"
+    claim_graph_max_turns: int = 15
+    claim_graph_thinking_budget: int = 8000
+    enable_claim_graph: bool = True
 
     # OpenAI-compat backend connection (used when provider resolves to openai_compat)
     openai_compat_api_key: str | None = None    # falls back to anthropic_api_key when OR
@@ -265,6 +287,25 @@ def load_settings() -> Settings:
     )
     enable_prompt_enhancer = not skip_enhancer_env
 
+    # v2.8.0 ClaimGraph extractor resolution — same fallback rule as the
+    # enhancer (drop OpenRouter prefix when only ANTHROPIC_API_KEY is set).
+    if or_key:
+        claim_graph_default = DEFAULT_CLAIM_GRAPH_MODEL
+    else:
+        claim_graph_default = ANTHROPIC_FALLBACK_CLAIM_GRAPH
+    claim_graph_model = (
+        os.getenv("CLAIM_GRAPH_MODEL", "").strip() or claim_graph_default
+    )
+    claim_graph_provider = _parse_provider(
+        os.getenv("CLAIM_GRAPH_PROVIDER", "auto"),
+    )
+    claim_graph_max_turns = _parse_int_env("CLAIM_GRAPH_MAX_TURNS", 15)
+    claim_graph_budget = _parse_int_env("CLAIM_GRAPH_THINKING_BUDGET", 8000)
+    no_claim_graph_env = os.getenv("NO_CLAIM_GRAPH", "").strip() in (
+        "1", "true", "True", "yes",
+    )
+    enable_claim_graph = not no_claim_graph_env
+
     if or_key:
         ingest_default = "qwen/qwen-vl-max"
     else:
@@ -303,6 +344,11 @@ def load_settings() -> Settings:
         enhancer_provider=enhancer_provider,
         enhancer_thinking_budget=enhancer_budget,
         enable_prompt_enhancer=enable_prompt_enhancer,
+        claim_graph_model=claim_graph_model,
+        claim_graph_provider=claim_graph_provider,
+        claim_graph_max_turns=claim_graph_max_turns,
+        claim_graph_thinking_budget=claim_graph_budget,
+        enable_claim_graph=enable_claim_graph,
         ingest_model=ingest_model,
         ingest_http_timeout=ingest_timeout,
         planner_thinking_budget=planner_budget,
