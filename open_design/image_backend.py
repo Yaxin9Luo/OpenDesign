@@ -4,7 +4,7 @@ Mirrors the shape of `llm_backend.py` for the same reason: keep tool code
 provider-neutral so users can swap image models without touching
 `tools/generate_image.py` / `tools/generate_background.py`.
 
-Two concrete backends today:
+Three concrete backends today:
 
 - `GeminiImageBackend` — wraps `google.genai` (the original NBP path).
   Selected when `image_model` starts with `gemini-` or `imagen-`. Requires
@@ -13,6 +13,9 @@ Two concrete backends today:
   with `modalities=["image","text"]` + `image_config={aspect_ratio,
   image_size}`. Selected for everything else (default model
   `google/gemini-2.5-flash-image`). Reuses `OPENROUTER_API_KEY`.
+- `FridayGeminiImageBackend` — calls Friday's Gemini image async API
+  (`aigc.sankuai.com/v1/google/models/...`) with `Authorization: Bearer
+  <Friday AppId>`, then polls the returned operation id.
 
 Plus a wrapper:
 
@@ -27,8 +30,10 @@ Plus a wrapper:
 Routing rules in `make_image_backend(settings)`:
 - `IMAGE_PROVIDER=gemini`     → GeminiImageBackend
 - `IMAGE_PROVIDER=openrouter` → OpenRouterImageBackend
+- `IMAGE_PROVIDER=friday_gemini` → FridayGeminiImageBackend
 - `IMAGE_PROVIDER=auto` (default) → infer from `image_model` prefix:
     `gemini-*` / `imagen-*`  → Gemini
+    `friday/*`               → Friday Gemini
     everything else          → OpenRouter
 
 The factory wraps the resolved backend in `FallbackImageBackend` when
@@ -40,9 +45,13 @@ behavior matches v2.5.
 from __future__ import annotations
 
 import base64
+import json
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Protocol
+from urllib import error as urlerror
+from urllib import parse, request
 
 from PIL import Image as PILImage
 
@@ -269,6 +278,160 @@ class OpenRouterImageBackend:
         return _png_from_data_url(url, model=self.model)
 
 
+# ──────────────────────── Friday Gemini ─────────────────────────────
+
+
+class FridayGeminiImageBackend:
+    """Friday Gemini image-generation bridge.
+
+    Friday exposes Gemini image models as an async company-internal API:
+    submit a generation request to `{model}:imageGenerate`, receive an
+    operation id, then poll `{operation_id}:imageGenerateQuery` until
+    `status == 1`. Authentication is the Friday AppId as a bearer token.
+    """
+
+    name = "friday_gemini"
+
+    def __init__(self, settings, model: str):
+        self.model = model.removeprefix("friday/")
+        self._app_id = (
+            getattr(settings, "friday_app_id", None)
+            or getattr(settings, "anthropic_auth_token", None)
+            or getattr(settings, "anthropic_api_key", None)
+        )
+        if not self._app_id:
+            raise RuntimeError(
+                "FridayGeminiImageBackend selected but no Friday AppId found. "
+                "Set FRIDAY_APP_ID (preferred) or ANTHROPIC_AUTH_TOKEN / "
+                "ANTHROPIC_API_KEY in .env."
+            )
+        self._base_url = (
+            getattr(settings, "friday_gemini_base_url", "")
+            or "https://aigc.sankuai.com/v1/google/models"
+        ).rstrip("/")
+        self._timeout_s = max(1, int(getattr(settings, "friday_image_timeout_s", 600)))
+        self._poll_interval_s = max(
+            0, int(getattr(settings, "friday_image_poll_interval_s", 2)),
+        )
+
+    def generate(
+        self,
+        *,
+        prompt: str,
+        aspect_ratio: str,
+        image_size: str,
+    ) -> ImageResult:
+        operation_or_result = self._submit(prompt, aspect_ratio, image_size)
+        if isinstance(operation_or_result, dict) and _friday_payload_has_image(
+            operation_or_result,
+        ):
+            return _extract_friday_image(operation_or_result, model=self.model)
+
+        operation_id = _extract_friday_operation_id(operation_or_result)
+        if not operation_id:
+            raise ImageGenerationError(
+                f"Friday Gemini submit returned no operation id: {operation_or_result!r}",
+                category="api",
+            )
+
+        deadline = time.monotonic() + self._timeout_s
+        last_payload: Any = None
+        while time.monotonic() < deadline:
+            payload = self._query(operation_id)
+            last_payload = payload
+            if isinstance(payload, dict):
+                status = payload.get("status")
+                if status in (1, "1", "success", "SUCCEEDED", "succeeded"):
+                    data = payload.get("data", payload)
+                    return _extract_friday_image(data, model=self.model)
+                if status in (0, "0", "running", "RUNNING", "pending", "PENDING"):
+                    time.sleep(self._poll_interval_s)
+                    continue
+                if status in (-1, "-1", "failed", "FAILED"):
+                    message = str(payload.get("data", payload))
+                    # Friday comments note transient 429 query responses while
+                    # the operation is still running; keep polling those.
+                    if "429" in message or "too many requests" in message.lower():
+                        time.sleep(self._poll_interval_s)
+                        continue
+                    raise ImageGenerationError(
+                        f"Friday Gemini generation failed: {message}",
+                        category=_friday_error_category(message),
+                    )
+                if _friday_payload_has_image(payload):
+                    return _extract_friday_image(payload, model=self.model)
+            time.sleep(self._poll_interval_s)
+
+        raise ImageGenerationError(
+            f"Friday Gemini generation timed out after {self._timeout_s}s. "
+            f"operation_id={operation_id!r}, last_payload={last_payload!r}",
+            category="api",
+        )
+
+    def _submit(self, prompt: str, aspect_ratio: str, image_size: str) -> Any:
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                    ],
+                },
+            ],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size,
+                },
+            },
+        }
+        url = f"{self._base_url}/{parse.quote(self.model, safe='')}:imageGenerate"
+        return self._request_json("POST", url, payload)
+
+    def _query(self, operation_id: str) -> Any:
+        url = (
+            f"{self._base_url}/{parse.quote(operation_id, safe='')}:"
+            "imageGenerateQuery"
+        )
+        return self._request_json("GET", url, None)
+
+    def _request_json(self, method: str, url: str, payload: Any | None) -> Any:
+        data = None
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = request.Request(
+            url,
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {self._app_id}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=self._timeout_s) as resp:
+                raw = resp.read().decode("utf-8")
+        except urlerror.HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")
+            raise ImageGenerationError(
+                f"Friday Gemini HTTP {e.code}: {raw}",
+                category=_friday_error_category(raw),
+            ) from e
+        except urlerror.URLError as e:
+            raise ImageGenerationError(
+                f"Friday Gemini request failed: {e.reason}",
+                category="api",
+            ) from e
+
+        raw = raw.strip()
+        if not raw:
+            return ""
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw.strip('"')
+
+
 # ─────────────────────── Fallback wrapper (v2.7.5) ──────────────────
 
 
@@ -306,9 +469,14 @@ class FallbackImageBackend:
     def _build_fallback(self) -> ImageBackend:
         if self._fallback_backend is not None:
             return self._fallback_backend
-        provider = _infer_image_provider(self._fallback_model)
+        if getattr(self._settings, "image_provider", None) == "friday_gemini":
+            provider = "friday_gemini"
+        else:
+            provider = _infer_image_provider(self._fallback_model)
         if provider == "gemini":
             backend = GeminiImageBackend(self._settings, self._fallback_model)
+        elif provider == "friday_gemini":
+            backend = FridayGeminiImageBackend(self._settings, self._fallback_model)
         else:
             backend = OpenRouterImageBackend(self._settings, self._fallback_model)
         self._fallback_backend = backend
@@ -411,14 +579,19 @@ def _build_concrete_backend(settings, model: str) -> ImageBackend:
         return GeminiImageBackend(settings, model)
     if provider == "openrouter":
         return OpenRouterImageBackend(settings, model)
+    if provider == "friday_gemini":
+        return FridayGeminiImageBackend(settings, model)
 
     raise ValueError(
-        f"Unknown IMAGE_PROVIDER={provider!r}. Use auto | gemini | openrouter."
+        f"Unknown IMAGE_PROVIDER={provider!r}. "
+        "Use auto | gemini | openrouter | friday_gemini."
     )
 
 
 def _infer_image_provider(model: str) -> str:
     m = (model or "").lower()
+    if m.startswith("friday/"):
+        return "friday_gemini"
     if m.startswith("gemini-") or m.startswith("imagen-") or m.startswith("models/gemini"):
         return "gemini"
     return "openrouter"
@@ -441,6 +614,90 @@ class ImageGenerationError(RuntimeError):
 # ─────────────────────────── Helpers ────────────────────────────────
 
 
+def _friday_payload_has_image(payload: Any) -> bool:
+    try:
+        _find_friday_inline_data(payload)
+        return True
+    except ImageGenerationError:
+        return False
+
+
+def _extract_friday_operation_id(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload.strip().strip('"')
+    if isinstance(payload, dict):
+        for key in ("operationId", "operation_id", "id", "name", "data"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value.strip().strip('"')
+    return ""
+
+
+def _extract_friday_image(payload: Any, *, model: str) -> ImageResult:
+    inline = _find_friday_inline_data(payload)
+    data = inline.get("data")
+    if not isinstance(data, str) or not data:
+        raise ImageGenerationError(
+            f"Friday Gemini inline image has no data field: {inline!r}",
+            category="api",
+        )
+    if data.startswith("data:"):
+        return _png_from_data_url(data, model=model)
+    if data.startswith(("http://", "https://")):
+        return _png_from_url(data, model=model)
+    return _png_from_bytes(_decode_base64_image(data), model=model)
+
+
+def _find_friday_inline_data(payload: Any) -> dict[str, Any]:
+    candidates_payload = payload
+    if isinstance(payload, dict) and "data" in payload and "candidates" not in payload:
+        candidates_payload = payload["data"]
+    candidates = []
+    if isinstance(candidates_payload, dict):
+        candidates = candidates_payload.get("candidates") or []
+    if not isinstance(candidates, list):
+        raise ImageGenerationError(
+            f"Friday Gemini returned malformed candidates: {candidates!r}",
+            category="api",
+        )
+
+    text_parts: list[str] = []
+    for candidate in candidates:
+        content = (candidate or {}).get("content") if isinstance(candidate, dict) else {}
+        parts = (content or {}).get("parts") if isinstance(content, dict) else []
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            inline = part.get("inline_data") or part.get("inlineData")
+            if isinstance(inline, dict):
+                return inline
+            text = part.get("text")
+            if isinstance(text, str) and text.strip():
+                text_parts.append(text.strip())
+
+    suffix = f" Text parts: {' '.join(text_parts)[:240]}" if text_parts else ""
+    raise ImageGenerationError(
+        f"Friday Gemini returned no inline image part.{suffix}",
+        category="safety_filter",
+    )
+
+
+def _friday_error_category(message: str) -> str:
+    lowered = (message or "").lower()
+    if (
+        "not found" in lowered
+        or "no such model" in lowered
+        or "model_not_found" in lowered
+        or "404" in lowered
+    ):
+        return "provider_unavailable"
+    if "safety" in lowered or "blocked" in lowered:
+        return "safety_filter"
+    return "api"
+
+
 def _png_from_data_url(url: str, *, model: str) -> ImageResult:
     """Parse a `data:image/...;base64,XYZ` URL, decode, and re-encode as PNG."""
     if not url.startswith("data:"):
@@ -452,8 +709,44 @@ def _png_from_data_url(url: str, *, model: str) -> ImageResult:
         _header, payload = url.split(",", 1)
     except ValueError as e:
         raise ImageGenerationError(f"Malformed data URL: {e}", category="api")
-    raw = base64.b64decode(payload)
+    raw = _decode_base64_image(payload)
     return _png_from_bytes(raw, model=model)
+
+
+def _png_from_url(url: str, *, model: str) -> ImageResult:
+    """Fetch a provider-hosted image URL and normalize it to PNG bytes."""
+    req = request.Request(
+        url,
+        headers={"User-Agent": "OpenDesign/FridayGeminiImageBackend"},
+    )
+    try:
+        with request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+    except urlerror.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:240]
+        raise ImageGenerationError(
+            f"Friday Gemini image URL HTTP {e.code}: {body}",
+            category="api",
+        ) from e
+    except urlerror.URLError as e:
+        raise ImageGenerationError(
+            f"Friday Gemini image URL fetch failed: {e.reason}",
+            category="api",
+        ) from e
+    return _png_from_bytes(raw, model=model)
+
+
+def _decode_base64_image(data: str) -> bytes:
+    """Decode base64 from providers that may omit padding or wrap lines."""
+    compact = "".join(data.split())
+    compact += "=" * (-len(compact) % 4)
+    try:
+        return base64.b64decode(compact)
+    except Exception as e:
+        raise ImageGenerationError(
+            f"Friday Gemini inline image has invalid base64: {e}",
+            category="api",
+        ) from e
 
 
 def _png_from_bytes(raw: bytes, *, model: str) -> ImageResult:

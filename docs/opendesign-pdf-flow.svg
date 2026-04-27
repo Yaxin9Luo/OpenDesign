@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1500" viewBox="0 0 1900 1500" role="img" aria-labelledby="title desc">
+  <title id="title">OpenDesign Multi-Agent Workflow</title>
+  <desc id="desc">精简版多代理工作流：用户输入 PDF 后，Prompt Enhancer、ClaimGraph Extractor、Planner Agent、Critic Agent 与工具环境之间的调用关系。</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8f7f2; }
+      .agent { fill: #eaf3ff; stroke: #245f99; stroke-width: 3; rx: 20; }
+      .agent2 { fill: #f0ecff; stroke: #6743b8; stroke-width: 3; rx: 20; }
+      .tool { fill: #fff8df; stroke: #a06a00; stroke-width: 3; rx: 18; }
+      .state { fill: #edf8f0; stroke: #257747; stroke-width: 3; rx: 18; }
+      .out { fill: #fff0ef; stroke: #aa3c34; stroke-width: 3; rx: 18; }
+      .title { font: 800 44px Inter, "Noto Sans SC", Arial, sans-serif; fill: #111; }
+      .subtitle { font: 500 24px Inter, "Noto Sans SC", Arial, sans-serif; fill: #444; }
+      .h { font: 800 30px Inter, "Noto Sans SC", Arial, sans-serif; fill: #111; }
+      .t { font: 500 23px Inter, "Noto Sans SC", Arial, sans-serif; fill: #222; }
+      .s { font: 500 20px Inter, "Noto Sans SC", Arial, sans-serif; fill: #3b3b3b; }
+      .mono { font: 600 19px "JetBrains Mono", ui-monospace, Menlo, monospace; fill: #262626; }
+      .tag { fill: #111; rx: 10; }
+      .tagtext { font: 800 16px Inter, "Noto Sans SC", Arial, sans-serif; fill: #fff; letter-spacing: 0; }
+      .arrow { stroke: #222; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke: #555; stroke-width: 3.5; fill: none; stroke-dasharray: 12 10; marker-end: url(#arrowSoft); }
+      .loop { stroke: #8a4a00; stroke-width: 4; fill: none; marker-end: url(#arrowBrown); }
+    </style>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#222"/>
+    </marker>
+    <marker id="arrowSoft" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#555"/>
+    </marker>
+    <marker id="arrowBrown" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 14 7 L 0 14 z" fill="#8a4a00"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1900" height="1500"/>
+  <text class="title" x="70" y="80">OpenDesign Multi-Agent Workflow</text>
+  <text class="subtitle" x="70" y="118">只画 agent 的协作关系；工具以黄色标注，绿色是共享运行状态，红色是最终输出。</text>
+
+  <!-- Input -->
+  <rect class="out" x="70" y="190" width="280" height="145"/>
+  <text class="h" x="100" y="245">User</text>
+  <text class="t" x="100" y="285">brief + PDF</text>
+  <text class="mono" x="100" y="318">--from-file paper.pdf</text>
+
+  <!-- Prompt enhancer -->
+  <rect class="agent" x="450" y="170" width="360" height="185"/>
+  <rect class="tag" x="480" y="195" width="92" height="28"/>
+  <text class="tagtext" x="502" y="215">AGENT</text>
+  <text class="h" x="480" y="260">Prompt Enhancer</text>
+  <text class="t" x="480" y="302">把原始需求改写成</text>
+  <text class="t" x="480" y="334">结构化设计 brief</text>
+
+  <!-- Claim graph -->
+  <rect class="agent2" x="930" y="170" width="390" height="185"/>
+  <rect class="tag" x="960" y="195" width="150" height="28"/>
+  <text class="tagtext" x="980" y="215">PDF OPTIONAL</text>
+  <text class="h" x="960" y="260">ClaimGraph Extractor</text>
+  <text class="t" x="960" y="302">抽 thesis / claims / evidence</text>
+  <text class="mono" x="960" y="336">tools: lookup_paper_section</text>
+
+  <!-- Planner -->
+  <rect class="agent" x="70" y="500" width="760" height="530"/>
+  <rect class="tag" x="105" y="530" width="150" height="28"/>
+  <text class="tagtext" x="128" y="550">MAIN AGENT</text>
+  <text class="h" x="105" y="600">Planner Agent</text>
+  <text class="t" x="105" y="642">负责决定“下一步该调用哪个工具”</text>
+
+  <text class="s" x="105" y="700">1. 先读附件</text>
+  <text class="mono" x="310" y="700">ingest_document</text>
+  <text class="s" x="105" y="745">2. 选择产物类型</text>
+  <text class="mono" x="310" y="745">switch_artifact_type</text>
+  <text class="s" x="105" y="790">3. 生成设计蓝图</text>
+  <text class="mono" x="310" y="790">propose_design_spec</text>
+  <text class="s" x="105" y="835">4. 生成 / 编辑图层</text>
+  <text class="mono" x="310" y="835">generate_* / render_text_layer / edit_layer</text>
+  <text class="s" x="105" y="880">5. 合成输出预览</text>
+  <text class="mono" x="310" y="880">composite</text>
+  <text class="s" x="105" y="925">6. 请求质量评审</text>
+  <text class="mono" x="310" y="925">critique</text>
+  <text class="s" x="105" y="970">7. 结束本轮</text>
+  <text class="mono" x="310" y="970">finalize</text>
+
+  <!-- Tool environment -->
+  <rect class="tool" x="980" y="470" width="790" height="260"/>
+  <rect class="tag" x="1010" y="500" width="88" height="28"/>
+  <text class="tagtext" x="1030" y="520">TOOLS</text>
+  <text class="h" x="1010" y="570">Planner 可调用的工具环境</text>
+  <text class="t" x="1010" y="615">PDF ingest: manifest + figures + tables</text>
+  <text class="t" x="1010" y="655">Image/text layer tools: NBP image, background, text raster, edit</text>
+  <text class="t" x="1010" y="695">Composite: poster / landing / deck renderer dispatch</text>
+
+  <!-- State -->
+  <rect class="state" x="980" y="795" width="790" height="235"/>
+  <rect class="tag" x="1010" y="825" width="132" height="28"/>
+  <text class="tagtext" x="1030" y="845">SHARED STATE</text>
+  <text class="h" x="1010" y="895">ToolContext / Run State</text>
+  <text class="mono" x="1010" y="940">design_spec</text>
+  <text class="mono" x="1250" y="940">rendered_layers</text>
+  <text class="mono" x="1530" y="940">composition</text>
+  <text class="mono" x="1010" y="985">claim_graph</text>
+  <text class="mono" x="1250" y="985">critique_results</text>
+
+  <!-- Critic -->
+  <rect class="agent2" x="930" y="1120" width="430" height="245"/>
+  <rect class="tag" x="960" y="1150" width="92" height="28"/>
+  <text class="tagtext" x="982" y="1170">AGENT</text>
+  <text class="h" x="960" y="1220">Critic Agent</text>
+  <text class="t" x="960" y="1262">被 Planner 的 critique 工具启动</text>
+  <text class="mono" x="960" y="1304">read_slide_render</text>
+  <text class="mono" x="960" y="1336">read_paper_section / lookup_claim_node</text>
+
+  <!-- Critic output -->
+  <rect class="tool" x="1460" y="1120" width="310" height="245"/>
+  <text class="h" x="1490" y="1190">CritiqueReport</text>
+  <text class="mono" x="1490" y="1240">pass</text>
+  <text class="mono" x="1490" y="1280">revise</text>
+  <text class="mono" x="1490" y="1320">fail</text>
+
+  <!-- Final outputs -->
+  <rect class="out" x="70" y="1180" width="690" height="185"/>
+  <text class="h" x="105" y="1240">Final Outputs</text>
+  <text class="t" x="105" y="1284">可编辑产物：HTML / PPTX / PSD / SVG / preview</text>
+  <text class="t" x="105" y="1324">训练轨迹：agent_trace + tool_calls + reward</text>
+
+  <!-- Arrows top -->
+  <path class="arrow" d="M350 262 H450"/>
+  <path class="arrow" d="M810 262 H930"/>
+  <path class="arrow" d="M1125 355 V430 C1125 455 450 455 450 500"/>
+  <path class="dashed" d="M810 315 C870 390 220 420 220 500"/>
+  <text class="s" x="830" y="400">无 PDF / 关闭 claim graph 时跳过</text>
+
+  <!-- Planner to tools and state -->
+  <path class="arrow" d="M830 625 H980"/>
+  <path class="arrow" d="M1375 730 V795"/>
+  <path class="dashed" d="M980 925 H830"/>
+  <text class="s" x="850" y="905">tool_result 返回给 Planner</text>
+
+  <!-- Planner to critic -->
+  <path class="arrow" d="M525 1030 V1100 C525 1138 930 1138 930 1228"/>
+  <text class="s" x="575" y="1100">critique tool</text>
+  <path class="arrow" d="M1360 1242 H1460"/>
+  <path class="arrow" d="M1460 1280 C1400 1420 540 1420 540 1030"/>
+  <text class="s" x="920" y="1444">revise: Planner 修改 spec / layer 后重新 composite</text>
+
+  <!-- Final path -->
+  <path class="arrow" d="M365 1030 V1180"/>
+  <text class="s" x="392" y="1115">pass / fail / max iters → finalize</text>
+</svg>

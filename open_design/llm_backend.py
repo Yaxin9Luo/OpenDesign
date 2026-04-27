@@ -130,6 +130,13 @@ class AnthropicBackend:
         client_kwargs: dict[str, Any] = {"api_key": settings.anthropic_api_key}
         if settings.anthropic_base_url:
             client_kwargs["base_url"] = settings.anthropic_base_url
+            if "sankuai.com" in str(settings.anthropic_base_url):
+                auth_token = (
+                    getattr(settings, "anthropic_auth_token", None)
+                    or getattr(settings, "friday_app_id", None)
+                )
+                if auth_token:
+                    client_kwargs["auth_token"] = auth_token
         self.client = Anthropic(**client_kwargs)
 
     def create_turn(

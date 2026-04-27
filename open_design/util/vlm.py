@@ -95,7 +95,7 @@ def vlm_call_json(
     non-JSON output.
     """
     images = images or []
-    provider = _provider_for_model(model)
+    provider = _provider_for_model(model, settings=settings)
     timeout_s = timeout_s or getattr(settings, "ingest_http_timeout", 600.0)
 
     log("vlm.request", model=model, provider=provider,
@@ -119,10 +119,19 @@ def vlm_call_json(
 
 # ────────────────────────── internals ─────────────────────────────────
 
-def _provider_for_model(model: str) -> str:
+def _provider_for_model(model: str, *, settings: Any | None = None) -> str:
     if model in _VLM_PROVIDERS:
         return _VLM_PROVIDERS[model]
-    if model.startswith(("claude-", "anthropic/")):
+    if model.startswith((
+        "claude-", "anthropic/", "aws.claude", "vertex.claude", "LongCat-",
+    )):
+        return "anthropic"
+    if (
+        settings is not None
+        and getattr(settings, "anthropic_base_url", None)
+        and "sankuai.com" in str(getattr(settings, "anthropic_base_url", ""))
+        and model.startswith("vertex.")
+    ):
         return "anthropic"
     # Unknown → assume OpenRouter/OpenAI-compatible.
     return "openai"
@@ -145,6 +154,13 @@ def _call_anthropic(
     }
     if settings.anthropic_base_url:
         kwargs["base_url"] = settings.anthropic_base_url
+        if "sankuai.com" in str(settings.anthropic_base_url):
+            auth_token = (
+                getattr(settings, "anthropic_auth_token", None)
+                or getattr(settings, "friday_app_id", None)
+            )
+            if auth_token:
+                kwargs["auth_token"] = auth_token
     client = Anthropic(**kwargs)
 
     content: list[dict[str, Any]] = []

@@ -22,11 +22,11 @@ Credentials (any subset works depending on which providers you call):
 - `ANTHROPIC_API_KEY`: stock Anthropic endpoint.
 - `OPENAI_COMPAT_API_KEY` + `OPENAI_COMPAT_BASE_URL`: explicit override
   for self-hosted vLLM / native Moonshot / DeepSeek / Doubao endpoints.
+- `FRIDAY_APP_ID`: optional explicit Friday credential. When set, it is
+  reused by the Friday Anthropic-compatible and Friday Gemini image routes.
 - `GEMINI_API_KEY`: only required when `IMAGE_PROVIDER` resolves to
-  `gemini` (auto-routing on a model id starting with `gemini-` or
-  `imagen-`). The v2.7.5 default is `google/gemini-2.5-flash-image`
-  via OpenRouter (reuses `OPENROUTER_API_KEY`), so most users don't
-  need a separate `GEMINI_API_KEY`.
+  native `gemini` (auto-routing on a model id starting with `gemini-` or
+  `imagen-`). Friday Gemini uses `FRIDAY_APP_ID` / Anthropic auth instead.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ ANTHROPIC_FALLBACK_CLAIM_GRAPH = "claude-opus-4-7"
 
 
 ProviderChoice = Literal["auto", "anthropic", "openai_compat"]
-ImageProviderChoice = Literal["auto", "gemini", "openrouter"]
+ImageProviderChoice = Literal["auto", "gemini", "openrouter", "friday_gemini"]
 SectionNumberPolicy = Literal["renumber", "strip", "preserve"]
 
 
@@ -113,6 +113,8 @@ class Settings:
     # Per-role model + provider selection
     planner_model: str
     critic_model: str
+    anthropic_auth_token: str | None = None
+    friday_app_id: str | None = None
     planner_provider: ProviderChoice = "auto"
     critic_provider: ProviderChoice = "auto"
 
@@ -149,10 +151,10 @@ class Settings:
 
     # v2.5 multi-provider image generation. `image_model` follows the same
     # auto-detect rule as planner/critic: `gemini-*` / `imagen-*` route to
-    # the GeminiImageBackend, everything else to OpenRouter (chat/completions
-    # with modalities=["image","text"]). Users override with
-    # `IMAGE_MODEL=openai/gpt-5-image-mini` (etc) or pin a provider via
-    # `IMAGE_PROVIDER=auto|gemini|openrouter`.
+    # the GeminiImageBackend, `friday/*` routes to Friday Gemini, everything
+    # else to OpenRouter (chat/completions with modalities=["image","text"]).
+    # Users override with `IMAGE_MODEL=openai/gpt-5-image-mini` (etc) or pin
+    # a provider via `IMAGE_PROVIDER=auto|gemini|openrouter|friday_gemini`.
     #
     # v2.7.5 (2026-04-26) — default switched away from
     # `bytedance-seed/seedream-4.5` after a real dogfood run hit
@@ -167,6 +169,9 @@ class Settings:
     # new credential required.
     image_model: str = "google/gemini-2.5-flash-image"
     image_provider: ImageProviderChoice = "auto"
+    friday_gemini_base_url: str = "https://aigc.sankuai.com/v1/google/models"
+    friday_image_timeout_s: int = 600
+    friday_image_poll_interval_s: int = 2
 
     # v2.7.5 hardcoded fallback model — used by `image_backend.generate(...)`
     # when the user's `image_model` returns 404 / no-endpoints-for-modality
@@ -274,9 +279,12 @@ def load_settings() -> Settings:
     # `GeminiImageBackend.__init__` (image_backend.py).
     gemini = os.getenv("GEMINI_API_KEY", "").strip()
 
+    friday_env = os.getenv("FRIDAY_APP_ID", "").strip()
+    ant_auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN", "").strip() or None
     or_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    ant_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    ant_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or friday_env
     base_url_override = os.getenv("ANTHROPIC_BASE_URL", "").strip() or None
+    friday_app_id = friday_env or ant_auth_token or ant_key or None
 
     # Anthropic SDK credential resolution — same as before. The OpenAI-compat
     # backend may use the same key (when in OR mode) or its own (next block).
@@ -374,12 +382,26 @@ def load_settings() -> Settings:
     image_fallback_kwargs: dict[str, Any] = {}
     if image_fallback_env_raw is not None:
         image_fallback_kwargs["image_fallback_model"] = image_fallback_env_raw.strip()
+    elif image_provider_env == "friday_gemini":
+        # Keep explicit Friday image runs inside the company gateway. The
+        # dataclass default fallback is an OpenRouter model, which would
+        # require a second credential and violate the "single Friday AppId"
+        # setup.
+        image_fallback_kwargs["image_fallback_model"] = "gemini-2.5-flash-image"
 
     section_policy = _parse_section_policy(os.getenv("SECTION_NUMBER_POLICY", "renumber"))
+    friday_gemini_base_url = (
+        os.getenv("FRIDAY_GEMINI_BASE_URL", "").strip()
+        or "https://aigc.sankuai.com/v1/google/models"
+    )
+    friday_image_timeout = _parse_int_env("FRIDAY_IMAGE_TIMEOUT_SECONDS", 600)
+    friday_image_poll_interval = _parse_int_env("FRIDAY_IMAGE_POLL_INTERVAL_SECONDS", 2)
 
     return Settings(
         anthropic_api_key=api_key,
         anthropic_base_url=base_url,
+        anthropic_auth_token=ant_auth_token,
+        friday_app_id=friday_app_id,
         openrouter_api_key=or_key or None,
         openai_compat_api_key=oai_key,
         openai_compat_base_url=oai_base,
@@ -407,6 +429,9 @@ def load_settings() -> Settings:
         **({"image_model": image_model_env} if image_model_env else {}),
         **image_fallback_kwargs,
         image_provider=image_provider_env,
+        friday_gemini_base_url=friday_gemini_base_url.rstrip("/"),
+        friday_image_timeout_s=friday_image_timeout,
+        friday_image_poll_interval_s=friday_image_poll_interval,
         section_number_policy=section_policy,
     )
 
@@ -439,15 +464,18 @@ def _parse_section_policy(raw: str) -> SectionNumberPolicy:
 
 def _parse_image_provider(raw: str) -> ImageProviderChoice:
     """Normalize IMAGE_PROVIDER env. Accepts a few friendly aliases
-    (`google`, `nbp` → gemini; `or`, `seedream`, `bytedance` → openrouter)
-    so users don't have to remember the canonical token."""
+    (`google`, `nbp` → gemini; `or`, `seedream`, `bytedance` → openrouter;
+    `friday`, `sankuai` → friday_gemini) so users don't have to remember
+    the canonical token."""
     raw = (raw or "").strip().lower()
-    if raw in ("auto", "gemini", "openrouter"):
+    if raw in ("auto", "gemini", "openrouter", "friday_gemini"):
         return raw  # type: ignore[return-value]
     if raw in ("google", "nbp", "imagen"):
         return "gemini"
     if raw in ("or", "openai_compat", "seedream", "bytedance", "doubao"):
         return "openrouter"
+    if raw in ("friday", "friday-gemini", "sankuai", "aigc"):
+        return "friday_gemini"
     return "auto"
 
 

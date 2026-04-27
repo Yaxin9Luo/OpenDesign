@@ -81,7 +81,7 @@ OpenDesign uses [uv](https://docs.astral.sh/uv/) for environment + dependency ma
 git clone https://github.com/Yaxin9Luo/OpenDesign.git
 cd OpenDesign
 uv sync                    # creates .venv, installs deps from uv.lock, editable-installs the package
-cp .env.example .env       # fill in GEMINI_API_KEY + OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
+cp .env.example .env       # fill in FRIDAY_APP_ID, or use OpenRouter/Anthropic keys
 ```
 
 > **macOS note:** if `uv run` fails with `ModuleNotFoundError: open_design`, Apple's Gatekeeper may have hidden the editable `.pth` file. Fix with `xattr -c .venv/lib/python*/site-packages/*.pth && chflags nohidden .venv/lib/python*/site-packages/*.pth`. See [docs/GOTCHAS.md](docs/GOTCHAS.md).

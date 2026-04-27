@@ -11,8 +11,10 @@ This proves the whole pipeline below the LLM/Gemini layer works without keys.
 from __future__ import annotations
 
 import json
+import base64
 import sys
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
@@ -4617,6 +4619,121 @@ def check_image_backend_fallback_chain() -> None:
     )
 
 
+def check_friday_gemini_image_backend_no_api() -> None:
+    """smoke #47 (Friday Gemini): backend submits to Friday's async image
+    API, tolerates transient 429 query responses, and extracts the final
+    inline image without touching the network."""
+    print("[49/52] Friday Gemini image backend: submit → poll → inline PNG")
+    from . import image_backend as ib
+    from .image_backend import FridayGeminiImageBackend, ImageResult
+
+    class _Settings:
+        friday_app_id = "friday-appid"
+        anthropic_auth_token = None
+        anthropic_api_key = None
+        friday_gemini_base_url = "https://aigc.sankuai.com/v1/google/models"
+        friday_image_timeout_s = 5
+        friday_image_poll_interval_s = 0
+        image_provider = "friday_gemini"
+        image_fallback_model = "gemini-2.5-flash-image"
+
+    buf = BytesIO()
+    Image.new("RGB", (32, 24), (20, 40, 60)).save(buf, format="PNG")
+    image_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    responses = [
+        b"op-123",
+        json.dumps({"status": 0, "data": "running"}).encode("utf-8"),
+        json.dumps({"status": -1, "data": "429 Too Many Requests"}).encode("utf-8"),
+        json.dumps({
+            "status": 1,
+            "data": {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": "done"},
+                                {
+                                    "inline_data": {
+                                        "mime_type": "image/png",
+                                        "data": image_b64,
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            },
+        }).encode("utf-8"),
+    ]
+    seen: list[tuple[str, str, bytes | None, dict[str, str]]] = []
+
+    class _Resp:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_urlopen(req, timeout=0):
+        seen.append((req.get_method(), req.full_url, req.data, dict(req.headers)))
+        if not responses:
+            _fail("Friday fake urlopen was called more times than expected")
+        return _Resp(responses.pop(0))
+
+    old_urlopen = ib.request.urlopen
+    ib.request.urlopen = fake_urlopen
+    try:
+        backend = FridayGeminiImageBackend(_Settings(), "gemini-3-pro-image-preview")
+        result = backend.generate(
+            prompt="生成一张测试图",
+            aspect_ratio="16:9",
+            image_size="2K",
+        )
+    finally:
+        ib.request.urlopen = old_urlopen
+
+    if not isinstance(result, ImageResult):
+        _fail(f"expected ImageResult; got {type(result).__name__}")
+    if (result.width, result.height) != (32, 24):
+        _fail(f"decoded image size mismatch: {(result.width, result.height)}")
+    if result.model != "gemini-3-pro-image-preview":
+        _fail(f"model should be preserved; got {result.model!r}")
+    if len(seen) != 4:
+        _fail(f"expected 1 submit + 3 query calls; got {len(seen)}")
+
+    submit_method, submit_url, submit_body, submit_headers = seen[0]
+    if submit_method != "POST" or not submit_url.endswith(
+        "/gemini-3-pro-image-preview:imageGenerate"
+    ):
+        _fail(f"bad Friday submit request: {submit_method} {submit_url}")
+    if submit_headers.get("Authorization") != "Bearer friday-appid":
+        _fail(f"missing Friday bearer auth header: {submit_headers}")
+    if not submit_body:
+        _fail("submit request should carry JSON body")
+    body = json.loads(submit_body.decode("utf-8"))
+    cfg = body.get("generationConfig") or {}
+    if cfg.get("responseModalities") != ["TEXT", "IMAGE"]:
+        _fail(f"Friday request must ask for TEXT+IMAGE; got {cfg}")
+    if cfg.get("imageConfig") != {"aspectRatio": "16:9", "imageSize": "2K"}:
+        _fail(f"Friday imageConfig mismatch: {cfg.get('imageConfig')!r}")
+    if not all(method == "GET" for method, *_ in seen[1:]):
+        _fail(f"query calls should be GET; got {seen[1:]}")
+    if responses:
+        _fail(f"unused fake Friday responses: {len(responses)}")
+
+    _ok(
+        "Friday Gemini backend posts bearer-auth JSON, polls through running "
+        "+ transient 429, and decodes inline_data to PNG"
+    )
+
+
 def check_export_sanitizer() -> None:
     """v2.8.2-C1 — sanitize_design_spec drops placeholder text and
     debug-named empty shapes from `layer_graph` descendants without
@@ -5035,6 +5152,7 @@ def main() -> int:
     check_pptx_template_default_scrubber()
 
 
+    check_friday_gemini_image_backend_no_api()
     check_image_backend_fallback_chain()
     print("\n  smoke test passed.")
     print("  artifacts in: out/smoke/, out/smoke_edit/, out/smoke_apply/, "

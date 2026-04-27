@@ -13,10 +13,10 @@ cd /Users/yaxinluo/Desktop/Projects/Design-Agent
 uv sync                    # reads pyproject.toml + uv.lock → .venv with pinned deps
 cp .env.example .env
 # edit .env to fill in:
-#   GEMINI_API_KEY (required)
-#   AND one of:
-#     OPENROUTER_API_KEY  (preferred — pay-as-you-go, single key, both Claude + cost reporting)
-#     ANTHROPIC_API_KEY   (stock — needs balance topped up)
+#   FRIDAY_APP_ID (company Friday route for both LLM + image generation)
+#   OR one of:
+#     OPENROUTER_API_KEY  (external pay-as-you-go)
+#     ANTHROPIC_API_KEY   (stock Anthropic — needs balance topped up)
 ```
 
 Day-to-day commands are prefixed with `uv run` (auto-syncs deps and uses the project venv). You can still `source .venv/bin/activate` if you prefer the old workflow — uv just manages the venv, it does not replace it.

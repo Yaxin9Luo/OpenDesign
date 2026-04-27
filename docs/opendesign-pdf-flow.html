@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenDesign Multi-Agent Workflow</title>
+  <style>
+    :root {
+      --bg: #111;
+      --paper: #f8f7f2;
+      --border: #d8d2c7;
+      --text: #181818;
+      --muted: #666;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    .toolbar {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+    }
+    button {
+      border: 1px solid #bbb;
+      background: #fff;
+      color: #111;
+      font: 700 15px/1 system-ui, sans-serif;
+      padding: 9px 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #f0f0ea; }
+    .hint {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 0 8px;
+      white-space: nowrap;
+    }
+    .viewport {
+      width: 100vw;
+      height: 100vh;
+      overflow: auto;
+      background: #171717;
+    }
+    .canvas {
+      transform-origin: top left;
+      width: 1900px;
+      height: 1500px;
+      background: var(--paper);
+      box-shadow: 0 0 0 1px #333, 0 20px 80px rgba(0, 0, 0, 0.45);
+    }
+    iframe {
+      width: 1900px;
+      height: 1500px;
+      border: 0;
+      display: block;
+      background: var(--paper);
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar" aria-label="缩放控制">
+    <button type="button" id="zoomOut">-</button>
+    <button type="button" id="zoomIn">+</button>
+    <button type="button" id="reset">100%</button>
+    <button type="button" id="fit">适配窗口</button>
+    <span class="hint" id="zoomLabel">100%</span>
+    <span class="hint">精简 multi-agent workflow，可滚动查看</span>
+  </div>
+  <main class="viewport" id="viewport">
+    <div class="canvas" id="canvas">
+      <iframe src="opendesign-pdf-flow.svg" title="OpenDesign Multi-Agent Workflow"></iframe>
+    </div>
+  </main>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const viewport = document.getElementById('viewport');
+    const label = document.getElementById('zoomLabel');
+    let zoom = 1;
+
+    function applyZoom(next) {
+      zoom = Math.max(0.35, Math.min(3.2, next));
+      canvas.style.transform = `scale(${zoom})`;
+      canvas.style.marginRight = `${Math.max(0, 1900 * (zoom - 1))}px`;
+      canvas.style.marginBottom = `${Math.max(0, 1500 * (zoom - 1))}px`;
+      label.textContent = `${Math.round(zoom * 100)}%`;
+    }
+
+    document.getElementById('zoomIn').addEventListener('click', () => applyZoom(zoom + 0.15));
+    document.getElementById('zoomOut').addEventListener('click', () => applyZoom(zoom - 0.15));
+    document.getElementById('reset').addEventListener('click', () => applyZoom(1));
+    document.getElementById('fit').addEventListener('click', () => {
+      const fit = Math.min((window.innerWidth - 40) / 1900, (window.innerHeight - 40) / 1500);
+      applyZoom(fit);
+      viewport.scrollTo({ top: 0, left: 0 });
+    });
+
+    applyZoom(1);
+  </script>
+</body>
+</html>
