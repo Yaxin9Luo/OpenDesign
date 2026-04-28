@@ -38,6 +38,7 @@ Markdown and image branches are untouched.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -109,6 +110,28 @@ _STRUCTURE_TOTAL_TEXT_CAP = 60_000
 _OCR_PAGE_DPI = 200
 _OCR_PAGE_PARALLELISM = 6
 _OCR_PER_PAGE_TIMEOUT_S = 120.0
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _ingest_vlm_parallelism(ctx: ToolContext, default: int) -> int:
+    explicit = _int_env("INGEST_VLM_PARALLELISM", 0)
+    if explicit <= 0:
+        explicit = _int_env("INGEST_CAPTION_PARALLELISM", 0)
+    if explicit > 0:
+        return max(1, explicit)
+    model = str(getattr(ctx.settings, "ingest_model", "") or "").lower()
+    if model.startswith("longcat-"):
+        return 1
+    return max(1, default)
 
 
 _OCR_PROMPT = """\
@@ -576,8 +599,9 @@ def _ocr_scanned_pdf(
     import time as _time
 
     n_pages = len(doc)
+    parallelism = _ingest_vlm_parallelism(ctx, _OCR_PAGE_PARALLELISM)
     log("ingest.pdf.ocr.start", file=fp.name, pages=n_pages,
-        dpi=_OCR_PAGE_DPI, parallelism=_OCR_PAGE_PARALLELISM,
+        dpi=_OCR_PAGE_DPI, parallelism=parallelism,
         model=ctx.settings.ingest_model)
     t0 = _time.monotonic()
 
@@ -612,7 +636,7 @@ def _ocr_scanned_pdf(
             return idx, ""
 
     results: dict[int, str] = {}
-    with ThreadPoolExecutor(max_workers=_OCR_PAGE_PARALLELISM) as pool:
+    with ThreadPoolExecutor(max_workers=parallelism) as pool:
         futures = [pool.submit(ocr_one, i) for i in range(n_pages)]
         for fut in as_completed(futures):
             idx, text = fut.result()
@@ -711,7 +735,11 @@ def _match_captions_parallel(
         }
 
     results: dict[int, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=_CAPTION_MATCH_PARALLELISM) as ex:
+    parallelism = _ingest_vlm_parallelism(ctx, _CAPTION_MATCH_PARALLELISM)
+    log("ingest.pdf.caption_match.start",
+        n_candidates=len(candidates), parallelism=parallelism,
+        model=ctx.settings.ingest_model)
+    with ThreadPoolExecutor(max_workers=parallelism) as ex:
         futures = {
             ex.submit(_match_one_caption, i, cand, all_figs, ctx): i
             for i, cand in enumerate(candidates)
@@ -1012,7 +1040,11 @@ def _parse_tables_parallel(
     whether to register the candidate as a `kind="table"` layer.
     """
     results: dict[int, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=_CAPTION_MATCH_PARALLELISM) as ex:
+    parallelism = _ingest_vlm_parallelism(ctx, _CAPTION_MATCH_PARALLELISM)
+    log("ingest.pdf.table_parse.start",
+        n_candidates=len(candidates), parallelism=parallelism,
+        model=ctx.settings.ingest_model)
+    with ThreadPoolExecutor(max_workers=parallelism) as ex:
         futures = {
             ex.submit(_parse_one_table, i, cand, manifest, ctx): i
             for i, cand in enumerate(candidates)

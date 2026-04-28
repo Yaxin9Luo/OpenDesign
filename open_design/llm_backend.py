@@ -519,7 +519,12 @@ def _normalize_stop(raw: str | None, provider: str) -> str:
 def _auto_provider(model: str) -> str:
     """Pick a backend based on model id when settings don't pin one."""
     m = model.lower()
-    if m.startswith("anthropic/") or m.startswith("claude-"):
+    if m.startswith((
+        "anthropic/",
+        "claude-",
+        "aws.claude",
+        "vertex.claude",
+    )):
         return "anthropic"
     # Anything else routed through OpenRouter / native OpenAI-compat APIs.
     # Covers: moonshotai/kimi-*, deepseek/*, qwen/*, mistralai/*, meta-llama/*,

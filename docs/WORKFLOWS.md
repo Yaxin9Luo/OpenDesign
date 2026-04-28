@@ -386,6 +386,9 @@ The claymorphism-vs-editorial contrast on the same paper is the v1.3.1 dogfood â
 |---|---|---|
 | `INGEST_MODEL` | `anthropic/claude-sonnet-4-6` (OpenRouter) / `claude-sonnet-4-6` (stock) | Override the structure-extraction + bbox-locator model (e.g. Opus for higher fidelity on visually complex papers) |
 | `INGEST_HTTP_TIMEOUT` | `600` (10 min) | Hard timeout per ingest Anthropic call â€” prevents silent hangs on big PDFs |
+| `INGEST_VLM_MAX_RETRIES` | `3` | Retry transient VLM failures before handing an ingest error back to the planner |
+| `INGEST_VLM_RATE_LIMIT_SLEEP_S` | `65` | Sleep duration for VLM 429/RPM-limit retries when the provider does not send `Retry-After` |
+| `INGEST_VLM_PARALLELISM` | `6` (`1` for `LongCat-*`) | Cap caption/table/OCR VLM calls; set to `1` for strict per-minute limits |
 
 ### Known quirks (dogfood surfaced)
 

@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,92 @@ _OPENROUTER_OPENAI_BASE = "https://openrouter.ai/api/v1"
 
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _status_code(exc: Exception) -> int | None:
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(exc, "response", None)
+    code = getattr(response, "status_code", None)
+    return code if isinstance(code, int) else None
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        _status_code(exc) == 429
+        or "429" in msg
+        or "rate limit" in msg
+        or "too many requests" in msg
+        or "请求次数超过限制" in str(exc)
+    )
+
+
+def _is_retryable_vlm_error(exc: Exception) -> bool:
+    if _is_rate_limit_error(exc):
+        return True
+    code = _status_code(exc)
+    if code in {408, 409, 425, 500, 502, 503, 504}:
+        return True
+    msg = str(exc).lower()
+    return (
+        "timeout" in msg
+        or "timed out" in msg
+        or "temporarily unavailable" in msg
+        or "connection error" in msg
+        or "connection reset" in msg
+        or "unexpected_eof" in msg
+    )
+
+
+def _retry_after_s(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    try:
+        val = headers.get("retry-after") or headers.get("Retry-After")
+    except Exception:
+        return None
+    if not val:
+        return None
+    try:
+        return max(0.0, float(val))
+    except ValueError:
+        return None
+
+
+def _retry_delay_s(exc: Exception, attempt: int) -> float:
+    max_delay = _float_env("INGEST_VLM_RETRY_MAX_SLEEP_S", 300.0)
+    retry_after = _retry_after_s(exc)
+    if retry_after is not None:
+        return min(retry_after, max_delay)
+    if _is_rate_limit_error(exc):
+        base = _float_env("INGEST_VLM_RATE_LIMIT_SLEEP_S", 65.0)
+    else:
+        base = _float_env("INGEST_VLM_RETRY_BASE_S", 2.0)
+    return min(max_delay, base * (2 ** max(0, attempt - 1)))
 
 
 # ────────────────────────── data types ────────────────────────────────
@@ -101,18 +189,38 @@ def vlm_call_json(
     log("vlm.request", model=model, provider=provider,
         n_images=len(images), timeout_s=timeout_s)
 
-    if provider == "anthropic":
-        text = _call_anthropic(
-            settings=settings, model=model, system=system,
-            user_text=user_text, images=images,
-            max_tokens=max_tokens, timeout_s=timeout_s,
-        )
-    else:
-        text = _call_openai(
-            settings=settings, model=model, system=system,
-            user_text=user_text, images=images,
-            max_tokens=max_tokens, timeout_s=timeout_s,
-        )
+    max_retries = max(0, _int_env("INGEST_VLM_MAX_RETRIES", 3))
+    max_attempts = max_retries + 1
+    text = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if provider == "anthropic":
+                text = _call_anthropic(
+                    settings=settings, model=model, system=system,
+                    user_text=user_text, images=images,
+                    max_tokens=max_tokens, timeout_s=timeout_s,
+                )
+            else:
+                text = _call_openai(
+                    settings=settings, model=model, system=system,
+                    user_text=user_text, images=images,
+                    max_tokens=max_tokens, timeout_s=timeout_s,
+                )
+            break
+        except Exception as e:
+            if attempt >= max_attempts or not _is_retryable_vlm_error(e):
+                raise
+            delay_s = _retry_delay_s(e, attempt)
+            log(
+                "vlm.retry",
+                model=model,
+                provider=provider,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                delay_s=round(delay_s, 1),
+                error=str(e)[:400],
+            )
+            time.sleep(delay_s)
 
     return _parse_json_block(text)
 
@@ -123,7 +231,7 @@ def _provider_for_model(model: str, *, settings: Any | None = None) -> str:
     if model in _VLM_PROVIDERS:
         return _VLM_PROVIDERS[model]
     if model.startswith((
-        "claude-", "anthropic/", "aws.claude", "vertex.claude", "LongCat-",
+        "claude-", "anthropic/", "aws.claude", "vertex.claude",
     )):
         return "anthropic"
     if (
@@ -133,7 +241,7 @@ def _provider_for_model(model: str, *, settings: Any | None = None) -> str:
         and model.startswith("vertex.")
     ):
         return "anthropic"
-    # Unknown → assume OpenRouter/OpenAI-compatible.
+    # Unknown → assume the configured OpenAI-compatible endpoint.
     return "openai"
 
 
@@ -196,22 +304,21 @@ def _call_openai(
     max_tokens: int,
     timeout_s: float,
 ) -> str:
-    # Qwen on OpenRouter uses the OpenRouter API key. We accept either
-    # `openrouter_api_key` (preferred name) or reuse `anthropic_api_key`
-    # when the project was started in OpenRouter mode (single key holds
-    # both roles — see config.load_settings).
+    # OpenAI-compatible VLMs may live on Friday native, OpenRouter, or a
+    # self-hosted endpoint. Prefer the explicit compat key/base when set.
     api_key = (
-        getattr(settings, "openrouter_api_key", None)
+        getattr(settings, "openai_compat_api_key", None)
+        or getattr(settings, "openrouter_api_key", None)
         or settings.anthropic_api_key
     )
     if not api_key:
         raise RuntimeError(
-            "VLM openai branch needs an OpenRouter key — set OPENROUTER_API_KEY."
+            "VLM openai branch needs OPENAI_COMPAT_API_KEY or OPENROUTER_API_KEY."
         )
 
     client = OpenAI(
         api_key=api_key,
-        base_url=_OPENROUTER_OPENAI_BASE,
+        base_url=getattr(settings, "openai_compat_base_url", None) or _OPENROUTER_OPENAI_BASE,
         timeout=timeout_s,
         max_retries=1,
     )

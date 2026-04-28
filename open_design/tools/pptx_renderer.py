@@ -131,6 +131,78 @@ ROLE_TO_LAYOUT_IDX = {
     "closing": 5,
 }
 
+# Slot geometry mirrors assets/deck_templates/academic-editorial.pptx. The
+# PPTX writer uses the template itself as source of truth; this table is only
+# for the simplified Pillow preview and for safe fallbacks when the planner
+# uses an adjacent slot name.
+_PREVIEW_TEMPLATE_SLOT_BBOX: dict[str, dict[str, tuple[int, int, int, int]]] = {
+    "cover": {
+        "title": (96, 280, 880, 280),
+        "authors": (96, 580, 880, 60),
+        "badge": (1660, 80, 180, 40),
+        "subtitle": (1660, 80, 180, 40),
+        "image_slot": (1000, 0, 920, 1080),
+    },
+    "section_divider": {
+        "section_number": (200, 320, 1520, 50),
+        "title": (200, 380, 1520, 200),
+        "subtitle": (200, 600, 1520, 60),
+    },
+    "content": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "body": (96, 260, 1728, 740),
+    },
+    "content_with_figure": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "body": (96, 260, 920, 740),
+        "image_slot": (1056, 260, 768, 740),
+    },
+    "content_with_table": {
+        "section_label": (96, 80, 1728, 30),
+        "title": (96, 120, 1728, 80),
+        "body": (96, 260, 800, 740),
+        "table_anchor": (920, 260, 904, 740),
+    },
+    "closing": {
+        "title": (200, 360, 1520, 160),
+        "subtitle": (200, 540, 1520, 50),
+        "body": (200, 600, 1520, 260),
+        "links": (200, 880, 1520, 40),
+    },
+}
+
+
+def _template_slot_bbox(role: str | None,
+                        slot: str | None) -> tuple[int, int, int, int] | None:
+    if not role or not slot:
+        return None
+    return _PREVIEW_TEMPLATE_SLOT_BBOX.get(role, {}).get(slot)
+
+
+def _resolve_template_shape(inv: dict[str, Any], role: str,
+                            slot_name: str | None) -> Any | None:
+    """Resolve a planner template_slot to a concrete template shape.
+
+    The planner occasionally uses semantic slots that are valid for a
+    neighboring layout ("subtitle" on cover, "body" on closing). Prefer a
+    nearby template shape over falling back to a full-slide textbox.
+    """
+    if not slot_name:
+        return None
+    if slot_name in inv:
+        return inv[slot_name]
+    aliases = {
+        ("cover", "subtitle"): "badge",
+        ("closing", "body"): "subtitle",
+        ("closing", "subtitle"): "links",
+    }
+    alias = aliases.get((role, slot_name))
+    if alias:
+        return inv.get(alias)
+    return None
+
 
 def _write_pptx_templated(spec: Any, ds: Any, pptx_path: Path,
                           ctx: ToolContext) -> int:
@@ -381,15 +453,20 @@ def _render_templated_slide(
             if not title_seen and _is_title_child(child):
                 effective = _with_section_prefix(child, section_number)
                 title_seen = True
-            target = inv.get(slot_name) if slot_name else None
+            target = _resolve_template_shape(inv, role, slot_name)
             if target is not None and target.has_text_frame:
                 replace_text_in_shape(target, _text_to_paragraphs(effective))
             else:
-                # No matching slot — render as floating textbox at child.bbox.
-                _add_text_frame(slide, effective, slide_w, slide_h)
+                # No matching slot — only fall back when the planner supplied
+                # explicit coordinates. A templated child with bbox=None would
+                # otherwise become a full-slide textbox at (0,0), obscuring the
+                # intended template layout.
+                if getattr(effective, "bbox", None) is not None:
+                    _add_text_frame(slide, effective, slide_w, slide_h)
 
         elif kind == "image":
-            slot = inv.get(slot_name) if slot_name else inv.get("image_slot")
+            slot = _resolve_template_shape(inv, role, slot_name) \
+                if slot_name else inv.get("image_slot")
             if slot is not None:
                 left, top, width, height = (
                     slot.left, slot.top, slot.width, slot.height,
@@ -426,7 +503,8 @@ def _render_templated_slide(
                     )
 
         elif kind == "table":
-            slot = inv.get(slot_name) if slot_name else inv.get("table_anchor")
+            slot = _resolve_template_shape(inv, role, slot_name) \
+                if slot_name else inv.get("table_anchor")
             if slot is not None:
                 # Use the anchor's bbox by stuffing pixel-space dims back onto the
                 # node temporarily — _add_table uses _bbox_to_emu(node.bbox, ...).
@@ -1051,6 +1129,7 @@ def render_slide_preview_png(slide_node: Any, slide_w: int, slide_h: int,
         list(getattr(slide_node, "children", None) or []),
         key=lambda c: int(getattr(c, "z_index", 0) or 0),
     )
+    role = getattr(slide_node, "role", None) or "content"
 
     for child in children:
         kind = getattr(child, "kind", None)
@@ -1058,16 +1137,19 @@ def render_slide_preview_png(slide_node: Any, slide_w: int, slide_h: int,
             # Tables use their pre-rendered src_path (PIL-drawn PNG) —
             # ingest_document baked it. PPTX itself holds a live table
             # shape; this preview just needs a raster for the thumbnail.
-            _paste_image(img, child, slide_w, slide_h, scale)
+            _paste_image(img, child, slide_w, slide_h, scale, role=role)
         elif kind == "text":
-            _draw_text(img, child, slide_w, slide_h, scale, ctx)
+            _draw_text(img, child, slide_w, slide_h, scale, ctx, role=role)
 
     img.save(out_path, format="PNG", optimize=True)
 
 
 def _scaled_bbox(bbox: Any, slide_w: int, slide_h: int,
                  scale: float,
-                 default_full: bool = False) -> tuple[int, int, int, int]:
+                 default_full: bool = False,
+                 role: str | None = None,
+                 template_slot: str | None = None,
+                 ) -> tuple[int, int, int, int]:
     if bbox is not None:
         x = int(getattr(bbox, "x", 0) or 0)
         y = int(getattr(bbox, "y", 0) or 0)
@@ -1075,6 +1157,8 @@ def _scaled_bbox(bbox: Any, slide_w: int, slide_h: int,
         h = int(getattr(bbox, "h", slide_h) or slide_h)
     elif default_full:
         x, y, w, h = 0, 0, slide_w, slide_h
+    elif (slot_bbox := _template_slot_bbox(role, template_slot)) is not None:
+        x, y, w, h = slot_bbox
     else:
         x, y, w, h = 0, 0, slide_w // 2, slide_h // 4
     return (
@@ -1086,7 +1170,7 @@ def _scaled_bbox(bbox: Any, slide_w: int, slide_h: int,
 
 
 def _paste_image(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
-                 scale: float) -> None:
+                 scale: float, *, role: str | None = None) -> None:
     src = getattr(node, "src_path", None)
     if not src or not Path(src).exists():
         return
@@ -1098,7 +1182,8 @@ def _paste_image(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
     default_full = kind == "background"
     sx, sy, sw, sh = _scaled_bbox(
         getattr(node, "bbox", None), slide_w, slide_h, scale,
-        default_full=default_full,
+        default_full=default_full, role=role,
+        template_slot=getattr(node, "template_slot", None),
     )
     if kind == "image" and tile.size != (sw, sh):
         # Letterbox-fit content figures so the preview matches the PPTX
@@ -1125,19 +1210,23 @@ def _paste_image(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
 
 
 def _draw_text(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
-               scale: float, ctx: ToolContext) -> None:
+               scale: float, ctx: ToolContext, *,
+               role: str | None = None) -> None:
     text = (getattr(node, "text", None) or "").strip()
     if not text:
         return
     sx, sy, sw, sh = _scaled_bbox(
         getattr(node, "bbox", None), slide_w, slide_h, scale,
-        default_full=False,
+        default_full=False, role=role,
+        template_slot=getattr(node, "template_slot", None),
     )
 
     # Pick a reasonable approximated font size from the node metadata.
     size_px = int(getattr(node, "font_size_px", None) or 36)
     approx = max(10, min(120, int(size_px * scale)))
     family = getattr(node, "font_family", None) or ctx.settings.default_text_font
+    if _contains_cjk(text) and family in {"PlayfairDisplay", "Inter"}:
+        family = "NotoSerifSC-Bold" if _is_title_child(node) else "NotoSansSC-Bold"
 
     fonts = ctx.settings.fonts
     fname = fonts.get(family) or fonts[ctx.settings.default_text_font]
@@ -1161,6 +1250,10 @@ def _draw_text(canvas: Image.Image, node: Any, slide_w: int, slide_h: int,
             break
         draw.text((sx, y), line, fill=fill, font=font)
         y += line_h
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
 
 
 def _wrap_for_width(text: str, font: Any, max_w: int, draw: Any) -> list[str]:
